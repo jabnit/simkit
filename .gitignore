@@ -1,0 +1,38 @@
+# ---- STAR-CCM+ simulations and case output (never commit) ----
+*.sim
+*.sim~
+*.sim.bak
+*.simh
+*.ccm
+*.trn
+case_list.csv
+case_tracker.csv
+case_identity.txt
+record/
+results/
+cases/
+
+# Case reports written next to a sim (e.g. ISO-CF-001_v01@00050-11112026_180507.html)
+_SIMKIT/*@*.html
+
+# ---- Licence / credentials (never commit) ----
+*.lic
+license.dat
+licence.dat
+.env
+.env.*
+secrets.*
+
+# ---- Test runs ----
+SimKitTest/
+PASTE_THIS.txt
+
+# ---- Java / IDE / OS ----
+*.class
+.idea/
+.vscode/
+*.iml
+Thumbs.db
+Desktop.ini
+.DS_Store
+~$*

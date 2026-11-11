@@ -1,0 +1,19 @@
+# Repository files we author by hand: LF.
+*.md     text eol=lf
+*.cff    text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+.gitignore       text eol=lf
+.gitattributes   text eol=lf
+.editorconfig    text eol=lf
+
+# Office files and archives are binary.
+*.docx  binary
+*.xlsx  binary
+*.zip   binary
+*.png   binary
+*.jpg   binary
+
+# The kit must stay byte-identical to what is deployed on the share: some CSV/TXT files are CRLF
+# and the macros and runners read them as they are, so git must not normalise line endings here.
+_SIMKIT/** -text
