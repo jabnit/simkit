@@ -1,0 +1,438 @@
+SimKit 0.2.1 (2026-11-11) -- TESTING PROCEDURE (Windows 10/11 and Linux RHEL 7/9; batch-validated on Windows, see J, K)
+===================================================================
+
+SimKit.java and the ISO macros were written WITHOUT access to a STAR-CCM+ installation. Their plain-Java
+logic (CSV, case numbering, versions, diff, rules, write guard; in 0.2 also the parameter-sync path tokenizer,
+reflection resolver, tolerance compare, state classification, baseline lookup and managed names) was compiled
+and exercised against stub classes, but every STAR-CCM+ API call is unverified until it runs in YOUR 2402
+(19.02) build. Test on COPIES only, in a test share, never in S:\CFD.
+
+New in 0.2: menu groups PARAMETERS (17 Parameter sync..., 18 Non-default settings report, 19 Snapshot
+baseline (owner)) and TOOLS (20 Engineering calculators = lib\generic\SimKitCalc.java). Section F below is
+the parameter-sync test; the new uncertain calls U35-U44 are listed at the end of section E.
+
+
+A. SET UP A TEST SHARE (10 min)
+-------------------------------
+1. Create C:\SimKitTest\_SIMKIT and copy the delivered _SIMKIT folder into it
+   (SimKit.java, VERSION.txt, TESTING.txt, lib\..., google\...).
+2. Copy the delivered config\ folder too (naming_rules, tag_rules, group_rules, stages, projects, links,
+   parameters_ISO, template_objects_ISO). In links.csv replace the REPLACE_WITH_ID placeholders (rows that
+   still contain REPLACE are skipped). If a CSV is missing, SimKit falls back to built-in defaults for
+   naming_rules, tag_rules, group_rules, stages and projects (ISO with CF;C1;C2;C3;VV); the About tool lists
+   which files were found. Optional: config\rename_rules.csv (object_type,find_regex,replace) for Auto-name.
+3. Point SimKit to the test share: in a Windows command prompt run
+       setx SIMKIT_SHARE C:\SimKitTest
+   then close and restart STAR-CCM+ (it only sees variables set before it started).
+4. Copy a real sim that has regions, a mesh, some reports/monitors/plots/scenes to
+   C:\SimKitTest\scratch\copy.sim and open it in STAR-CCM+ 2402.
+
+
+B. COMPILE CHECK
+----------------
+5. File > Macro > Play Macro... > C:\SimKitTest\_SIMKIT\SimKit.java
+   - Compile errors appear in the Output window as  SimKit.java:<line>: error: ...
+     Fix them with section D, then play again. Expect a few at most: each uncertain call is isolated.
+   - The first Output line must read  "[SimKit] SimKit 0.2 (...) | share C:\SimKitTest | interactive".
+     If it says "batch: no visible window ..." instead, run  setx SIMKIT_GUI 1, restart STAR-CCM+, retry.
+   - The menu window opens with seven groups in two rows. Each tool shows its log in a dialog afterwards and prints
+     it to the Output window. A line "n/a (...)" means one API call failed and was skipped: note its tag
+     (section E) and the message.
+
+
+C. TOOL-BY-TOOL TEST (on the copy; the expected result is given after the arrow)
+-----------------------------------------------------------------------------
+ 1 Initialise case: ISO / CF / COLD / no parent / "SimKit test"
+     -> C:\SimKitTest\PROJECTS\ISO\03_cases\ISO-CF-001\{sim,macros,run,results\csv,results\img,audit};
+        the session is now ISO-CF-001_COLD_v01.sim; sim\case_identity.txt; parameters p_simkitCaseNo = 1 and
+        p_simkitVersion = 1; audit\setup_audit_ISO-CF-001_COLD_v01.csv and case_card_...html (open it in a
+        browser); PROJECTS\ISO\00_admin\register_inbox\ISO-CF-001_init_<ts>.csv with 20 columns.
+        Running tool 1 again must refuse ("already case ISO-CF-001").
+ 2 Save new version (keep COLD), after changing e.g. a parameter value
+     -> ..._COLD_v02.sim, new audit, audit\diff_..._v01_to_..._v02.csv showing the change, register row
+        event=save whose changes_vs_previous column summarises it.
+ 3 New stage from this case: COLD -> SPRAY  -> ..._SPRAY_v03.sim (the stage list excludes COLD).
+ 4 Branch new case: test both buttons.
+     "Copy"  -> ISO-xx-002 with ISO-xx-002_<STAGE>_v01.sim copied from disk; you stay in ISO-CF-001.
+     "Save"  -> the session moves to the new case. Both: case_identity.txt with parent_case, register
+        row event=branch.
+ 5 Naming check -> table in the dialog + audit\lint_<sim>.csv; a "Report 2" or "Plane Section" is flagged
+        "default-name". Check that each object type you expect appears in the "checked {...}" line.
+ 6 Auto-name: create a report r_T_test_avg, right-click > Create Monitor and Plot from Report
+     -> preview proposes m_T_test_avg for the monitor; interfaces get IF_<A>__<B>; names "x 2" lose " 2"
+        when unique. Answer No first (nothing changes), then Yes (tree renamed). Nothing is deleted.
+ 7 Auto-tag (default rules: boundaries *.OPEN_* -> T_black + T_noPrism, reports r_* -> T_export)
+     -> tags created under Tools > Tags and visible in the objects' Tags property. Run twice: the second run
+        must propose nothing (if it proposes the same again, the tag getter U05 is n/a -- harmless).
+ 8 Auto-group -> folders G00_balances ... G09_other under Reports and Monitors, G20_<x> under Plots,
+        G30_<x> under Scenes, G10..G12 under Derived Parts. Objects moved, none deleted.
+ 9 Pre-run check -> PASS/WARN/FAIL list + audit\precheck_<sim>.csv.
+10 Setup audit -> compare the CSV against the tree: parameters, continua with models, regions,
+        boundaries with type/tags, interfaces, mesh operations, time step, stopping criteria, reports, tags.
+        Every "n/a" cell points to a tag in section E.
+11 Compare -> "Previous version" writes audit\diff_<previous>_to_<current>.csv and prints a summary.
+12 Batch run script -> run\run_<CASEID>.bat and .sh. Read them; run the .bat only on a small case
+        (it starts the solver) and check run\log_<CASEID>_<ts>.txt.
+13 Export results -> results\csv\<CASEID>_<plot>.csv per monitor plot, results\img\<CASEID>_<scene>.png
+        (1600x900), results\csv\<CASEID>_reports_<ts>.csv, register row event=results with key_results.
+14 Run a library macro -> list shows [generic] / [ISO] / [case] entries with their first comment line.
+        Run ISO_templateCheck first (read-only; rows are filtered by the case configuration; free-text
+        types such as boundary_rule / auto_save / simulation_guide are listed as CHECK = manual; template
+        names must equal the tree names, e.g. STAR's default "Maximum Inner Iterations" will not match a
+        template row "Inner iterations"), then ISO_parameters (try "Create missing only", then
+        "Reset all to defaults"; check dimensions and units in Tools > Parameters, incl. p_coneHalfAngle
+        in deg and the expression p_tEnd), then
+        ISO_exportHandoff (tag one specimen boundary T_handoff by hand, run a few time steps first)
+        -> results\csv\handoff_<CASEID>_<time>.csv + _meta.txt naming the field functions used.
+15 Open guideline / workbook -> opens the links.csv URLs in the default browser.
+16 About -> versions, share, case, which config files were found (0.2: also settings_catalogue.csv, the
+        factory_defaults_*.csv files and the case's template baseline).
+17-19 Parameter sync / Non-default report / Snapshot baseline -> section F.
+ 2/3 (0.2) Save new version and New stage now run the parameter-sync preview before saving: no dialog if
+        nothing is pending; Cancel in the preview lets the save continue and the setup audit records the
+        pending items (section PARAMSYNC). 9 Pre-run check gains a line "parameter sync" (WARN + count).
+        10 Setup audit gains the sections NONDEFAULT and PARAMSYNC (also in batch: report only).
+20 Engineering calculators -> plays _SIMKIT\lib\generic\SimKitCalc.java (separate macro, own tests). If it is
+        missing or StarScript fails, the log says "Run SimKitCalc.java with File > Macro > Play Macro".
+
+Batch mode (in a Windows command prompt, on the test case):
+    set SIMKIT_SHARE=C:\SimKitTest
+    set SIMKIT_ACTION=precheck
+    starccm+ -batch C:\SimKitTest\_SIMKIT\SimKit.java C:\SimKitTest\PROJECTS\ISO\03_cases\ISO-CF-001\sim\ISO-CF-001_COLD_v01.sim
+  -> audit\precheck_*.csv. Repeat with SIMKIT_ACTION=audit and =export. Then  set SIMKIT_ACTION=  (empty)
+  and run the spec form on a tiny case:  starccm+ -batch run,C:\SimKitTest\_SIMKIT\SimKit.java <sim>
+  -> after the run: audit + export + register row event=run_end. The log must say "batch: ...", and no
+  window may open. (-Dsimkit.action=... also works if your launcher passes JVM options; the environment
+  variable is the reliable route.)
+
+Register import: create a Google Sheet, Extensions > Apps Script, paste google\register_import.gs, save,
+reload; SimKit > Settings = ID of a Drive folder holding a few register_inbox CSVs; SimKit > Import
+register inbox -> rows in Case_Register, files moved to "processed"; a second import adds nothing.
+
+
+D. FIXING AN API MISMATCH (compile error or "n/a (NoSuchMethodError / ClassCastException ...)")
+---------------------------------------------------------------------------------------------
+Every uncertain STAR call carries a tag [Unn] on its line; section E says what it does.
+ 1. In STAR-CCM+ 2402: File > Macro > Start Recording... > C:\SimKitTest\rec.java
+ 2. Do ONLY the single GUI action given for that tag in section E (column "record").
+ 3. File > Macro > Stop Recording. Open rec.java in a text editor.
+ 4. Copy the generated line(s) to the tagged place in SimKit.java (or the ISO macro), renaming the
+    recorder's variables to the ones in the code: simulation_0 -> sim, boundary_0 / report_0 / ... -> the
+    object variable on that line (o, ob.o, p, s, t, ...), userTag_0 -> tag, units_0 -> u.
+    Keep the surrounding try/catch. If rec.java imports a package SimKit lacks, copy that import line.
+    Example (U06): recorded
+        simulation_0.get(TagManager.class).setTags(boundary_0, new NeoObjectVector(new Object[] {userTag_0}));
+    would become, in addTag():
+        tagManager().setTags(o, new NeoObjectVector(new Object[] {tag}));
+    (and if the only recorded form REPLACES all tags, combine tagsOf(o) with the new tag first, because
+    Auto-tag must never remove manual tags).
+ 5. Play SimKit.java again. A line you cannot fix yet: comment it out and write
+        throw new UnsupportedOperationException("U06 not adapted");
+    the tool then logs n/a for it and everything else keeps working.
+ Getters (U01, U05, U12, U15, getDefinition in U10) are called through Reflect.tryCall with a method-name
+ string, because the recorder never records getters. They always compile; if they report n/a, look the
+ getter up in the Java API reference of your installation (STAR-CCM+ Help > Java API, or <install>\doc)
+ and change the name string.
+ "cannot find symbol: class X": X lives in another package -- record any action on X; the recorder's
+ import list shows the package; add that import.
+
+
+E. UNCERTAIN API CALLS (tag -- class.method -- file: method -- what to record)
+---------------------------------------------------------------------------
+U01 Simulation.getStarVersion().getString("ReleaseNumber") [reflection]
+      SimKit.java: starVersion()                                   -- getter; API reference
+U02 Simulation.get(SimulationPartManager.class).getParts(); GeometryPart.getPartSurfaces()
+      SimKit.java: collectParts(); ISO_templateCheck.java: inventoryParts() -- record: rename a part surface
+U03 AutoMeshOperation.getCustomMeshControls().getObjects()
+      SimKit.java: collectMeshOps(); ISO_templateCheck.java: inventoryMesh() -- record: add a custom control
+U04 Simulation.get(TagManager.class); TagManager.getObjects()
+      SimKit.java: tagManager(), collect(), auditTags(); ISO_templateCheck.java: inventory()
+                                                                   -- record: Tools > Tags > New tag
+U05 tags ON an object: TagManager.getObjectTags(obj) / obj.getTags() / obj.getTagGroup().getObjects() [reflection]
+      SimKit.java: tagsOf(); ISO_exportHandoff.java: tagsOf()     -- getter; API reference
+U06 TagManager.addTags(ClientServerObject, NeoObjectVector)
+      SimKit.java: addTag()                                        -- record: add a tag to a boundary
+U07 TagManager.createNewUserTag(String) returning UserTag
+      SimKit.java: findTag()                                       -- record: Tools > Tags > New tag
+U08 <Report|Monitor|Plot|Scene|Part>Manager.getGroupsManager() -> GroupsManager; GroupsManager.getObjects(),
+    createGroup(String), getObject(String), groupObjects(String, NeoObjectVector, boolean);
+    ClientServerObjectGroup.getGroupsManager()
+      SimKit.java: groupsOf(), groupInto(), collectGroups()        -- record: Reports > New Group, drag a report in
+U09 new StarScript(getActiveRootObject(), java.io.File).execute()
+      SimKit.java: runMacroFile()                                  -- record: File > Macro > Play Macro
+U10 GlobalParameterManager.createGlobalParameter(ScalarGlobalParameter.class, "Scalar");
+    ScalarGlobalParameter.getQuantity(); ScalarPhysicalQuantity.setValue(double), getRawValue(), getUnits(),
+    getDefinition() [reflection]
+      SimKit.java: setDimensionlessParam(), auditParameters(), qty(), collect();
+      ISO_parameters.java: apply()                                 -- record: Tools > Parameters > New > Scalar, set value
+U11 ImplicitUnsteadySolver.getTimeStep() -> ScalarPhysicalQuantity; SolverManager.getObjects()
+      SimKit.java: auditSolvers(), unsteadySolver()                -- record: change the time step
+U12 SolverStoppingCriterionManager.getObjects(); getIsUsed(), getMaximumNumberSteps(),
+    getMaximumNumberInnerIterations(), getMaximumTime() [reflection]
+      SimKit.java: stoppingCriteria()                              -- getters; API reference
+U13 MonitorPlot.export(String path, String separator)
+      SimKit.java: exportPlots()                                   -- record: right-click a monitor plot > Export
+U14 Scene.printAndWait(String, int, int, int)  (2402 guide form; recorder may write (..., true, false))
+      SimKit.java: exportScenes()                                  -- record: scene > Save Screenshot
+U15 Simulation.getSimulationIterator().getAutoSave().getStarUpdate(); StarUpdate.getEnabled() [reflection]
+      SimKit.java: autoSaveState()                                 -- getter; API reference
+U16 BoundaryInterface.getBoundary0()/getBoundary1(); Boundary.getRegion()
+      SimKit.java: interfaceRegions(); ISO_exportHandoff.java: names()   -- getters; API reference
+U17 Region.getRegionType(); Boundary.getBoundaryType(); PhysicsContinuum.getModelManager().getObjects()
+      SimKit.java: auditRegions(), auditContinua()                 -- getters; API reference
+U18 CoordinateSystemManager.getLabCoordinateSystem().getLocalCoordinateSystemManager().getObjects();
+    Simulation.getPartManager().getObjects() (derived parts)
+      SimKit.java: collect(); ISO_templateCheck.java: inventory()  -- record: create a local coordinate system
+U19 Report.getReportMonitorValue()
+      SimKit.java: reportValue()  (snapshot, key results, r_cells cell count)
+U20 ReportMonitor.getReport()
+      SimKit.java: checkMonitorRoot(), planMonitorNames()
+U21 Simulation.getRepresentationManager().getObjects(); class FvRepresentation
+      SimKit.java: volumeMeshExists()
+U22 ClientServerObject.setPresentationName(String)  (cast of every tree object to ClientServerObject)
+      SimKit.java: toolAutoName(), class Obj                       -- record: rename any object
+U23 SimulationOperationManager (tried as star.common.* and star.automation.*) via sim.get(Class) +
+    getObjects() [reflection]
+      SimKit.java: simulationOperations(); ISO_templateCheck.java: inventory() -- record: create a simulation
+                                                                      operation; the recording shows the class
+U34 Simulation.getViewManager().getObjects() [reflection]
+      ISO_templateCheck.java: inventory()                          -- getter; API reference
+U30 Dimensions.Builder().length(n).mass(n).time(n).temperature(n).angle(n).build()
+      ISO_parameters.java: dims()                                  -- record: set a parameter's Dimensions
+U31 ScalarGlobalParameter.setDimensions(Dimensions); ScalarPhysicalQuantity.setUnits(Units), setDefinition(String);
+    (Units) Simulation.getUnitsManager().getObject(String)
+      ISO_parameters.java: apply(), setDefault(), units()          -- record: set a parameter's units and value
+U32 TableManager.getObjects(), createTable(XyzInternalTable.class); XyzInternalTable.setFieldFunctions(NeoObjectVector),
+    getParts().setObjects(Boundary...), extract(), export(String, String)
+      ISO_exportHandoff.java: exportTable()                        -- record: Tools > Tables > New > XYZ Internal,
+                                                                      set parts + scalars, Extract, Export
+U33 Simulation.getSolution().getPhysicalTime()
+      ISO_exportHandoff.java: timeLabel()                          -- getter; API reference
+
+Also not certain (no tag; fix by adding imports): the package of each class -- SimKit imports
+star.common.*, star.base.neo.*, star.base.report.*, star.meshing.*, star.vis.*. Field-function NAMES used
+by ISO_exportHandoff (mean heat flux, heat transfer coefficient / reference temperature, incident radiation)
+are candidates in its COLUMNS table: check them in Tools > Field Functions of a radiating CHT sim.
+Batch detection (no STAR API): Env.headlessReason() in SimKit.java.
+
+New in 0.2 (parameter sync; all in SimKit.java). U35-U37 and U41-U44 are reflection: they always compile and
+report "n/a (<reason>)"; U38-U40 are recorder-style calls (compile errors are fixed as in section D).
+U35 quantity value getters: getSIValue(); getRawValue() / getValue(); getUnits(); Units.getConversion() and
+    getOffset() (only when getSIValue is missing) [reflection]
+      qSi(), qRaw(), setParamValue()                               -- getters; API reference
+U36 quantity definition: getDefinition(), setDefinition(String) ("${p_x}" to link, a literal to unlink);
+    fallback setValue(double) [reflection]
+      qDef(), qSetDef(), link(), unlink(), restoreLiteral()        -- record: type ${p_x} into a base size
+U37 catalogue paths of config\settings_catalogue.csv, e.g. AutoMeshOperation.getDefaultValues().get(BaseSize.class),
+    ...getCustomValues().get(...), Boundary.getValues().get(MassFlowRateProfile.class).getMethod(
+    ConstantScalarProfileMethod.class).getQuantity(), PhysicsContinuum.getReferenceValues().get(ReferencePressure.class),
+    IntegerValue.getQuantity() [reflection]
+      PSync.resolve(), PSync.quantityOf(), readSetting()           -- record: change the value once; the recorded
+                                                                      chain is the path (fix the CSV, not the Java)
+U38 dimensions of a quantity: getDimensions() on the quantity or on its Units [reflection];
+    ScalarGlobalParameter.setDimensions(Dimensions)
+      setParamValue()                                              -- record: set a parameter's Dimensions
+U39 fallback when U38 gives nothing: Dimensions.Builder()...build() from the catalogue unit column (m, s, K, kg/s,
+    m/s, Pa, %, -); (Units) Simulation.getUnitsManager().getObject(String)
+      dimsForUnit(), unitsByName()                                 -- same as U30/U31
+U40 new parameter value: ScalarPhysicalQuantity.setUnits(Units), setValue(double) (units first, then the number
+    in those units); GlobalParameterManager.createGlobalParameter(...) is U10, setPresentationName is U22
+      createParam(), setParamValue()                               -- record: Tools > Parameters > New > Scalar
+U41 deleting a parameter: GlobalParameterManager remove(obj) / removeObjects(obj | obj[] | NeoObjectVector) /
+    deleteObjects(...) [reflection, the first that makes the parameter disappear wins]
+      removeParam()                                                -- record: right-click a parameter > Delete
+U42 parameter groups: GlobalParameterManager.getGroupsManager() [reflection], then U08 (createGroup, groupObjects)
+      groupParameters()                                            -- record: Parameters > New Group, drag one in.
+                                                                      If not supported the log says so; harmless.
+U43 boundary type match: Boundary.getBoundaryType() [reflection] tested with Class.isInstance against the catalogue
+    class (star.flow.MassFlowBoundary, star.flow.InletBoundary, star.flow.PressureBoundary, star.common.WallBoundary)
+      instances()                                                  -- getter; the recorder shows the type class
+                                                                      when you change a boundary type
+U44 catalogue classes loaded by name (Class.forName): solver / stopping / boundary-type / value classes, e.g.
+    star.segregatedflow.SegregatedFlowSolver, star.kwturb.KwTurbSolver, star.prismmesher.NumPrismLayers
+      Reflect.cls(), instances(), PSync.resolve()                  -- "ClassNotFoundException" = wrong package:
+                                                                      record any action on it, fix the CSV row
+Note: the parameter-sync preview is a modal JTable dialog (Swing only, no STAR call); deletion of managed
+parameters is confirmed a second time in a separate dialog ("No" = unlink only, keep the parameters).
+
+
+F. PARAMETER SYNC TEST (on copies; about 45 min)
+------------------------------------------------
+Background: a setting from config\settings_catalogue.csv gets a managed parameter p_<FAMILY>_<inst>_<prop>
+(FAMILY = MESH|SOLV|STOP|BC|PHYS) only when it differs from its baseline. Baseline order: template baseline
+(_SIMKIT\templates\<PROJ>\<template>_baseline.csv, per object), else factory defaults
+(_SIMKIT\config\factory_defaults_<release>.csv, per catalogue row; newest release if yours is missing, with a
+note), else "no baseline" (NB: report only, never parameterised). States in the preview:
+  S0 at baseline: nothing        S1 differs, not linked: create P, link    S2 linked to P, differs: OK
+  S3 linked to P, P = baseline: unlink, delete P if unreferenced           S4 P exists, direct edit: P = value, relink
+  S4b P exists, setting typed back to the baseline: delete P if unreferenced
+  S5 linked to a user parameter / expression: report only    NP not parameterisable (or link refused): report only
+  OFF setting not present because its option is not selected (STAR "Class: ..." message, e.g. a custom
+      value not activated, a wall that is not set to fixed temperature): report only, not an error
+  NA path not resolvable in this sim (wrong catalogue path or API change): see the n/a reason (section D)
+
+F1 Harvest factory defaults (owner action; once per STAR-CCM+ release)
+   1. File > New Simulation (blank). Create ONE default object of each source, changing NOTHING:
+      a part + region, an Automated Mesh operation (surface remesher + polyhedral + prism layer mesher) with one
+      surface custom control and one volumetric custom control; a physics continuum (3D, gas, segregated flow,
+      segregated fluid temperature, k-omega, implicit unsteady); boundaries: one mass-flow inlet, one pressure
+      outlet, one wall. Stopping criteria exist by default.
+   2. Save it as C:\SimKitTest\scratch\blank_defaults.sim (outside PROJECTS: no case is needed).
+   3. SimKit > 19. Snapshot baseline (owner) > Factory defaults. The preview lists one row per catalogue row
+      and, under "Not written", the rows with no readable instance (reasons in the Output window: every
+      "ClassNotFoundException"/"NoSuchMethodException" is a catalogue path to correct -- see U37/U44).
+      Confirm -> C:\SimKitTest\_SIMKIT\config\factory_defaults_<release>.csv. Open it: si_value in SI.
+      Run it twice: the first file is kept as factory_defaults_<release>.csv.<timestamp>.bak.
+      Note: the surface and volumetric custom-control rows are OFF until a custom value is activated on the
+      control (that is STAR behaviour, not an error); activate the values you want baselined before step 3.
+F2 Snapshot the template baseline (owner action; whenever the template changes)
+   4. Open (a copy of) the project template, e.g. ISO_template_v01.simt. 19. Snapshot baseline > Template
+      baseline > project ISO -> C:\SimKitTest\_SIMKIT\templates\ISO\ISO_template_v01_baseline.csv (template
+      name from projects.csv, column template). One row per setting and object (row_id, instance, si_value,
+      definition, ...). The instance names (MO_30_autoMesh, F_air/BRN_x.IN_air, ...) must equal the names in
+      the cases; renaming an object in a case makes it fall back to the factory defaults.
+   5. Write guard: 19 is the only tool that writes inside _SIMKIT; it asks "OWNER ACTION ..." first. Any other
+      tool that tried would log "refused to write outside ...".
+F3 Case lifecycle (in a case made from the template: 1. Initialise case first)
+   6. 17. Parameter sync on the untouched case -> preview shows nothing pending (S0 counts in the header; NB
+      rows only for objects/settings without baseline). Close.
+   7. In the mesh operation MO_30_autoMesh (Default Controls > Base Size) change the base size, e.g. 5 mm -> 4 mm.
+      17. Parameter sync -> row "MO_30_autoMesh  MESH01 baseSize  S1  create p_MESH_MO30autoMesh_baseSize".
+      Apply -> Tools > Parameters has p_MESH_MO30autoMesh_baseSize with dimensions Length, units mm, value 4;
+      the Base Size field shows ${p_MESH_MO30autoMesh_baseSize}; the mesh value did not change (still 4 mm).
+      Parameters are in G30_meshParams (other p_ parameters in G35_caseParams), or the log says groups are not
+      supported. audit\paramsync_<sim>.csv has every row (S0 summarised per catalogue row).
+   8. Run 17 again -> nothing pending; the row is S2 (information only).
+   9. Direct edit: type 3 (mm) directly into Base Size (replacing the ${...}). 17 -> S4 "direct edit adopted";
+      Apply -> parameter = 3 mm and Base Size linked again.
+  10. Back to default via the parameter: set p_MESH_MO30autoMesh_baseSize back to the template value (5 mm).
+      17 -> S3 "back to default: unlink, delete ... if unreferenced"; Apply -> second dialog "Delete these 1
+      managed parameter(s)?": answer No first -> Base Size shows the literal 5, the parameter is kept (result
+      "kept (deletion declined)"); 17 again -> S4b; Apply + Yes -> parameter deleted, Output line
+      "DELETED managed parameter p_MESH_MO30autoMesh_baseSize (...)".
+  11. Back to default by hand: link again (step 7), then type the template value directly into Base Size ->
+      17 -> S4b -> Apply + Yes -> deleted.
+  12. Protection: create a user parameter p_test = ${p_MESH_MO30autoMesh_baseSize}*2 (after step 7), then go
+      back to default -> the result says "kept ... (still referenced)". User parameters (p_mdotAir, p_tEnd, ...)
+      are never modified, unlinked or deleted; a setting linked to one shows S5.
+  13. Deselect: produce two pending rows (e.g. base size + time step), untick one in the preview, Apply ->
+      only the ticked one changes; the other is "pending (deselected)" in the CSV and still pending in 17.
+  14. "check" rows (e.g. MESH04 curvature points, SOLV02 velocity URF): change one, 17 -> S1 "(tried ...)";
+      Apply -> either linked, or "NP: not parameterisable in this build (...)" and the just-created parameter
+      is removed again. If NP, set that row's parameterisable to "no" in the workbook/CSV.
+  15. Save new version with a pending item -> the preview appears before saving; Cancel -> the save goes on
+      and audit\setup_audit_<new>.csv contains "PARAMSYNC,<object>,<row> <prop>,pending S1: ...".
+      With nothing pending the save shows no extra dialog.
+  16. 9. Pre-run check with a pending item -> "WARN  parameter sync  1 pending item(s) ...".
+  17. 18. Non-default settings report -> Output table + audit\nondefault_<sim>.csv: every setting that differs
+      from its baseline (linked or not, parameterisable or not).
+  18. Batch: SIMKIT_ACTION=audit (section C) -> setup audit has NONDEFAULT + PARAMSYNC sections; the sim is not
+      changed (compare the parameter list before/after).
+  19. Units check: change a boundary mass-flow rate in g/s or a temperature in C if your build offers it, then
+      sync: the parameter takes the units of the setting and the SI value must be identical (SimKit verifies
+      the value after linking and restores the old definition if it changed: result "link not taken or value
+      changed ... restored").
+Catalogue names: the BC props were renamed tStatic, uMag, tuInt, tWall in settings_catalogue.csv (0.2), so
+managed names such as p_BC_<inst>_tStatic pass the parameter naming rule.
+
+G. ENGINEERING CALCULATORS (lib\generic\SimKitCalc.java, SimKit 0.2)
+Unit-tested outside STAR: Core physics and Library were run with JDK 23 (--release 11), 95/95 checks:
+Celik GCI example in 2-D (p=1.534, phi_ext=6.1685, GCI=2.17 %), Gamma(0.5)=sqrt(pi), AFR, Rosin-Rammler
+(X=48.49 um), flow number (8.05e-8 m2), prism and thermocouple round trips, AST=Tg, batch-means CI
+coverage, all rows of fluids/materials/emissivity.csv parsed and evaluated. STAR calls are UNTESTED.
+ 1 Play SimKitCalc.java (File > Macro > Play Macro, or SimKit > Engineering calculators). The Output window
+   shows "[SimKitCalc] SimKitCalc 0.2 ... | interactive", the library line "3 fluids, 8 materials,
+   8 emissivity rows" with no "library WARNING", and the case-folder line.
+ 2 Press Self-check: p=1.5340, phi_ext=6.1685, GCI=2.17 %, Gamma(0.5)=1.772453850906, X=48.49 um.
+ 3 Tab 1, defaults (air 300 K, U 10, L 0.1, y+ 1): first layer = 5.5235e-05 m and a WARNING Re_x < 5e5.
+ 4 Tab 6 air 300 K: mu = 1.8459e-05. Tab 7 copper_pure at 500 K: k = 386. 250 K -> CLAMPED warning.
+ 5 In a case sim: every Compute adds a row to audit\calc_log.csv. In a scratch sim: nothing is written,
+   and the results say "calc_log: not written (no case folder)".
+ 6 From parameter... [U10][U50]: pick a field and a parameter; the field shows the SI value. A warning
+   "getSIValue n/a" means U50 failed (raw value used).
+ 7 To parameter... [U10][U30][U31][U51]: Compute tab 1, choose firstLayer, name p_firstLayer -> the parameter
+   exists with dimension length, unit m, value 5.5235e-05; the line ends "(read back OK)". Run it again and
+   answer Yes to overwrite. A "CHECK: read back" line means units/value mismatch: note the units shown.
+ 8 From report... [U19][U53]: on a sim with a y+ report, fill "measured y+" of tab 1 / y+ correction.
+ 9 Tab 4 From monitor CSV: Browse to a results\csv export, pick a column, Compute (mean, CI, tau_int).
+10 Close: the window disappears and the Output window prints "SimKitCalc closed.".
+New tags in SimKitCalc.java: U50 getSIValue (reflection), U51 UnitsManager.getPreferredUnits (reflection),
+U52 Simulation.println from the Swing thread (falls back to System.out), U53 Report.getUnits (reflection).
+U10, U19, U30, U31 are the same calls as in SimKit.java.
+If a tagged line fails to compile: record the GUI action with the macro recorder and paste the recorded call.
+
+H. COMPILE CHECK AGAINST A REAL STAR-CCM+ INSTALLATION (2026-11-11)
+Compiled with the JDK bundled with STAR-CCM+ 21.04.009 (2604) against its platform jars (no simulation run):
+  SimKit.java ............. 6 errors, fixed (below) -> compiles
+  SimKitCalc.java, ISO_parameters.java, ISO_templateCheck.java, ISO_exportHandoff.java -> compile unchanged
+Fixes (API names as found in 21.04; long-standing names, expected identical in 2402 -- confirm there):
+  [U08] the group manager class is star.base.neo.ClientServerObjectGroupManager (there is no "GroupsManager");
+        createGroup(String) and groupObjects(String, Collection, boolean) exist on it.
+  [U09] StarScript has play(), not execute():  new StarScript(getActiveRootObject(), file).play()
+  [U22] setPresentationName is on star.base.neo.NamedObject: the rename now casts to NamedObject.
+Found in 21.04: GlobalParameterManager is a GroupableObjectManager, so parameter folders (G30..G35) are supported.
+Still to be verified at run time (reflection calls compile in any build): the [Unn] getters listed in E/F/G.
+
+I. FIRST BATCH RUN ON STAR-CCM+ 2606.0002 / 21.04.009 (2026-11-11) AND FIXES IN 0.2.1
+Findings from the run and from the 21.04 class files:
+  - Test-sim builder: SimulationPartManager and the boundary-type classes (MassFlowBoundary, PressureBoundary,
+    InletBoundary, WallBoundary) are in star.common (not star.meshing / star.flow); SceneManager.createScalarScene
+    returns void (the builder now takes the newest scene); inner iterations: getMaxIterations().getQuantity().
+    The block part failed first, so most later builder steps failed in a chain -> rerun after 0.2.1.
+  - settings_catalogue.csv corrected and statically checked against 21.04 (31/31 paths end on a parameterisable
+    quantity): SurfaceGrowthRate is star.resurfacer.SurfaceGrowthRate; curvature uses
+    getNumPointsAroundCircleQuantity; inner iterations getMaxIterations; boundary sources star.common.*Boundary;
+    URF rows, steps, prism wall thickness now 'yes'.
+  - Simulation Operations node = star.automation.SimDriverWorkflowManager (SimKit now looks it up first).
+  - [U08]/[U13]/[U16] in the first PASTE_THIS were compile DEPRECATION warnings, not failures. Deprecated in
+    21.04 but still working: ClientServerObjectGroupManager.groupObjects(String,Collection,boolean),
+    BoundaryInterface.getBoundary0/1(), AutoSave.getStarUpdate(), star.common.MonitorPlot. Kept for 2402
+    compatibility; the runner now lists deprecations separately and counts [Unn] only on n/a/error lines.
+  - SimKitCalc: compiled and printed its self-check in batch (OK).
+  - SimKit batch precheck/audit/export: ran end-to-end; FAIL lines were caused by the incomplete test sim.
+Next: see section J.
+
+J. BATCH VALIDATION ON STAR-CCM+ 2606.0002 / 21.04.009 (2026-11-11, runs 3-5, Run-SimKitTests.ps1, no -Sim)
+Result of the last run (all steps exit 0, no Exception in the SimKit logs):
+  01 test-sim builder 33/33 OK; 07 factory sim 26/26 OK; 02 SimKitCalc self-check OK; 03 precheck, 04 audit,
+  05 export OK; 08 factory defaults harvested (33 catalogue rows; e.g. MESH01 1 m, MESH06 2, BC09 300 K, BC10 10);
+  09 lint: the 4 expected naming issues (r_mdot_in_air grammar, "Maximum 1", two default monitor names);
+  10/11 non-default + apply: 5 x S1 -> 5 managed parameters created and linked (p_MESH_MO30autoMesh_baseSize,
+  p_MESH_MO30autoMesh_nPrism, p_STOP_tMax, p_STOP_nSteps, p_BC_ENVboxINair_mdot), groups G30/G32/G33 created;
+  12 re-check: S2=5, pending 0; S0=18, OFF=13, NB=1 (MESH11: the custom control's target size is not active in
+  the factory sim, so it has no factory baseline -- expected; a template baseline covers it).
+Fixes made from these runs (still 0.2.1):
+  - New state OFF: STAR's "Class: ..." message (the option that creates the setting is not selected) is reported
+    as "inactive", report only, instead of n/a. n/a now means a catalogue path / API problem only.
+  - Lint: a simple shape part counts as a volumetric shape (VC_ rule) only when a volumetric custom control uses
+    it; otherwise it is a geometry part and its surfaces are checked (removes the ENV_box false positive).
+  - Catalogue: BC09 tTotal (inlet total temperature) and BC10 muRatio (turbulent viscosity ratio) added -- the
+    STAR defaults on a mass-flow inlet; BC02 tStatic / BC06 lTurb stay for inlets set up that way (else OFF).
+  - Builder: factory mode no longer creates the two boundary reports (default boundary names there).
+2402 vs 2604 deviations found: only deprecations (section I) + createScalarScene returning void + option enums
+set with the enum constant. No change of workflow. Still to do by the user (GUI): sections C, F (preview window),
+G (Simulation Assistant / menu), and a run on the targeted 2402 install.
+
+K. LINUX (RED HAT 7 / RED HAT 9)
+SimKit and the library macros are the same files on Windows and Linux. What differs:
+  - Share: default S:\CFD on Windows, /mnt/cfd on Linux (constants SHARE_ROOT_WINDOWS / SHARE_ROOT_LINUX at the
+    top of SimKit.java, SimKitCalc.java and the ISO macros; edit both once for your site). SIMKIT_SHARE overrides
+    it on both (Linux: export SIMKIT_SHARE=/mnt/cfd in ~/.bashrc, before starting STAR-CCM+).
+  - Path comparisons are case-insensitive on Windows only; on Linux the file and folder names must match exactly.
+  - Write batch run script: run_<CASE>.sh is made executable on Linux (u+x,g+x); on a CIFS mount without POSIX
+    permissions start it with  bash run_<CASE>.sh. The .bat keeps a SIMKIT_SHARE already set by the user.
+  - Open guideline / workbook: uses java.awt.Desktop, else xdg-open (Linux) / rundll32 (Windows).
+  - Register rows and case cards store paths relative to the case folder with '/', identical on both systems.
+Batch validation on Linux (same steps and same PASTE_THIS.txt as Run-SimKitTests.ps1):
+    bash <SHARE>/_SIMKIT/tests/run-simkit-tests.sh --star /opt/Siemens/<release> --license 1999@licserver \
+         --test-root ~/SimKitTest
+  (--star = launcher .../star/bin/starccm+ or the installation root; --license optional, never printed: masked
+  as <licence>; --np, --star-args "-power -podkey ...", --sim, --run-solver, --interactive, --skip-sync as in
+  the PowerShell runner.) Output: ~/SimKitTest/results/PASTE_THIS.txt + simkit_test_results_<ts>.tar.gz.
+  The script needs bash >= 4.2, GNU grep/sed/awk and tar only (RHEL 7 and 9 default). It was dry-run against a
+  stand-in launcher (all steps, redaction of the licence path/lines and of 'confidential' paths in both the
+  paste file and the archive); it has NOT yet run on a real Linux STAR-CCM+ install.
+GUI on Linux: Play Macro and the SimKit menu are Swing dialogs; they need a display (local X11, VNC, or
+ssh -X). Without a display STAR-CCM+ must run with -batch (SimKit then uses its batch actions).
+Platform support: check the Siemens "supported platforms" table of the release you install -- recent releases
+may no longer list RHEL 7; SimKit itself has no OS-specific requirement beyond the STAR-CCM+ JVM (Java 11+ level).

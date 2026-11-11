@@ -1,0 +1,34 @@
+id,family,source,path,prop,parameterisable,unit,description
+MESH01,MESH,automesh,getDefaultValues/get[star.meshing.BaseSize],baseSize,yes,m,Base size
+MESH02,MESH,automesh,getDefaultValues/get[star.meshing.PartsTargetSurfaceSize]/getRelativeSizeScalar,targetSurfPct,yes,%,Target surface size (% of base)
+MESH03,MESH,automesh,getDefaultValues/get[star.meshing.PartsMinimumSurfaceSize]/getRelativeSizeScalar,minSurfPct,yes,%,Minimum surface size (% of base)
+MESH04,MESH,automesh,getDefaultValues/get[star.meshing.SurfaceCurvature]/getNumPointsAroundCircleQuantity,curvPts,yes,-,Surface curvature: points per circle
+MESH05,MESH,automesh,getDefaultValues/get[star.resurfacer.SurfaceGrowthRate]/getGrowthRateScalar,surfGrowth,yes,-,Surface growth rate
+MESH06,MESH,automesh,getDefaultValues/get[star.prismmesher.NumPrismLayers]/getNumLayersValue,nPrism,yes,-,Number of prism layers
+MESH07,MESH,automesh,getDefaultValues/get[star.prismmesher.PrismLayerStretching]/getStretchingQuantity,prismStretch,yes,-,Prism layer stretching
+MESH08,MESH,automesh,getDefaultValues/get[star.prismmesher.PrismThickness]/getRelativeSizeScalar,prismThickPct,yes,%,Prism layer total thickness (% of base)
+MESH09,MESH,automesh,getDefaultValues/get[star.prismmesher.PrismWallThickness],prismFirst,yes,m,Prism layer near-wall thickness
+MESH11,MESH,customcontrol,getCustomValues/get[star.meshing.PartsTargetSurfaceSize]/getRelativeSizeScalar,targetSurfPct,yes,%,Custom control: target surface size (%)
+MESH12,MESH,customcontrol,getCustomValues/get[star.meshing.PartsMinimumSurfaceSize]/getRelativeSizeScalar,minSurfPct,yes,%,Custom control: minimum surface size (%)
+MESH13,MESH,customcontrol,getCustomValues/get[star.prismmesher.CustomPrismValuesManager]/get[star.prismmesher.NumPrismLayers]/getNumLayersValue,nPrism,check,-,Custom control: number of prism layers
+MESH14,MESH,customcontrol,getCustomValues/get[star.prismmesher.CustomPrismValuesManager]/get[star.prismmesher.PrismThickness]/getRelativeSizeScalar,prismThickPct,check,%,Custom control: prism thickness (%)
+MESH15,MESH,customcontrol,getCustomValues/get[star.meshing.VolumeControlSize]/getRelativeSizeScalar,volSizePct,check,%,Volumetric control: isotropic size (%)
+SOLV01,SOLV,solver:star.common.ImplicitUnsteadySolver,getTimeStep,dt,yes,s,Time step
+SOLV02,SOLV,solver:star.segregatedflow.SegregatedFlowSolver,getVelocitySolver/getUrfQuantity,urfVel,yes,-,Velocity under-relaxation
+SOLV03,SOLV,solver:star.segregatedflow.SegregatedFlowSolver,getPressureSolver/getUrfQuantity,urfPres,yes,-,Pressure under-relaxation
+SOLV04,SOLV,solver:star.segregatedenergy.SegregatedEnergySolver,getFluidUrfQuantity,urfEnergy,yes,-,Fluid energy under-relaxation
+SOLV05,SOLV,solver:star.kwturb.KwTurbSolver,getUrfQuantity,urfTurb,yes,-,k-omega turbulence under-relaxation
+STOP01,STOP,stopping:star.common.PhysicalTimeStoppingCriterion,getMaximumTime,tMax,yes,s,Maximum physical time
+STOP02,STOP,stopping:star.common.StepStoppingCriterion,getMaximumNumberStepsObject,nSteps,yes,-,Maximum steps
+STOP03,STOP,stopping:star.common.InnerIterationStoppingCriterion,getMaxIterations,nInner,yes,-,Maximum inner iterations
+BC01,BC,boundary:star.common.MassFlowBoundary,getValues/get[star.flow.MassFlowRateProfile]/getMethod[star.common.ConstantScalarProfileMethod],mdot,yes,kg/s,Mass flow rate
+BC02,BC,boundary:star.common.MassFlowBoundary,getValues/get[star.energy.StaticTemperatureProfile]/getMethod[star.common.ConstantScalarProfileMethod],tStatic,yes,K,Inlet static temperature
+BC03,BC,boundary:star.common.InletBoundary,getValues/get[star.flow.VelocityMagnitudeProfile]/getMethod[star.common.ConstantScalarProfileMethod],uMag,yes,m/s,Velocity magnitude
+BC04,BC,boundary:star.common.PressureBoundary,getValues/get[star.flow.StaticPressureProfile]/getMethod[star.common.ConstantScalarProfileMethod],p,yes,Pa,Outlet static pressure
+BC05,BC,boundary:star.common.MassFlowBoundary,getValues/get[star.turbulence.TurbulenceIntensityProfile]/getMethod[star.common.ConstantScalarProfileMethod],tuInt,yes,-,Turbulence intensity
+BC06,BC,boundary:star.common.MassFlowBoundary,getValues/get[star.turbulence.TurbulentLengthScaleProfile]/getMethod[star.common.ConstantScalarProfileMethod],lTurb,yes,m,Turbulent length scale
+BC07,BC,boundary:star.common.WallBoundary,getValues/get[star.energy.StaticTemperatureProfile]/getMethod[star.common.ConstantScalarProfileMethod],tWall,yes,K,Wall temperature
+BC08,BC,boundary:star.common.WallBoundary,getValues/get[star.radiation.common.EmissivityProfile]/getMethod[star.common.ConstantScalarProfileMethod],emis,check,-,Wall emissivity
+BC09,BC,boundary:star.common.MassFlowBoundary,getValues/get[star.energy.TotalTemperatureProfile]/getMethod[star.common.ConstantScalarProfileMethod],tTotal,yes,K,Inlet total temperature (STAR default for mass-flow inlets)
+BC10,BC,boundary:star.common.MassFlowBoundary,getValues/get[star.turbulence.TurbulentViscosityRatioProfile]/getMethod[star.common.ConstantScalarProfileMethod],muRatio,yes,-,Turbulent viscosity ratio (STAR default turbulence specification)
+PHYS01,PHYS,continuum,getReferenceValues/get[star.flow.ReferencePressure],pRef,yes,Pa,Reference pressure

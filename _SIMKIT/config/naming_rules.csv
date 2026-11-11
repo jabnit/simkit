@@ -1,0 +1,21 @@
+object_type,regex,example,message
+geometry_part,^(BRN|CAL|SPC|FIX|ENV|CEL)_[a-z][A-Za-z0-9]*(_[0-9]+)?$,BRN_stator,Body name: zone token + component from the dictionary; _n only for identical repeated bodies
+part_surface,^(IN|OUT|OPEN|WALL|SYM|IF)_[a-z][A-Za-z0-9]*(_(up|dn|in|out|ps|ss|fr|bk|tp|bt))?$,WALL_vane_ps,Surface name: BC token + feature + optional side token; set in CAD cleaning (face names)
+region,^(F|S)_[a-z][A-Za-z0-9]*$,F_air,"F = fluid, S = solid"
+interface,^IF_[FS]_[A-Za-z0-9]+__[FS]_[A-Za-z0-9]+$,IF_F_air__S_cone,Set automatically by SimKit Auto-name
+continuum,^PH_[A-Z]+(_[a-z][A-Za-z0-9]*)?$,PH_REACT,One continuum per stage
+parameter,^p_([a-z][A-Za-z0-9]*|(MESH|SOLV|STOP|BC|PHYS)_([A-Za-z0-9]+_)?[a-z][A-Za-z0-9]*)$,p_MESH_MO30autoMesh_baseSize,"Example of a user parameter: p_mdotAir. Units are carried by the parameter dimensions, not by the name. Upper-case family = managed by Parameter sync"
+field_function,^ff_[a-z][A-Za-z0-9]*$,ff_swirlKernel,User field functions only
+coordinate_system,^cs_[a-z][A-Za-z0-9]*$,cs_burnerCyl,Local coordinate systems
+derived_part,^dp_(plane|line|point|iso|thr|surf)_[a-z0-9][A-Za-z0-9]*$,dp_plane_x102mm,"type = plane, line, point, iso, thr, surf"
+report,^r_[A-Za-z0-9]+_[a-z0-9][A-Za-z0-9]*(_(avg|mfavg|max|min|int|sum|rms))?$,r_T_rake_avg,"stat = avg, mfavg, max, min, int, sum, rms"
+monitor,^m_[A-Za-z0-9]+_[a-z0-9][A-Za-z0-9]*(_(avg|mfavg|max|min|int|sum|rms))?$,m_T_rake_avg,Set automatically from the report name
+plot,^pl_[a-z]+_[a-z][A-Za-z0-9]*$,pl_bal_massEnergy,"group = bal, tgt, diag, spec, spray, rad"
+scene,^sc_[A-Za-z0-9]+_[a-z][A-Za-z0-9]*$,sc_T_midSide,"field first, then the saved view"
+tag,^T_[a-z][A-Za-z0-9]*$,T_yplus1,Only tags from the Tag_Dictionary sheet
+mesh_operation,^MO_[0-9]{2}_[a-z][A-Za-z0-9]*$,MO_30_autoMesh,nn gives the execution order
+mesh_control,^MC_[a-z][A-Za-z0-9]*$,MC_yplus1Walls,Surface / custom controls
+volumetric_shape,^VC_[a-z][A-Za-z0-9]*$,VC_shearLayer,Shape parts used for volumetric refinement
+simulation_operation,^SO_[0-9]{2}_[a-z][A-Za-z0-9]*$,SO_40_reactOn,nn gives the execution order
+group,^G[0-9]{2}_[a-z][A-Za-z0-9]*$,G00_balances,Tree folders; created by Auto-group
+default_name,^(Report|Plot|Scene|Monitor|Plane Section|Line Probe|Point Probe|Isosurface|Threshold|User Field Function|Tag|Group|Parameter|Scalar|Vector|Body|Default|Region|Interface|Continuum|Physics|Mesh|Automated Mesh|Volumetric Control|Surface Control|Block|Cylinder|Sphere|Cone)( [0-9]+)?$,Report 3,ERROR: a default STAR-CCM+ name was left; rename it

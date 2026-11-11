@@ -1,0 +1,14 @@
+fluid,property,model,coefficients,T_unit,T_min,T_max,unit,source,note
+air,M,const,28.965,K,,,kg/kmol,standard dry air,
+air,rho,idealgas,28.965,K,100,3000,kg/m3,"ideal gas, p input",
+air,mu,sutherland,"1.716e-5,273.15,110.4",K,200,2000,Pa.s,"White, Viscous Fluid Flow (Sutherland)",
+air,k,sutherland,"0.0241,273.15,194",K,200,2000,W/m.K,"White, Viscous Fluid Flow (Sutherland)",
+air,cp,table,300:1007;400:1014;500:1030;600:1051;700:1075;800:1099;900:1121;1000:1141;1100:1159;1200:1175;1300:1189;1400:1207;1500:1230,K,300,1500,J/kg.K,"Incropera & DeWitt, Table A.4",products of lean combustion ~ air within a few %
+water,rho,table,280:1000;300:997;320:989;340:979;360:967,K,280,360,kg/m3,"Incropera & DeWitt, Table A.6 (saturated liquid)",
+water,cp,table,280:4198;300:4179;320:4180;340:4188;360:4203,K,280,360,J/kg.K,"Incropera & DeWitt, Table A.6",
+water,mu,table,280:1.422e-3;300:8.55e-4;320:5.77e-4;340:4.20e-4;360:3.24e-4,K,280,360,Pa.s,"Incropera & DeWitt, Table A.6",
+water,k,table,280:0.582;300:0.613;320:0.640;340:0.660;360:0.674,K,280,360,W/m.K,"Incropera & DeWitt, Table A.6",
+jetA1_liquid,rho,linear,"800,288.15,-0.71",K,233,373,kg/m3,typical (spec range 775-840 at 15 C),use the fuel certificate value at 15 C
+jetA1_liquid,nu,andrade,"-19.211,1746.6",K,253,333,m2/s,"typical fit: 4.5 cSt at -20 C, 1.2 cSt at 40 C",spec max 8 cSt at -20 C; use certificate
+jetA1_liquid,sigma,linear,"0.0255,293.15,-8.0e-5",K,253,373,N/m,typical (23-27 mN/m at 20 C),
+jetA1_liquid,LHV,const,43.2e6,K,,,J/kg,typical (spec min 42.8 MJ/kg),use certificate

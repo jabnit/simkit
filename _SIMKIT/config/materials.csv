@@ -1,0 +1,27 @@
+material,property,model,coefficients,T_unit,T_min,T_max,unit,source,note
+copper_pure,rho,const,8933,K,,,kg/m3,"Incropera & DeWitt, Table A.1",
+copper_pure,cp,table,300:385;400:397;600:417;800:433;1000:451,K,300,1000,J/kg.K,"Incropera & DeWitt, Table A.1",
+copper_pure,k,table,300:401;400:393;600:379;800:366;1000:352,K,300,1000,W/m.K,"Incropera & DeWitt, Table A.1",copper tube alloys (C12200) have lower k: check supplier
+stainless_304,rho,const,7900,K,,,kg/m3,"Incropera & DeWitt, Table A.1",
+stainless_304,cp,table,300:477;400:515;600:557;800:582;1000:611,K,300,1000,J/kg.K,"Incropera & DeWitt, Table A.1",
+stainless_304,k,table,300:14.9;400:16.6;600:19.8;800:22.6;1000:25.4,K,300,1000,W/m.K,"Incropera & DeWitt, Table A.1",
+carbon_steel,rho,const,7854,K,,,kg/m3,"Incropera & DeWitt, Table A.1 (plain carbon steel)",
+carbon_steel,cp,table,300:434;400:487;600:559;800:685;1000:1169,K,300,1000,J/kg.K,"Incropera & DeWitt, Table A.1",peak near 1000 K is the Curie / phase effect
+carbon_steel,k,table,300:60.5;400:56.7;600:48.0;800:39.2;1000:30.0,K,300,1000,W/m.K,"Incropera & DeWitt, Table A.1",
+aluminium_2024T6,rho,const,2770,K,,,kg/m3,"Incropera & DeWitt, Table A.1",
+aluminium_2024T6,cp,table,300:875;400:925;600:1042,K,300,600,J/kg.K,"Incropera & DeWitt, Table A.1",
+aluminium_2024T6,k,table,300:177;400:186;600:186,K,300,600,W/m.K,"Incropera & DeWitt, Table A.1",
+inconel_600,rho,const,8470,K,,,kg/m3,Special Metals data sheet (room temperature),verify
+inconel_600,cp,const,444,K,,,J/kg.K,Special Metals data sheet (room temperature),room temperature only; use supplier T-dependence
+inconel_600,k,const,14.9,K,,,W/m.K,Special Metals data sheet (room temperature),room temperature only; rises with T
+inconel_625,rho,const,8440,K,,,kg/m3,Special Metals data sheet (room temperature),verify
+inconel_625,cp,const,410,K,,,J/kg.K,Special Metals data sheet (room temperature),room temperature only
+inconel_625,k,const,9.8,K,,,W/m.K,Special Metals data sheet (room temperature),room temperature only; rises with T
+T700_M21_virgin,rho,const,1575,C,,,kg/m3,"Tranchard et al. 2017, Materials 10:494, Table 5",
+T700_M21_virgin,cp,polyC,"687.31,2.8773",C,20,300,J/kg.K,"Tranchard et al. 2017, Table 5",T in degC
+T700_M21_virgin,k_zz,polyC,"0.61391,1.1113e-3",C,20,150,W/m.K,"Tranchard et al. 2017, Table 5",through-thickness; T in degC
+T700_M21_virgin,k_xy,polyC,"2.7811,7.4675e-3",C,20,150,W/m.K,"Tranchard et al. 2017, Table 5",in-plane; T in degC
+T700_M21_degraded,rho,const,1165,C,,,kg/m3,"Tranchard et al. 2017, Table 5",fully degraded (26 wt % loss)
+T700_M21_degraded,cp,polyC,"662.53,2.599,-2.0761e-3,5.1327e-7",C,20,1000,J/kg.K,"Tranchard et al. 2017, Table 5",T in degC
+T700_M21_degraded,k_zz,polyC,"7.7211e-2,2.3397e-4,-4.1903e-7,7.4228e-10",C,20,1000,W/m.K,"Tranchard et al. 2017, Table 5",includes cracking/delamination of tested coupons
+T700_M21_degraded,k_xy,polyC,"2.3005,6.4898e-3,-3.5481e-6",C,20,1000,W/m.K,"Tranchard et al. 2017, Table 5",T in degC

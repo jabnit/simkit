@@ -1,0 +1,2 @@
+proj,description,config_codes,template
+ISO,"ISO 2685 / AC 20-135 / AS6826 burner restitution (STAR-CCM+ baseline, Fluent optional)",CF;C1;C2;C3;VV,templates\ISO\ISO_template_v01.simt
