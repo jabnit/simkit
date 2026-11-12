@@ -1,0 +1,68 @@
+name: repo-checks
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Required files present
+        run: |
+          set -e
+          for f in README.md CONTRIBUTING.md CITATION.cff \
+                   _SIMKIT/SimKit.java _SIMKIT/VERSION.txt _SIMKIT/TESTING.txt \
+                   _SIMKIT/lib/generic/SimKitCalc.java \
+                   _SIMKIT/config/projects.csv _SIMKIT/config/naming_rules.csv \
+                   _SIMKIT/config/links.csv _SIMKIT/config/material_folders.csv \
+                   _SIMKIT/tests/Run-SimKitTests.ps1 _SIMKIT/tests/run-simkit-tests.sh; do
+            if [ ! -f "$f" ]; then echo "MISSING: $f"; exit 1; fi
+          done
+          echo "All required files present."
+
+      - name: Shell script syntax
+        run: bash -n _SIMKIT/tests/run-simkit-tests.sh
+
+      - name: Validate YAML / CFF / CSV
+        run: |
+          python -m pip install --quiet pyyaml
+          python - <<'PY'
+          import csv, glob, sys, yaml
+          bad = []
+          for p in sorted(glob.glob(".github/**/*.yml", recursive=True) + ["CITATION.cff"]):
+              try:
+                  with open(p, encoding="utf-8") as fh:
+                      yaml.safe_load(fh)
+              except Exception as exc:  # noqa: BLE001
+                  bad.append(f"{p}: {exc}")
+          for p in sorted(glob.glob("_SIMKIT/**/*.csv", recursive=True)):
+              try:
+                  with open(p, encoding="utf-8", newline="") as fh:
+                      rows = [r for r in csv.reader(fh) if r and not r[0].startswith("#")]
+                  if not rows:
+                      bad.append(f"{p}: no header row")
+              except Exception as exc:  # noqa: BLE001
+                  bad.append(f"{p}: {exc}")
+          if bad:
+              print("INVALID FILES:")
+              print("\n".join(bad))
+              sys.exit(1)
+          print("YAML, CFF and CSV files are valid.")
+          PY
+
+      # The macros compile only against the STAR-CCM+ libraries, which are licensed and not
+      # available here: the batch validation (_SIMKIT/TESTING.txt, section A) is run locally.

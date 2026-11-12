@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: >-
+  SimKit - team helper for STAR-CCM+ cases
+abstract: >-
+  STAR-CCM+ Java macros that keep the native workflow and add generated case identity,
+  versioned saves with set-up records, a pre-run check, results export, standard reports
+  and scenes, a mesh study helper, a case tracker and engineering calculators.
+type: software
+version: "0.3"
+date-released: "2026-11-11"
+repository-code: "https://github.com/jabnit/simkit"
+keywords:
+  - STAR-CCM+
+  - CFD
+  - simulation workflow
+  - macros
+# TODO(owner): add a `license:` field once a licence has been chosen (see README "Licence").
+authors:
+  - name: "jabnit"

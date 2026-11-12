@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Site set-up and testing
+    url: https://github.com/jabnit/simkit/blob/main/_SIMKIT/TESTING.txt
+    about: Read TESTING.txt before reporting a set-up or validation problem.
