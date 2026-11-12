@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MatML_Doc xmlns="http://www.matml.org/">
+  <Material>
+    <BulkDetails>
+      <Name>Inconel 625 TEST</Name>
+      <PropertyData property="p1">
+        <Data format="float">8.44</Data>
+      </PropertyData>
+      <PropertyData property="p2">
+        <Data format="float">9.8, 14.1, 20.0</Data>
+        <ParameterValue parameter="t1" format="float">
+          <Data>300, 600, 1000</Data>
+        </ParameterValue>
+      </PropertyData>
+      <PropertyData property="p3">
+        <Data format="float">410</Data>
+      </PropertyData>
+      <PropertyData property="p4">
+        <Data format="float">205</Data>
+      </PropertyData>
+    </BulkDetails>
+  </Material>
+  <Metadata>
+    <PropertyDetails id="p1"><Name>Density</Name><Units><Unit><Name>g</Name></Unit><Unit power="-3"><Name>cm</Name></Unit></Units></PropertyDetails>
+    <PropertyDetails id="p2"><Name>Thermal Conductivity</Name><Units name="W m^-1 K^-1"/></PropertyDetails>
+    <PropertyDetails id="p3"><Name>Specific Heat Capacity</Name><Units name="J kg^-1 K^-1"/></PropertyDetails>
+    <PropertyDetails id="p4"><Name>Young's Modulus</Name><Units name="GPa"/></PropertyDetails>
+    <ParameterDetails id="t1"><Name>Temperature</Name><Units name="K"/></ParameterDetails>
+  </Metadata>
+</MatML_Doc>

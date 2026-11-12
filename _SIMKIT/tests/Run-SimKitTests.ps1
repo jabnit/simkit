@@ -1,16 +1,17 @@
 <#
 .SYNOPSIS
-  SimKit 0.2 - automated batch validation on a licensed STAR-CCM+ installation.
+  SimKit 0.3 - automated batch validation on a licensed STAR-CCM+ installation (Windows 10/11).
 
 .DESCRIPTION
   Runs, without any GUI interaction, every check of TESTING.txt that works in batch:
     0. environment and STAR-CCM+ version
-    1. test share set-up (copy of _SIMKIT + a ready-made test case ISO-CF-001 built from your sim)
+    1. test share set-up (copy of _SIMKIT + a ready-made test case ISO-001 built from your sim)
     2. SimKitCalc.java in batch  -> compiles the calculator macro and prints its self-check
-    3. SimKit.java  precheck     -> compiles SimKit and runs the pre-run check
-    4. SimKit.java  audit        -> setup audit, NONDEFAULT and PARAMSYNC sections, case card
-    5. SimKit.java  export       -> monitor CSV, scene PNG, report snapshot, register row
-    6. (optional, -RunSolver)    -> starccm+ -batch run,SimKit.java : short solver run + audit + export
+    3. SimKit.java  check        -> compiles SimKit and runs Check
+    4. SimKit.java  record       -> set-up record + case card
+    5. SimKit.java  export       -> monitor CSV, scene PNG, report values
+    6. SimKit.java  (default)    -> record + export, as at the end of a cluster run
+    7. (optional, -RunSolver)    -> starccm+ -batch run,SimKit.java : short solver run + record + export
   Then it writes  <TestRoot>\results\PASTE_THIS.txt  (paste it into the chat) and a zip with all logs/outputs.
   The interactive tools (case initialisation dialogs, renaming previews, parameter-sync preview, calculator
   window) still need the GUI: use -Interactive at the end, or section C of TESTING.txt.
@@ -51,7 +52,6 @@ param(
   [int]$Np = 1,
   [switch]$RunSolver,
   [switch]$Interactive,
-  [switch]$SkipSync,
   [string]$KitSource = ""
 )
 
@@ -112,7 +112,7 @@ Log ("extra args    : {0}" -f $StarArgs)
 Log ("windows / ps  : {0} / {1}" -f [Environment]::OSVersion.VersionString, $PSVersionTable.PSVersion)
 
 if ($LicenseFile) { $env:CDLMD_LICENSE_FILE = $LicenseFile }
-$env:SIMKIT_SHARE = $TestRoot
+Remove-Item Env:SIMKIT_HOME -ErrorAction SilentlyContinue   # the kit finds its own root
 $env:SIMKIT_GUI = ""
 
 $verLog = Join-Path $results "00_version.log"
@@ -141,19 +141,17 @@ if (-not $Sim) {
   }
   Log ("test sim      : built {0} ({1:N1} MB)" -f $Sim, ((Get-Item $Sim).Length / 1MB))
 }
-$caseId = "ISO-CF-001"
-$case = Join-Path $TestRoot "PROJECTS\ISO\03_cases\$caseId"
-foreach ($d in "sim", "macros", "run", "results\csv", "results\img", "audit") {
+$caseId = "ISO-001"
+$case = Join-Path $TestRoot "cases\$caseId"
+foreach ($d in "sim", "results\csv", "results\img", "record") {
   New-Item -ItemType Directory -Force -Path (Join-Path $case $d) | Out-Null
 }
-New-Item -ItemType Directory -Force -Path (Join-Path $TestRoot "PROJECTS\ISO\00_admin\register_inbox") | Out-Null
-$caseSim = Join-Path $case "sim\${caseId}_COLD_v01.sim"
+$caseSim = Join-Path $case "sim\${caseId}_v01.sim"
 Copy-Item -Path $Sim -Destination $caseSim -Force
 @(
-  "case_id=$caseId", "project=ISO", "config=CF", "parent_case=",
-  "description=SimKit batch validation ($stamp)",
-  "created=$((Get-Date).ToString('yyyy-MM-ddTHH:mm:ss'))", "created_by=$env:USERNAME",
-  "stage=COLD", "version=1", "template=ISO_template_v01.simt"
+  "case_id=$caseId", "description=SimKit batch validation ($stamp)", "configuration=CF cold flow", "parent_case=", "parent_file=",
+  "created=$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))", "created_by=$env:USERNAME",
+  "latest_file=${caseId}_v01.sim", "latest_note=", "last_saved="
 ) | Set-Content -Path (Join-Path $case "sim\case_identity.txt") -Encoding ASCII
 Log "test case     : $caseSim"
 
@@ -163,30 +161,22 @@ $q = { param($s) "`"$s`"" }
 # ------------------------------------------------------------------ 2-5. batch runs
 $rc = @{}
 $rc["calc"]     = Invoke-Star "02_SimKitCalc_selfcheck" ($common + @("-batch", (& $q (Join-Path $kit "lib\generic\SimKitCalc.java")), (& $q $caseSim))) ""
-$rc["precheck"] = Invoke-Star "03_SimKit_precheck"      ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "precheck"
-$rc["audit"]    = Invoke-Star "04_SimKit_audit"         ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "audit"
+$rc["check"]    = Invoke-Star "03_SimKit_check"         ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "check"
+$rc["record"]   = Invoke-Star "04_SimKit_record"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "record"
 $rc["export"]   = Invoke-Star "05_SimKit_export"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "export"
-if (-not $SkipSync) {
-  # parameter-sync loop: factory defaults -> report -> apply -> report again
-  $factorySim = Join-Path $TestRoot "scratch\SimKit_factory.sim"
-  New-Item -ItemType Directory -Force -Path (Split-Path $factorySim) | Out-Null
-  $env:SIMKIT_TESTSIM = $factorySim; $env:SIMKIT_BUILD_MODE = "factory"
-  $null = Invoke-Star "07_build_factory_sim" ($common + @("-new", "-batch", (& $q (Join-Path $kit "tests\BuildSimKitTestSim.java")))) ""
-  $env:SIMKIT_TESTSIM = ""; $env:SIMKIT_BUILD_MODE = ""
-  if (Test-Path $factorySim) {
-    $env:SIMKIT_OWNER = "1"
-    $rc["snapshot"] = Invoke-Star "08_snapshot_factory" ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $factorySim))) "snapshot_factory"
-    $env:SIMKIT_OWNER = ""
-  } else { Log "factory sim not built: see 07_build_factory_sim.log" }
-  $rc["lint"]       = Invoke-Star "09_SimKit_lint"            ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "lint"
-  $rc["nondefault"] = Invoke-Star "10_SimKit_nondefault"      ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "nondefault"
-  $rc["sync_apply"] = Invoke-Star "11_SimKit_paramsync_apply" ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "paramsync_apply"
-  $rc["sync_after"] = Invoke-Star "12_SimKit_paramsync_after" ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "paramsync"
-  $rc["audit2"]     = Invoke-Star "13_SimKit_audit_after"     ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "audit"
-}
+$rc["default"]  = Invoke-Star "06_SimKit_default"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) ""
+$rc["reports"]  = Invoke-Star "07a_SimKit_reports"      ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "reports"
+$rc["reports2"] = Invoke-Star "07b_SimKit_reports_again" ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "reports"
+$rc["meshpar"]  = Invoke-Star "07c_SimKit_meshparams"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "meshparams"
+$rc["scenes"]   = Invoke-Star "07d_SimKit_scenes"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "scenes"
+$rc["meshstudy"] = Invoke-Star "07e_SimKit_meshstudy"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "meshstudy"
+$rc["button"]   = Invoke-Star "08_button_Check"         ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_Check.java")), (& $q $caseSim))) ""
 if ($RunSolver) {
-  $rc["run"]    = Invoke-Star "06_SimKit_run_audit_export" ($common + @("-batch", ("run," + (Join-Path $kit "SimKit.java")), "-batch-report", (& $q $caseSim))) ""
+  $rc["run"]    = Invoke-Star "09_SimKit_run_record_export" ($common + @("-batch", ("run," + (Join-Path $kit "SimKit.java")), "-batch-report", (& $q $caseSim))) ""
 }
+$rc["report"]   = Invoke-Star "10_SimKit_casereport"     ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "casereport"
+$rc["newver"]   = Invoke-Star "10b_SimKit_newversion"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "newversion"
+$rc["tracker"]  = Invoke-Star "11_SimKit_tracker"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "tracker"
 
 # ------------------------------------------------------------------ 6. PASTE_THIS.txt
 $paste = Join-Path $results "PASTE_THIS.txt"
@@ -200,9 +190,8 @@ $out.Add("")
 $patterns = @(
   "\[BuildTestSim\]", "error:(?!.*deprecat)", "Exception", "Error:", "\[SimKit\]", "\[SimKitCalc\]", "n/a \(", "FAIL", "WARN", "PASS",
   "batch:", "licen", "License", "Could not", "cannot", "Self-check", "GCI", "Gamma", "X=", "p=", "parameter sync",
-  "NONDEFAULT", "PARAMSYNC", "written", "wrote", "saved", "exported", "register",
-  "\b(S1|S2|S3|S4|S4b|S5|NP|NB|NA|OFF)\b", "pending", "p_(MESH|SOLV|STOP|BC|PHYS)_", "naming issue", "rule:",
-  "snapshot", "non-default", "after apply", "no readable instance", "inactive"
+  "written", "wrote", "saved", "exported", "set-up record", "case card", "list of changes", "case list",
+  "plots exported", "scenes exported", "report values", "=> ", "names", "expected", "button", "kit ", "created", "monitors", "not proposed", "already exists", "boundary types", "report\(s\)", "READY", "averaged", "key results", "solution", "residuals", "mass balance", "monitors stable", "y\+ vs", "p_mesh", "follow", "Relative to the base", "mesh size", "boundary values", "scene", "case report", "cells", "case tracker", "new version", "forked", "mesh level", "mesh study", "cells"
 )
 $rx = ($patterns | ForEach-Object { $_ }) -join "|"
 foreach ($f in Get-ChildItem $results -Filter "0*.log" | Sort-Object Name) {
@@ -232,13 +221,11 @@ $out.Add("")
 $out.Add("----- files produced in the test case -----")
 Get-ChildItem $case -Recurse -File | Where-Object { $_.Extension -ne ".sim" } |
   ForEach-Object { $out.Add(("{0}  {1:N0} B" -f $_.FullName.Substring($case.Length + 1), $_.Length)) }
-Get-ChildItem (Join-Path $TestRoot "PROJECTS\ISO\00_admin\register_inbox") -File -ErrorAction SilentlyContinue |
-  ForEach-Object { $out.Add(("register_inbox\{0}" -f $_.Name)) }
 $out.Add("")
 
 # heads of the key audit outputs
-foreach ($pat in "precheck_*.csv", "setup_audit_*.csv", "paramsync_*.csv") {
-  $f = Get-ChildItem (Join-Path $case "audit") -Filter $pat -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+foreach ($pat in "check_*.csv", "setup_*.csv") {
+  $f = Get-ChildItem (Join-Path $case "record") -Filter $pat -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
   if ($f) {
     $out.Add("----- $($f.Name) (first 60 lines; n/a rows first) -----")
     $c = Get-Content $f.FullName
@@ -274,7 +261,7 @@ $zip = Join-Path $TestRoot "simkit_test_results_$stamp.zip"
 $tmp = Join-Path $env:TEMP "simkit_zip_$stamp"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 Copy-Item $results -Destination (Join-Path $tmp "results") -Recurse
-Copy-Item (Join-Path $TestRoot "PROJECTS") -Destination (Join-Path $tmp "PROJECTS") -Recurse
+Copy-Item (Join-Path $TestRoot "cases") -Destination (Join-Path $tmp "cases") -Recurse
 Get-ChildItem $tmp -Recurse -Include "*.sim", "*.sim~" | Remove-Item -Force
 Get-ChildItem $tmp -Recurse -File -Include "*.log", "*.txt", "*.csv", "*.html" | ForEach-Object {
   $lines = Get-Content $_.FullName -ErrorAction SilentlyContinue

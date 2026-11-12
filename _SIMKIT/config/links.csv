@@ -1,4 +1,4 @@
 label,url
-Guideline (Google Doc),https://docs.google.com/document/d/REPLACE_WITH_ID
-Project workbook (Google Sheet),https://docs.google.com/spreadsheets/d/REPLACE_WITH_ID
-STAR-CCM+ 2402 documentation,file:///REPLACE_WITH_LOCAL_DOC_PATH
+# Links opened by the Guideline button. Paste the share link of the Google Doc / Sheet.
+Team guideline (Google Doc),https://docs.google.com/document/d/REPLACE_WITH_ID
+Case list (Google Sheet),https://docs.google.com/spreadsheets/d/REPLACE_WITH_ID

@@ -1,1 +1,1 @@
-SimKit 0.2.1 (2026-11-11) -- compile-checked against STAR-CCM+ 2604 (21.04); batch-validated on STAR-CCM+ 2606.0002 (21.04.009), see TESTING.txt section J; GUI tests and Linux (RHEL 7/9) run pending; Linux runner tests/run-simkit-tests.sh
+SimKit 0.3 (2026-11-11) -- simplified kit: New case, Save version, Check, Export results + Calculators, Compare versions, Case list, Guideline, About. Batch-validated on STAR-CCM+ 2606.0002 (21.04.009, Windows); GUI test, 2402 and Linux runs pending (TESTING.txt). Full 0.2.1 kit archived in SimKit_deliverables/_archive.

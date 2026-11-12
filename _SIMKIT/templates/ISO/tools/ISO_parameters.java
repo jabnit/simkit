@@ -8,7 +8,7 @@
 //   required / description: informational here (Pre-run check uses 'required'; descriptions are logged only,
 //   because 2402 has no certain API for a parameter description).
 // Existing parameters keep their values unless "Reset all to defaults" is chosen. Nothing is ever deleted.
-// Uncertain API calls are tagged [Unn]; see _SIMKIT\TESTING.txt. Share: SIMKIT_SHARE env var, else SHARE_ROOT.
+// Uncertain API calls are tagged [Unn]; see _SIMKIT\TESTING.txt. Kit: found from this file's location.
 package macro;
 
 import java.awt.GraphicsEnvironment;
@@ -29,11 +29,6 @@ import star.common.*;
 
 public class ISO_parameters extends StarMacro {
 
-  static final String SHARE_ROOT_WINDOWS = "S:\\CFD";
-  /** Team share on Linux (RHEL 7/9): mount point of the same share. Keep in step with SHARE_ROOT_WINDOWS. */
-  static final String SHARE_ROOT_LINUX = "/mnt/cfd";
-  /** Default share of this OS (SIMKIT_SHARE / -Dsimkit.share override it on both). */
-  static final String SHARE_ROOT = java.io.File.separatorChar == '\\' ? SHARE_ROOT_WINDOWS : SHARE_ROOT_LINUX;
   static final String PROJ = "ISO";
   static final String NAME_REGEX = "^p_[a-z][A-Za-z0-9]*$";
 
@@ -43,7 +38,8 @@ public class ISO_parameters extends StarMacro {
   @Override
   public void execute() {
     sim = getActiveSimulation();
-    Path csv = share().resolve("_SIMKIT").resolve("config").resolve("parameters_" + PROJ + ".csv");
+    ROOT = findRoot(this, "../../..");   // this file is <root>/templates/ISO/tools/
+    Path csv = inKit(kit(), "templates/" + PROJ + "/tools/parameters_" + PROJ + ".csv");
     List<Map<String, String>> rows;
     try {
       rows = readCsv(csv);
@@ -178,10 +174,29 @@ public class ISO_parameters extends StarMacro {
     return true;
   }
 
-  static Path share() {
-    String s = System.getenv("SIMKIT_SHARE");
-    return Paths.get(s == null || s.trim().isEmpty() ? SHARE_ROOT : s.trim());
+  /** SimKit root, found from this file's own location (STAR-CCM+ resolvePath; no variable to set). */
+  static Path ROOT;
+
+  /** Root from this macro's folder ('up' = path from this file's folder to the root); checks SimKit.java is there. */
+  static Path findRoot(StarMacro m, String up) {
+    Path r = Paths.get(m.resolvePath(up)).toAbsolutePath().normalize();
+    if (!Files.isRegularFile(r.resolve("SimKit.java"))) {
+      throw new IllegalStateException("SimKit root not found at " + r + " (this macro must be played from its place in the kit)");
+    }
+    return r;
   }
+
+  static Path kit() { return ROOT; }
+
+  /** A file or folder of the kit, given relative to the SimKit root with '/' (same text on Windows and Linux). */
+  static Path inKit(Path root, String rel) {
+    Path p = root;
+    for (String part : rel.split("/")) if (!part.isEmpty()) p = p.resolve(part);
+    return p;
+  }
+
+  static final char SEP = '\\';
+
 
   static String reason(Throwable t) {
     return t.getClass().getSimpleName() + (t.getMessage() == null ? "" : ": " + t.getMessage().split("\\r?\\n")[0]);

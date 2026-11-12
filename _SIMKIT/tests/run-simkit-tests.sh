@@ -3,14 +3,13 @@
 # SimKit - automated batch validation on a licensed STAR-CCM+ installation, LINUX (RHEL 7 / RHEL 9).
 # Same steps and same PASTE_THIS.txt as tests/Run-SimKitTests.ps1 (Windows 10/11):
 #   00 version | 01 build test sim (tests/BuildSimKitTestSim.java) | 02 SimKitCalc self-check |
-#   03 precheck | 04 audit | 05 export | 07 factory sim | 08 snapshot_factory | 09 lint | 10 nondefault |
-#   11 paramsync_apply | 12 paramsync | 13 audit again | optional 06 short solver run.
+#   03 check | 04 record | 05 export | 06 default (record + export) | optional 07 short solver run.
 # Needs only bash >= 4.2, GNU coreutils/grep/sed/awk, tar (all standard on RHEL 7 and 9).
 #
 # Usage:
 #   bash run-simkit-tests.sh --star /opt/Siemens/21.04.009 [--license 1999@licserver | /path/license.dat]
 #        [--sim /path/real.sim] [--test-root ~/SimKitTest] [--np 1] [--star-args "-power -podkey XXX"]
-#        [--run-solver] [--interactive] [--skip-sync] [--kit-source /path/_SIMKIT]
+#        [--run-solver] [--interactive] [--kit-source /path/_SIMKIT]
 #   --star     launcher (.../star/bin/starccm+) OR an installation root searched for star/bin/starccm+
 #   --license  sets CDLMD_LICENSE_FILE for the STAR-CCM+ processes of this script only. The licence file is
 #              never read or printed; its location is masked as <licence> in PASTE_THIS.txt and the archive.
@@ -18,7 +17,7 @@
 # =====================================================================================================
 set -u
 STAR=""; SIM=""; LICENSE=""; STAR_ARGS=""; TEST_ROOT="$HOME/SimKitTest"; NP=1
-RUN_SOLVER=0; INTERACTIVE=0; SKIP_SYNC=0; KIT_SOURCE=""
+RUN_SOLVER=0; INTERACTIVE=0; KIT_SOURCE=""
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
@@ -31,7 +30,6 @@ while [ $# -gt 0 ]; do
     --np) NP="$2"; shift 2 ;;
     --run-solver) RUN_SOLVER=1; shift ;;
     --interactive) INTERACTIVE=1; shift ;;
-    --skip-sync) SKIP_SYNC=1; shift ;;
     --kit-source) KIT_SOURCE="$2"; shift 2 ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) die "unknown argument: $1 (see --help)" ;;
@@ -87,7 +85,7 @@ log "extra args    : $STAR_ARGS"
 log "linux / bash  : $(cat /etc/redhat-release 2>/dev/null || uname -sr) / $BASH_VERSION"
 
 [ -n "$LICENSE" ] && export CDLMD_LICENSE_FILE="$LICENSE"
-export SIMKIT_SHARE="$TEST_ROOT"
+unset SIMKIT_HOME   # the kit finds its own root
 export SIMKIT_GUI=""
 
 "$LAUNCHER" -version > "$RESULTS/00_version.log" 2>&1
@@ -116,59 +114,49 @@ if [ -z "$SIM" ]; then
   log "test sim      : built $SIM ($(du -h "$SIM" | cut -f1))"
 fi
 
-CASE_ID="ISO-CF-001"
-CASE="$TEST_ROOT/PROJECTS/ISO/03_cases/$CASE_ID"
-for d in sim macros run results/csv results/img audit; do mkdir -p "$CASE/$d"; done
-mkdir -p "$TEST_ROOT/PROJECTS/ISO/00_admin/register_inbox"
-CASE_SIM="$CASE/sim/${CASE_ID}_COLD_v01.sim"
+CASE_ID="ISO-001"
+CASE="$TEST_ROOT/cases/$CASE_ID"
+for d in sim results/csv results/img record; do mkdir -p "$CASE/$d"; done
+CASE_SIM="$CASE/sim/${CASE_ID}_v01.sim"
 cp "$SIM" "$CASE_SIM" || die "cannot copy the sim"
 cat > "$CASE/sim/case_identity.txt" <<EOF
 case_id=$CASE_ID
-project=ISO
-config=CF
-parent_case=
 description=SimKit batch validation ($STAMP)
-created=$(date +%Y-%m-%dT%H:%M:%S)
+configuration=CF cold flow
+parent_case=
+parent_file=
+created=$(date '+%Y-%m-%d %H:%M:%S')
 created_by=${USER:-unknown}
-stage=COLD
-version=1
-template=ISO_template_v01.simt
+latest_file=${CASE_ID}_v01.sim
+latest_note=
+last_saved=
 EOF
 log "test case     : $CASE_SIM"
 
 # ------------------------------------------------------------------ 2-13. batch runs
 declare -A RCS
 invoke_star 02_SimKitCalc_selfcheck "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/lib/generic/SimKitCalc.java" "$CASE_SIM"; RCS[calc]=$RC
-invoke_star 03_SimKit_precheck precheck ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[precheck]=$RC
-invoke_star 04_SimKit_audit audit ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[audit]=$RC
+invoke_star 03_SimKit_check check ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[check]=$RC
+invoke_star 04_SimKit_record record ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[record]=$RC
 invoke_star 05_SimKit_export export ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[export]=$RC
-if [ "$SKIP_SYNC" -eq 0 ]; then
-  FACTORY_SIM="$TEST_ROOT/scratch/SimKit_factory.sim"
-  mkdir -p "$TEST_ROOT/scratch"
-  export SIMKIT_TESTSIM="$FACTORY_SIM" SIMKIT_BUILD_MODE=factory
-  invoke_star 07_build_factory_sim "" ${COMMON[@]+"${COMMON[@]}"} -new -batch "$KIT/tests/BuildSimKitTestSim.java"
-  unset SIMKIT_TESTSIM SIMKIT_BUILD_MODE
-  if [ -f "$FACTORY_SIM" ]; then
-    export SIMKIT_OWNER=1
-    invoke_star 08_snapshot_factory snapshot_factory ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$FACTORY_SIM"; RCS[snapshot]=$RC
-    unset SIMKIT_OWNER
-  else
-    log "factory sim not built: see 07_build_factory_sim.log"
-  fi
-  invoke_star 09_SimKit_lint lint ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[lint]=$RC
-  invoke_star 10_SimKit_nondefault nondefault ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[nondefault]=$RC
-  invoke_star 11_SimKit_paramsync_apply paramsync_apply ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[sync_apply]=$RC
-  invoke_star 12_SimKit_paramsync_after paramsync ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[sync_after]=$RC
-  invoke_star 13_SimKit_audit_after audit ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[audit2]=$RC
-fi
+invoke_star 06_SimKit_default "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[default]=$RC
+invoke_star 07a_SimKit_reports reports ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[reports]=$RC
+invoke_star 07b_SimKit_reports_again reports ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[reports2]=$RC
+invoke_star 07c_SimKit_meshparams meshparams ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshpar]=$RC
+invoke_star 07d_SimKit_scenes scenes ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[scenes]=$RC
+invoke_star 07e_SimKit_meshstudy meshstudy ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshstudy]=$RC
+invoke_star 08_button_Check "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_Check.java" "$CASE_SIM"; RCS[button]=$RC
 if [ "$RUN_SOLVER" -eq 1 ]; then
-  invoke_star 06_SimKit_run_audit_export "" ${COMMON[@]+"${COMMON[@]}"} -batch "run,$KIT/SimKit.java" -batch-report "$CASE_SIM"; RCS[run]=$RC
+  invoke_star 09_SimKit_run_record_export "" ${COMMON[@]+"${COMMON[@]}"} -batch "run,$KIT/SimKit.java" -batch-report "$CASE_SIM"; RCS[run]=$RC
 fi
+invoke_star 10_SimKit_casereport casereport ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[report]=$RC
+invoke_star 10b_SimKit_newversion newversion ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[newver]=$RC
+invoke_star 11_SimKit_tracker tracker ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[tracker]=$RC
 
 # ------------------------------------------------------------------ PASTE_THIS.txt (raw, redacted below)
 PASTE="$RESULTS/PASTE_THIS.txt"
 RAW="$RESULTS/.paste_raw.txt"
-PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a \(|FAIL|WARN|PASS|batch:|licen|License|Could not|cannot|Self-check|GCI|Gamma|X=|p=|parameter sync|NONDEFAULT|PARAMSYNC|written|wrote|saved|exported|register|\b(S1|S2|S3|S4|S4b|S5|NP|NB|NA|OFF)\b|pending|p_(MESH|SOLV|STOP|BC|PHYS)_|naming issue|rule:|snapshot|non-default|after apply|no readable instance|inactive'
+PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a \(|FAIL|WARN|PASS|batch:|licen|License|Could not|cannot|Self-check|GCI|Gamma|X=|p=|written|wrote|saved|exported|set-up record|case card|list of changes|case list|plots exported|scenes exported|report values|=> |names|expected|button|kit |created|monitors|not proposed|already exists|boundary types|report\(s\)|READY|averaged|key results|solution|residuals|mass balance|monitors stable|y\+ vs|p_mesh|follow|Relative to the base|mesh size|boundary values|scene|case report|cells|case tracker|new version|forked'
 {
   echo "===== SIMKIT BATCH VALIDATION (LINUX) - paste everything below into the chat ====="
   echo "date $STAMP | launcher $LAUNCHER | $(cat /etc/redhat-release 2>/dev/null || uname -sr)"
@@ -197,10 +185,9 @@ PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a
   echo
   echo "----- files produced in the test case -----"
   (cd "$CASE" && find . -type f ! -name '*.sim' ! -name '*.sim~' -printf '%P  %s B\n' | sort)
-  for f in "$TEST_ROOT"/PROJECTS/ISO/00_admin/register_inbox/*; do [ -f "$f" ] && echo "register_inbox/$(basename "$f")"; done
   echo
-  for pat in 'precheck_*.csv' 'setup_audit_*.csv' 'paramsync_*.csv'; do
-    f=$(ls -t "$CASE"/audit/$pat 2>/dev/null | head -n 1)
+  for pat in 'check_*.csv' 'setup_*.csv'; do
+    f=$(ls -t "$CASE"/record/$pat 2>/dev/null | head -n 1)
     if [ -n "$f" ]; then
       echo "----- $(basename "$f") (first 60 lines; n/a rows first) -----"
       na=$(grep 'n/a' "$f" | head -n 30)
@@ -234,13 +221,13 @@ redact "$RAW" "$PASTE"; rm -f "$RAW"
 
 # archive (logs + case outputs, no .sim), every text file redacted
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/simkit_tar_XXXXXX")
-cp -R "$RESULTS" "$TMP/results"; cp -R "$TEST_ROOT/PROJECTS" "$TMP/PROJECTS"
+cp -R "$RESULTS" "$TMP/results"; cp -R "$TEST_ROOT/cases" "$TMP/cases"
 find "$TMP" \( -name '*.sim' -o -name '*.sim~' \) -type f -delete
 find "$TMP" -type f \( -name '*.log' -o -name '*.txt' -o -name '*.csv' -o -name '*.html' \) | while read -r f; do
   redact "$f" "$f.red" && mv "$f.red" "$f"
 done
 ARCHIVE="$TEST_ROOT/simkit_test_results_$STAMP.tar.gz"
-tar -czf "$ARCHIVE" -C "$TMP" results PROJECTS
+tar -czf "$ARCHIVE" -C "$TMP" results cases
 rm -rf "$TMP"
 
 echo

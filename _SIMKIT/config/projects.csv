@@ -1,2 +1,3 @@
-proj,description,config_codes,template
-ISO,"ISO 2685 / AC 20-135 / AS6826 burner restitution (STAR-CCM+ baseline, Fluent optional)",CF;C1;C2;C3;VV,templates\ISO\ISO_template_v01.simt
+project,description,configurations
+# One row per project (case IDs look like ISO-007). configurations = optional suggestions for the free configuration field of New case (separated by ;).
+ISO,ISO 2685 / AC 20-135 burner,CF;C1;C2;C3;VV

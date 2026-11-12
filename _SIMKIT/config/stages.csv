@@ -1,9 +1,0 @@
-stage,description
-GEO,"Geometry imported / cleaned, no mesh"
-MESH,Mesh pipeline and mesh quality
-COLD,"Cold flow (no spray, no reaction)"
-SPRAY,Non-reacting spray
-REACT,"Reacting flow (FGM), no soot/radiation yet"
-RAD,Reacting + soot + radiation (production flame)
-CHT,Flame + conjugate solid / specimen hand-off
-POST,Post-processing only

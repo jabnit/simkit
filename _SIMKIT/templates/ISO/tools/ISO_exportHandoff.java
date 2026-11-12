@@ -10,7 +10,7 @@
 //                    if none exists, the instantaneous "Boundary Heat Flux" is used and flagged INSTANTANEOUS.
 //   HTC / T_ref    : "Heat Transfer Coefficient" / "Heat Transfer Reference Temperature" variants, if available.
 //   incident rad.  : "Boundary Incident Radiation" / "Irradiation" variants, if available.
-// Requires the sim to be in a SimKit case folder (<SHARE>\PROJECTS\<PROJ>\03_cases\<CASEID>\sim).
+// Requires the sim to be a SimKit case (<any folder>/<CASEID>/sim/<CASEID>[_label]_v<nn>.sim).
 // Uncertain API calls are tagged [Unn]; see _SIMKIT\TESTING.txt.
 package macro;
 
@@ -33,15 +33,10 @@ import star.common.*;
 
 public class ISO_exportHandoff extends StarMacro {
 
-  static final String SHARE_ROOT_WINDOWS = "S:\\CFD";
-  /** Team share on Linux (RHEL 7/9): mount point of the same share. Keep in step with SHARE_ROOT_WINDOWS. */
-  static final String SHARE_ROOT_LINUX = "/mnt/cfd";
-  /** Default share of this OS (SIMKIT_SHARE / -Dsimkit.share override it on both). */
-  static final String SHARE_ROOT = java.io.File.separatorChar == '\\' ? SHARE_ROOT_WINDOWS : SHARE_ROOT_LINUX;
   static final String TAG = "T_handoff";
   static final String FALLBACK_NAME_PART = "SPC_";
   static final String TABLE_NAME = "tbl_handoff";
-  static final Pattern SIM_NAME = Pattern.compile("^(([A-Z]{2,5})-[A-Z0-9]{2,3}-[0-9]{3})_[A-Z]+_v[0-9]{2,3}\\.sim$");
+  static final Pattern SIM_NAME = Pattern.compile("^(([A-Z][A-Z0-9]{1,9})-(?:([A-Z0-9]{2,3})-)?[0-9]{3})(?:_[A-Za-z][A-Za-z0-9]{0,19})?_v[0-9]{2,3}\\.sim$");
 
   /** Candidate field-function names per column: {column, exact names..., "kw:" keyword sets (all words must occur)}. */
   static final String[][] COLUMNS = {
@@ -60,6 +55,7 @@ public class ISO_exportHandoff extends StarMacro {
   @Override
   public void execute() {
     sim = getActiveSimulation();
+    ROOT = findRoot(this, "../../..");   // this file is <root>/templates/ISO/tools/
     try {
       run();
     } catch (Throwable t) {
@@ -89,18 +85,11 @@ public class ISO_exportHandoff extends StarMacro {
     if (!headless()) JOptionPane.showMessageDialog(null, "Written " + csv + "\n\n" + meta, "ISO_exportHandoff", JOptionPane.INFORMATION_MESSAGE);
   }
 
-  /** Case folder from the sim path; refuses to write anywhere else. */
+  /** Case folder from the sim path (SimKit case anywhere); refuses to write anywhere else. */
   Path caseDir() {
-    Path f = Paths.get(sim.getSessionPath()).toAbsolutePath().normalize();
-    Matcher m = SIM_NAME.matcher(f.getFileName().toString());
-    if (!m.matches()) throw new IllegalStateException("sim name is not <CASEID>_<STAGE>_v<nn>.sim");
-    Path expected = share().resolve("PROJECTS").resolve(m.group(2)).resolve("03_cases").resolve(m.group(1))
-        .toAbsolutePath().normalize();
-    Path caseDir = f.getParent().getParent();
-    if (!expected.toString().equalsIgnoreCase(caseDir.toString())) {
-      throw new IllegalStateException("sim is not in " + expected.resolve("sim") + " (check SIMKIT_SHARE)");
-    }
-    return caseDir;
+    Path cd = caseDirOf(Paths.get(sim.getSessionPath()));
+    if (cd == null) throw new IllegalStateException("the sim is not a SimKit case (<CASEID>/sim/<CASEID>[_label]_v<nn>.sim)");
+    return cd;
   }
 
   /** Boundaries tagged T_handoff; fallback on names containing SPC_ if tags are not readable. [U05] */
@@ -225,8 +214,29 @@ public class ISO_exportHandoff extends StarMacro {
     return true;
   }
 
-  static Path share() {
-    String s = System.getenv("SIMKIT_SHARE");
-    return Paths.get(s == null || s.trim().isEmpty() ? SHARE_ROOT : s.trim());
+  /** SimKit root, found from this file's own location (STAR-CCM+ resolvePath; no variable to set). */
+  static Path ROOT;
+
+  /** Root from this macro's folder ('up' = path from this file's folder to the root); checks SimKit.java is there. */
+  static Path findRoot(StarMacro m, String up) {
+    Path r = Paths.get(m.resolvePath(up)).toAbsolutePath().normalize();
+    if (!Files.isRegularFile(r.resolve("SimKit.java"))) {
+      throw new IllegalStateException("SimKit root not found at " + r + " (this macro must be played from its place in the kit)");
+    }
+    return r;
+  }
+
+  static Path kit() { return ROOT; }
+
+  static final char SEP = '\\';
+
+  /** Case folder of a sim saved by SimKit (<any folder>/<CASEID>/sim/<CASEID>[_label]_v<nn>.sim), else null. */
+  static Path caseDirOf(Path simFile) {
+    Path f = simFile.toAbsolutePath().normalize();
+    Matcher m = SIM_NAME.matcher(f.getFileName().toString());
+    Path simDir = f.getParent(), cd = simDir == null ? null : simDir.getParent();
+    if (!m.matches() || cd == null || !simDir.getFileName().toString().equals("sim")
+        || !cd.getFileName().toString().equals(m.group(1))) return null;
+    return cd;
   }
 }

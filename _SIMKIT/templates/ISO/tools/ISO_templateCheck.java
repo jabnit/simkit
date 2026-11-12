@@ -45,13 +45,8 @@ import star.vis.*;
 
 public class ISO_templateCheck extends StarMacro {
 
-  static final String SHARE_ROOT_WINDOWS = "S:\\CFD";
-  /** Team share on Linux (RHEL 7/9): mount point of the same share. Keep in step with SHARE_ROOT_WINDOWS. */
-  static final String SHARE_ROOT_LINUX = "/mnt/cfd";
-  /** Default share of this OS (SIMKIT_SHARE / -Dsimkit.share override it on both). */
-  static final String SHARE_ROOT = java.io.File.separatorChar == '\\' ? SHARE_ROOT_WINDOWS : SHARE_ROOT_LINUX;
   static final String PROJ = "ISO";
-  static final Pattern SIM_NAME = Pattern.compile("^(([A-Z]{2,5})-([A-Z0-9]{2,3})-[0-9]{3})_[A-Z]+_v[0-9]{2,3}\\.sim$");
+  static final Pattern SIM_NAME = Pattern.compile("^(([A-Z][A-Z0-9]{1,9})-(?:([A-Z0-9]{2,3})-)?[0-9]{3})(?:_[A-Za-z][A-Za-z0-9]{0,19})?_v[0-9]{2,3}\\.sim$");
   /** Types compared case-insensitively (STAR default names such as "Maximum Physical Time"). */
   static final List<String> CASE_INSENSITIVE = Arrays.asList("stopping_criterion");
 
@@ -61,7 +56,8 @@ public class ISO_templateCheck extends StarMacro {
   @Override
   public void execute() {
     sim = getActiveSimulation();
-    Path csv = share().resolve("_SIMKIT").resolve("config").resolve("template_objects_" + PROJ + ".csv");
+    ROOT = findRoot(this, "../../..");   // this file is <root>/templates/ISO/tools/
+    Path csv = inKit(kit(), "templates/" + PROJ + "/tools/template_objects_" + PROJ + ".csv");
     List<String[]> spec;
     try {
       spec = readCsv(csv);
@@ -94,7 +90,7 @@ public class ISO_templateCheck extends StarMacro {
   String configuration() {
     try {
       Matcher m = SIM_NAME.matcher(Paths.get(sim.getSessionPath()).getFileName().toString());
-      if (m.matches()) return m.group(3);
+      if (m.matches() && m.group(3) != null) return m.group(3);   // old case IDs carried the configuration code
     } catch (Throwable t) { /* unsaved sim */ }
     if (headless()) return "all";
     Object r = JOptionPane.showInputDialog(null, "Configuration of this sim (not a SimKit case file name):",
@@ -267,21 +263,18 @@ public class ISO_templateCheck extends StarMacro {
     try { return ((ClientServerObject) o).getPresentationName(); } catch (Throwable t) { return String.valueOf(o); }
   }
 
-  /** Writes audit\templatecheck_<simBase>.csv if the sim is <SHARE>\PROJECTS\<PROJ>\03_cases\<CASEID>\sim\<file>. */
+  /** Writes record/templatecheck_<simBase>.csv if the sim is a SimKit case (<CASEID>/sim/<file>). */
   void writeReport(List<String[]> rows) {
     try {
       Path sim0 = Paths.get(sim.getSessionPath()).toAbsolutePath().normalize();
-      Matcher mm = SIM_NAME.matcher(sim0.getFileName().toString());
-      Path caseDir = sim0.getParent().getParent();
-      Path expected = share().resolve("PROJECTS").resolve(mm.matches() ? mm.group(2) : "?").resolve("03_cases")
-          .resolve(mm.matches() ? mm.group(1) : "?").toAbsolutePath().normalize();
-      if (!mm.matches() || !expected.toString().equalsIgnoreCase(caseDir.toString())) {
+      Path caseDir = caseDirOf(sim0);
+      if (caseDir == null) {
         say("not in a SimKit case folder: CSV not written");
         return;
       }
       StringBuilder sb = new StringBuilder("level,object_type,name,detail\r\n");
       for (String[] r : rows) sb.append(q(r[0])).append(',').append(q(r[1])).append(',').append(q(r[2])).append(',').append(q(r[3])).append("\r\n");
-      Path f = caseDir.resolve("audit").resolve("templatecheck_" + sim0.getFileName().toString().replaceFirst("\\.sim$", "") + ".csv");
+      Path f = caseDir.resolve("record").resolve("templatecheck_" + sim0.getFileName().toString().replaceFirst("\\.sim$", "") + ".csv");
       Files.createDirectories(f.getParent());
       Files.write(f, sb.toString().getBytes(StandardCharsets.UTF_8));
       say("written " + f);
@@ -311,9 +304,37 @@ public class ISO_templateCheck extends StarMacro {
     return true;
   }
 
-  static Path share() {
-    String s = System.getenv("SIMKIT_SHARE");
-    return Paths.get(s == null || s.trim().isEmpty() ? SHARE_ROOT : s.trim());
+  /** SimKit root, found from this file's own location (STAR-CCM+ resolvePath; no variable to set). */
+  static Path ROOT;
+
+  /** Root from this macro's folder ('up' = path from this file's folder to the root); checks SimKit.java is there. */
+  static Path findRoot(StarMacro m, String up) {
+    Path r = Paths.get(m.resolvePath(up)).toAbsolutePath().normalize();
+    if (!Files.isRegularFile(r.resolve("SimKit.java"))) {
+      throw new IllegalStateException("SimKit root not found at " + r + " (this macro must be played from its place in the kit)");
+    }
+    return r;
+  }
+
+  static Path kit() { return ROOT; }
+
+  /** A file or folder of the kit, given relative to the SimKit root with '/' (same text on Windows and Linux). */
+  static Path inKit(Path root, String rel) {
+    Path p = root;
+    for (String part : rel.split("/")) if (!part.isEmpty()) p = p.resolve(part);
+    return p;
+  }
+
+  static final char SEP = '\\';
+
+  /** Case folder of a sim saved by SimKit (<any folder>/<CASEID>/sim/<CASEID>[_label]_v<nn>.sim), else null. */
+  static Path caseDirOf(Path simFile) {
+    Path f = simFile.toAbsolutePath().normalize();
+    Matcher m = SIM_NAME.matcher(f.getFileName().toString());
+    Path simDir = f.getParent(), cd = simDir == null ? null : simDir.getParent();
+    if (!m.matches() || cd == null || !simDir.getFileName().toString().equals("sim")
+        || !cd.getFileName().toString().equals(m.group(1))) return null;
+    return cd;
   }
 
   /** CSV -> rows {object_type, name, required, configs} by header name (configs optional). */

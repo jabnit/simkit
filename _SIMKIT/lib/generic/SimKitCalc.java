@@ -12,23 +12,24 @@
 //   give a WARNING (property data are clamped to [T_min, T_max] of the library row; correlations are evaluated as
 //   they are and the extrapolation is stated).
 //   Buttons: Compute (per sub-panel), From parameter... / From report... (fill an input from the open sim),
-//   To parameter... (create/update a global parameter p_<name> from a result), Copy (results to clipboard),
-//   Self-check (documented reference examples), Close.
+//   To parameter... (create/update a global parameter p_<name> from a result), Copy value for STAR-CCM+...
+//   (one result as a bare number + the STAR unit to select), Copy all results, Close. The self-check of the
+//   reference examples runs in batch (starccm+ -batch SimKitCalc.java).
 //   Traceability: every Compute appends a row (timestamp, user, tab, inputs, outputs) to
-//   <case>\audit\calc_log.csv when the sim lives in <SHARE>\PROJECTS\<PROJ>\03_cases\<CASEID>\sim\, and always
+//   <case>/record/calc_log.csv when the sim is a SimKit case (<CASEID>/sim/), and always
 //   prints it to the Output window. Without a case folder nothing is written to disk.
 //
 // Version 0.2 (2026-11-11). The physics (class Core) and the data loading (class Library) have NO STAR-CCM+
 // imports and were unit-tested with a plain JDK 11 compiler; the STAR-CCM+ calls are UNTESTED in STAR.
 //
-// Data (read at start; "Choose config folder..." on tab 6 reloads them):
-//   <SHARE>\_SIMKIT\config\fluids.csv, materials.csv, emissivity.csv.  <SHARE> = env SIMKIT_SHARE, else
-//   -Dsimkit.share, else SHARE_ROOT below (same rule as SimKit.java).
+// Data (read at start; "Choose data folder..." on the fluid tab reloads them; MatML *.xml material files are read
+//   from the folders listed in config/material_folders.csv and from the user's own folder, "MatML folder..."):
+//   <root>/lib/generic/data/fluids.csv, materials.csv, emissivity.csv. <root> = the SimKit root, found from this
+//   file's own location (two folders up); no variable or path to set.
 //
-// Threading: the window is a modal dialog shown from the macro thread (like SimKit). Compute runs pure Java on the
-//   Swing thread (only Simulation.println is called there, [U52]). Buttons that read or write the sim (From
-//   parameter, From report, To parameter) hide the window, the macro thread does the STAR calls, then the window
-//   re-opens with all inputs kept.
+// Threading: the window is NON-modal and floats next to STAR-CCM+; the macro ends as soon as it is shown, so the
+//   model stays usable. Compute is pure Java. From parameter / From report / To parameter call STAR-CCM+ directly
+//   from the button (short calls, as in a Simulation Assistant).
 //
 // Uncertain STAR-CCM+ API calls (each wrapped in try/catch(Throwable); failures are logged "n/a (<reason>)"):
 //   [U10] GlobalParameterManager.getObjects(), createGlobalParameter(ScalarGlobalParameter.class, "Scalar");
@@ -43,7 +44,7 @@
 //   [U53] Report.getUnits() [reflection], only to display the units of a report value
 //   (U10/U19/U30/U31 are the same calls as in SimKit.java / ISO_parameters.java.)
 //
-// Rules (SimKit): Java 11, no external libraries, never deletes anything, writes only <case>\audit\calc_log.csv.
+// Rules (SimKit): Java 11, no external libraries, never deletes anything, writes only <case>/record/calc_log.csv.
 package macro;
 
 import java.awt.BorderLayout;
@@ -96,13 +97,11 @@ import star.common.*;
 public class SimKitCalc extends StarMacro {
 
   static final String VERSION = "SimKitCalc 0.2 (2026-11-11)";
-  /** Team share. Overridden by env SIMKIT_SHARE or -Dsimkit.share=... (same rule as SimKit.java). */
-  static final String SHARE_ROOT_WINDOWS = "S:\\CFD";
-  /** Team share on Linux (RHEL 7/9): mount point of the same share. Keep in step with SHARE_ROOT_WINDOWS. */
-  static final String SHARE_ROOT_LINUX = "/mnt/cfd";
-  /** Default share of this OS (SIMKIT_SHARE / -Dsimkit.share override it on both). */
-  static final String SHARE_ROOT = java.io.File.separatorChar == '\\' ? SHARE_ROOT_WINDOWS : SHARE_ROOT_LINUX;
-  static final Pattern CASE_ID = Pattern.compile("^([A-Z]{2,5})-([A-Z0-9]{2,3})-([0-9]{3})$");
+  /** SimKit root, found from this file's own location (STAR-CCM+ resolvePath; no variable to set). */
+  static Path ROOT;
+  /** Property tables, relative to the SimKit root. */
+  static final String DATA_DIR = "lib/generic/data";
+  static final Pattern CASE_ID = Pattern.compile("^([A-Z][A-Z0-9]{1,9})-(?:([A-Z0-9]{2,3})-)?([0-9]{3})$");   // ISO-007 (old ISO-CF-001)
   static final Pattern PARAM_NAME = Pattern.compile("^p_[a-z][A-Za-z0-9]*$");
   static final String[] CALC_LOG_HEADER = {"timestamp", "user", "tab", "inputs", "outputs"};
   static final String ENTERED = "(entered values)";
@@ -117,26 +116,34 @@ public class SimKitCalc extends StarMacro {
   Path caseDir;            // null when the sim is not in a SimKit case folder
   String caseNote = "";
   JDialog dlg;
-  JTabbedPane tabsPane;
-  Runnable pending;        // STAR action requested by a button, run on the macro thread
   final List<Tab> tabs = new ArrayList<>();
+  Tab current;                                   // page shown
+  JPanel cards;                                  // one card per page
+  javax.swing.JList<Object> side;                // sidebar: group headings, pages, the "More" row
+  final javax.swing.DefaultListModel<Object> sideModel = new javax.swing.DefaultListModel<>();
+  JTextField filter;
+  boolean moreOpen, sideSync;
   final List<JComboBox<String>> mixedFluidCombos = new ArrayList<>();   // ENTERED + fluids
   final List<JComboBox<String>> fluidCombos = new ArrayList<>();        // fluids only
   final List<JComboBox<String>> materialCombos = new ArrayList<>();
 
   @Override
   public void execute() {
+    int preloaded = preloadOwnClasses(getClass());   // before anything else: see preloadOwnClasses
     sim = getActiveSimulation();
     log = new Log(sim);
+    ROOT = Paths.get(resolvePath("../..")).toAbsolutePath().normalize();   // this file is <root>/lib/generic/
     String batchReason = headlessReason();
     try {
-      lib = Library.load(Fs.kit().resolve("config"));
+      lib = Library.load(Fs.inKit(DATA_DIR));
     } catch (RuntimeException e) {
       lib = new Library();
       lib.errors.add("library not loaded: " + reason(e));
     }
+    loadMatMLFolders();
     detectCase();
-    log.line(VERSION + " | share " + Fs.share() + " | " + (batchReason == null ? "interactive" : "batch: " + batchReason));
+    log.line(VERSION + " | kit " + Fs.kit() + " | " + (batchReason == null ? "interactive" : "batch: " + batchReason)
+        + " | classes preloaded: " + preloaded);
     log.line(lib.summary());
     log.line(caseNote);
     if (batchReason != null) {
@@ -144,23 +151,68 @@ public class SimKitCalc extends StarMacro {
       log.line(Core.selfCheck());
       return;
     }
+    Object old = System.getProperties().get(WINDOW_KEY);   // one calculator window per session
+    if (old instanceof java.awt.Window) ((java.awt.Window) old).dispose();
     buildWindow();
-    while (true) {
-      pending = null;
-      dlg.setVisible(true);          // modal: returns when the window is hidden (STAR action) or closed
-      Runnable job = pending;
-      if (job == null) break;
-      try {
-        job.run();
-      } catch (Cancel c) {
-        if (c.getMessage() != null) log.line("cancelled: " + c.getMessage());
-      } catch (Throwable t) {
-        log.line("ERROR: " + reason(t));
-        JOptionPane.showMessageDialog(null, "ERROR: " + reason(t), "SimKitCalc", JOptionPane.ERROR_MESSAGE);
+    System.getProperties().put(WINDOW_KEY, dlg);
+    dlg.setVisible(true);   // non-modal: the macro ends here and STAR-CCM+ stays free to use
+    log.line("Calculators open (the window floats next to STAR-CCM+).");
+  }
+
+  static final String WINDOW_KEY = "simkit.calc.window";
+
+  /** "Always on top" preference, shared with SimKit.java (per user; default off). */
+  static boolean onTopPref() {
+    try { return "true".equals(java.util.prefs.Preferences.userRoot().node("simkit").get("alwaysOnTop", null)); }
+    catch (Throwable t) { return false; }
+  }
+
+  /** Saves the preference and applies it to every open SimKit / calculator window. */
+  static void setOnTopPref(boolean on) {
+    try { java.util.prefs.Preferences.userRoot().node("simkit").put("alwaysOnTop", String.valueOf(on)); } catch (Throwable t) { /* not kept */ }
+    for (java.awt.Window w : java.awt.Window.getWindows()) {
+      if (w.isDisplayable() && w instanceof javax.swing.RootPaneContainer
+          && Boolean.TRUE.equals(((javax.swing.RootPaneContainer) w).getRootPane().getClientProperty("simkit.window"))) {
+        w.setAlwaysOnTop(on);
       }
     }
-    dlg.dispose();
-    log.line("SimKitCalc closed.");
+  }
+
+  /** The STAR-CCM+ main window (largest visible frame), so the calculator floats over it. */
+  static java.awt.Frame starFrame() {
+    java.awt.Frame best = null;
+    long area = -1;
+    for (java.awt.Frame f : java.awt.Frame.getFrames()) {
+      if (!f.isVisible()) continue;
+      long a = (long) f.getWidth() * f.getHeight();
+      if (a > area) { area = a; best = f; }
+    }
+    return best;
+  }
+
+  /** STAR-CCM+ compiles a macro into a temporary folder and DELETES the class files when execute() returns. The
+   *  SimKit windows live on after that (non-blocking), so every class of this macro is loaded into memory now,
+   *  while the files still exist. Returns the number of classes loaded (-1 if the folder could not be read). */
+  static int preloadOwnClasses(Class<?> self) {
+    try {
+      java.nio.file.Path dir = java.nio.file.Paths.get(self.getProtectionDomain().getCodeSource().getLocation().toURI());
+      String pkg = self.getPackage() == null ? "" : self.getPackage().getName();
+      if (!pkg.isEmpty()) dir = dir.resolve(pkg.replace('.', '/'));
+      String simple = self.getSimpleName();
+      int n = 0;
+      try (java.nio.file.DirectoryStream<java.nio.file.Path> ds = java.nio.file.Files.newDirectoryStream(dir, simple + "*.class")) {
+        for (java.nio.file.Path f : ds) {
+          String fn = f.getFileName().toString();
+          String cn = fn.substring(0, fn.length() - 6);
+          if (!cn.equals(simple) && !cn.startsWith(simple + "$")) continue;
+          Class.forName((pkg.isEmpty() ? "" : pkg + ".") + cn, false, self.getClassLoader());
+          n++;
+        }
+      }
+      return n;
+    } catch (Throwable t) {
+      return -1;
+    }
   }
 
   /** Same heuristics as SimKit.java; env SIMKIT_GUI=1 forces the window. */
@@ -179,21 +231,21 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** Case folder from the sim path: <SHARE>\PROJECTS\<PROJ>\03_cases\<CASEID>\sim\<file>.sim */
+  /** Case folder from the sim path: <any folder>/<CASEID>/sim/<file>.sim (SimKit case) */
   void detectCase() {
     String path = "";
     try { path = sim.getSessionPath(); } catch (Throwable t) { /* unsaved */ }
-    caseDir = caseDirOf(path, Fs.projectsDir());
+    caseDir = caseDirOf(path);
     if (caseDir != null) {
-      caseNote = "case folder " + caseDir + " -> every Compute is appended to audit\\calc_log.csv";
+      caseNote = "case folder " + caseDir + " -> every Compute is appended to record/calc_log.csv";
     } else {
       caseNote = "calc_log: the sim is not in a SimKit case folder (" + (path == null || path.isEmpty() ? "unsaved sim" : path)
           + "): results go to the Output window only, nothing is written to disk";
     }
   }
 
-  /** Case directory for a sim path, or null. The case must lie below projectsDir (write guard, as in SimKit). */
-  static Path caseDirOf(String simPath, Path projectsDir) {
+  /** Case directory for a sim path, or null (the sim must be <CASEID>/sim/<CASEID>..._v<nn>.sim). */
+  static Path caseDirOf(String simPath) {
     if (simPath == null || simPath.trim().isEmpty()) return null;
     try {
       Path f = Paths.get(simPath).toAbsolutePath().normalize();
@@ -201,9 +253,7 @@ public class SimKitCalc extends StarMacro {
       if (simDir == null || !simDir.getFileName().toString().equalsIgnoreCase("sim")) return null;
       Path cd = simDir.getParent();
       if (cd == null || !CASE_ID.matcher(cd.getFileName().toString()).matches()) return null;
-      Path cases = cd.getParent();
-      if (cases == null || !cases.getFileName().toString().equalsIgnoreCase("03_cases")) return null;
-      if (!Fs.under(cd, projectsDir)) return null;
+      if (!f.getFileName().toString().startsWith(cd.getFileName().toString())) return null;
       return cd;
     } catch (Throwable t) {
       return null;
@@ -215,19 +265,56 @@ public class SimKitCalc extends StarMacro {
   // =====================================================================================================
 
   /** One calculator tab: sub-panels (forms) on the left, results on the right. */
+  /** One calculation page (sidebar entry): a form, its result view and its last result. */
   final class Tab {
-    final String name;
+    final String name, group, help;
+    final boolean more;
     final List<Form> forms = new ArrayList<>();
+    /** Plain-text results (what "Copy all results" copies); every change is shown in 'view' as formatted HTML. */
     final JTextArea out = new JTextArea();
+    /** Formatted results (styled text: no HTML engine, robust in STAR's look-and-feel). */
+    final javax.swing.JTextPane view = new javax.swing.JTextPane();
     Core.R last;
     String lastForm = "";
+    boolean styledSet;   // true while showResult() writes 'out' (the view already holds the formatted result)
 
-    Tab(String name) {
+    Tab(String group, String name, String help) {
       this.name = name;
+      this.group = group;
+      this.help = help;
+      this.more = Arrays.asList(MORE_GROUPS).contains(group);
       out.setEditable(false);
-      out.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+      view.setEditable(false);
+      view.setOpaque(true);                          // STAR's look-and-feel makes it transparent otherwise
+      view.setBackground(java.awt.Color.WHITE);
+      view.setMargin(new Insets(8, 10, 8, 10));
+      out.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        void sync() { if (!styledSet) javax.swing.SwingUtilities.invokeLater(() -> showText(out.getText())); }
+        @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { sync(); }
+        @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { sync(); }
+        @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { sync(); }
+      });
       out.setText(name + "\n\nEnter the inputs and press Compute. Results show the formula, the source and the validity range.\n"
           + "Units are SI unless stated next to the field. Leave optional inputs empty.");
+      showText(out.getText());   // at once (the listener only refreshes later changes)
+    }
+
+    /** Any plain message (errors, From cases..., Copy value...) shown as wrapped text. */
+    void showText(String text) {
+      if (styledSet) return;
+      javax.swing.text.StyledDocument d = new javax.swing.text.DefaultStyledDocument();
+      Styled.add(d, text, Styled.style(13, false, java.awt.Color.DARK_GRAY, null));
+      view.setStyledDocument(d);
+      view.setCaretPosition(0);
+    }
+
+    /** A computed result: styled table in the view, plain text in 'out' for copying. */
+    void showResult(String head, String inputs, Core.R r, String logNote) {
+      styledSet = true;
+      out.setText(head + "\nInputs: " + inputs + "\n\n" + r.text() + "\n" + logNote);
+      styledSet = false;
+      view.setStyledDocument(Styled.result(head, inputs, r, logNote));
+      view.setCaretPosition(0);
     }
   }
 
@@ -359,39 +446,77 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  Tab tab(String name) {
-    Tab t = new Tab(name);
+  /** Sidebar groups: the frequent ones always visible, the specialist ones under "More". */
+  static final String[] MAIN_GROUPS = {"Set-up", "Mesh", "Time & averaging", "Verification", "Heat transfer", "Fire test"};
+  static final String[] MORE_GROUPS = {"Flow numbers", "Combustion & spray", "Units"};
+  static final String MORE_ROW = "(more)";
+
+  Tab page(String group, String name, String help) {
+    if (!Arrays.asList(MAIN_GROUPS).contains(group) && !Arrays.asList(MORE_GROUPS).contains(group)) {
+      throw new IllegalStateException("unknown group " + group);
+    }
+    Tab t = new Tab(group, name, help);
     tabs.add(t);
     return t;
   }
 
   void buildWindow() {
     buildTabs();
-    dlg = new JDialog((java.awt.Frame) null, VERSION + "  -  " + simName(), true);
-    dlg.setDefaultCloseOperation(JDialog.HIDE_ON_CLOSE);
+    dlg = new JDialog(starFrame(), VERSION + "  -  " + simName(), java.awt.Dialog.ModalityType.MODELESS);
+    dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+    dlg.addWindowListener(new java.awt.event.WindowAdapter() {
+      @Override public void windowClosed(java.awt.event.WindowEvent e) {
+        if (System.getProperties().get(WINDOW_KEY) == dlg) System.getProperties().remove(WINDOW_KEY);
+        log.line("SimKitCalc closed.");
+      }
+    });
     JPanel root = new JPanel(new BorderLayout(6, 6));
     root.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-    root.add(new JLabel(caseNote), BorderLayout.NORTH);
-    tabsPane = new JTabbedPane();
-    for (int i = 0; i < tabs.size(); i++) tabsPane.addTab((i + 1) + " " + tabs.get(i).name, layoutTab(tabs.get(i)));
-    root.add(tabsPane, BorderLayout.CENTER);
+    JLabel note = new JLabel(caseNote);
+    note.setForeground(java.awt.Color.GRAY);
+    root.add(note, BorderLayout.NORTH);
+    cards = new JPanel(new java.awt.CardLayout());
+    for (int i = 0; i < tabs.size(); i++) cards.add(layoutPage(tabs.get(i)), "p" + i);
+    root.add(cards, BorderLayout.CENTER);
+    root.add(buildSidebar(), BorderLayout.WEST);
+    String last = null;
+    try { last = java.util.prefs.Preferences.userRoot().node("simkit").get("calcPage", null); } catch (Throwable x) { /* none */ }
+    Tab first = tabs.get(0);
+    for (Tab t : tabs) if (t.name.equals(last)) first = t;
+    moreOpen = first.more;
+    selectPage(first);
 
-    JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
-    south.add(button("From parameter...", e -> starAction(() -> fromParameter(currentTab()))));
-    south.add(button("From report...", e -> starAction(() -> fromReport(currentTab()))));
-    south.add(button("To parameter...", e -> starAction(() -> toParameter(currentTab()))));
-    south.add(button("Copy results", e -> copyResults(currentTab())));
-    south.add(button("Self-check", e -> {
-      Tab t = currentTab();
-      t.out.setText(Core.selfCheck());
-      t.out.setCaretPosition(0);
-    }));
-    south.add(button("Close", e -> { pending = null; dlg.setVisible(false); }));
+    JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+    left.add(groupLabel("Simulation:"));
+    left.add(button("From parameter...", e -> starAction(() -> fromParameter(currentTab()))));
+    left.add(button("From report...", e -> starAction(() -> fromReport(currentTab()))));
+    left.add(button("To parameter...", e -> starAction(() -> toParameter(currentTab()))));
+    left.add(javax.swing.Box.createHorizontalStrut(18));
+    left.add(groupLabel("Copy:"));
+    left.add(button("Value for STAR-CCM+...", e -> copyValue(currentTab())));
+    left.add(button("All results", e -> copyResults(currentTab())));
+    JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 2));
+    javax.swing.JCheckBox onTop = new javax.swing.JCheckBox("Keep in front of other apps", onTopPref());
+    onTop.setToolTipText("Keep the SimKit windows above every other window (remembered for next time). "
+        + "Off: they stay above STAR-CCM+ only.");
+    onTop.addActionListener(e -> setOnTopPref(onTop.isSelected()));
+    right.add(onTop);
+    right.add(button("Close", e -> dlg.dispose()));
+    JPanel south = new JPanel(new BorderLayout());
+    south.add(left, BorderLayout.WEST);
+    south.add(right, BorderLayout.EAST);
     root.add(south, BorderLayout.SOUTH);
     dlg.setContentPane(root);
-    dlg.setSize(1320, 800);
-    dlg.setLocationRelativeTo(null);
-    dlg.setAlwaysOnTop(true);
+    dlg.setSize(1180, 820);
+    dlg.setLocationRelativeTo(starFrame());
+    dlg.getRootPane().putClientProperty("simkit.window", Boolean.TRUE);
+    try { dlg.setAlwaysOnTop(onTopPref()); } catch (Throwable t) { /* not supported */ }
+  }
+
+  static JLabel groupLabel(String s) {
+    JLabel l = new JLabel(s);
+    l.setForeground(java.awt.Color.GRAY);
+    return l;
   }
 
   static JButton button(String text, java.awt.event.ActionListener a) {
@@ -400,36 +525,236 @@ public class SimKitCalc extends StarMacro {
     return b;
   }
 
-  Tab currentTab() { return tabs.get(Math.max(0, tabsPane.getSelectedIndex())); }
+  Tab currentTab() { return current != null ? current : tabs.get(0); }
 
-  /** Hides the window; the macro thread runs the job (STAR calls) and re-opens the window. */
+  // ----- sidebar ------------------------------------------------------------------------------------------
+
+  JComponent buildSidebar() {
+    filter = new JTextField();
+    filter.setToolTipText("Type to find a calculation (searches every page, also those under More)");
+    filter.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { refillSide(); }
+      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { refillSide(); }
+      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { refillSide(); }
+    });
+    filter.addActionListener(e -> {   // Enter: open the first match
+      for (int i = 0; i < sideModel.size(); i++) {
+        if (sideModel.get(i) instanceof Tab) { selectPage((Tab) sideModel.get(i)); return; }
+      }
+    });
+    side = new javax.swing.JList<>(sideModel);
+    side.setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
+    side.setCellRenderer(new SideRenderer());
+    side.addListSelectionListener(e -> {
+      if (e.getValueIsAdjusting() || sideSync) return;
+      int i = side.getSelectedIndex();
+      if (i < 0) return;
+      Object v = sideModel.get(i);
+      if (v instanceof Tab) {
+        showPage((Tab) v);
+      } else if (MORE_ROW.equals(v)) {
+        moreOpen = !moreOpen;
+        javax.swing.SwingUtilities.invokeLater(this::refillSide);
+      } else {   // a heading: move on to the next page in the direction of travel (keyboard), else stay
+        int cur = sideModel.indexOf(current), dir = i > cur ? 1 : -1;
+        for (int k = i; k >= 0 && k < sideModel.size(); k += dir) {
+          if (sideModel.get(k) instanceof Tab) { final Tab t = (Tab) sideModel.get(k); javax.swing.SwingUtilities.invokeLater(() -> selectPage(t)); return; }
+        }
+        javax.swing.SwingUtilities.invokeLater(this::refillSide);
+      }
+    });
+    JLabel find = new JLabel("Find");
+    find.setForeground(java.awt.Color.GRAY);
+    JPanel top = new JPanel(new BorderLayout(6, 0));
+    top.setBorder(BorderFactory.createEmptyBorder(0, 0, 6, 0));
+    top.add(find, BorderLayout.WEST);
+    top.add(filter, BorderLayout.CENTER);
+    JScrollPane sp = new JScrollPane(side);
+    sp.getVerticalScrollBar().setUnitIncrement(16);
+    JPanel p = new JPanel(new BorderLayout());
+    p.add(top, BorderLayout.NORTH);
+    p.add(sp, BorderLayout.CENTER);
+    p.setPreferredSize(new java.awt.Dimension(250, 10));
+    return p;
+  }
+
+  boolean matches(Tab t, String q) {
+    StringBuilder sb = new StringBuilder(t.name).append(' ').append(t.group).append(' ').append(t.help);
+    for (Form fm : t.forms) {
+      sb.append(' ').append(fm.title);
+      for (Field f : fm.fields.values()) sb.append(' ').append(f.label);
+      for (JComboBox<String> cb : fm.combos.values()) {
+        for (int i = 0; i < cb.getItemCount() && i < 12; i++) sb.append(' ').append(cb.getItemAt(i));
+      }
+    }
+    String all = sb.toString().toLowerCase(Locale.ROOT);
+    for (String w : q.split("\\s+")) if (!w.isEmpty() && !all.contains(w)) return false;
+    return true;
+  }
+
+  /** Rebuilds the sidebar (filter, More open or closed) and selects the page shown. */
+  void refillSide() {
+    if (side == null) return;
+    String q = filter.getText().trim().toLowerCase(Locale.ROOT);
+    sideSync = true;
+    try {
+      sideModel.clear();
+      List<String> groups = new ArrayList<>(Arrays.asList(MAIN_GROUPS));
+      groups.add(MORE_ROW);
+      groups.addAll(Arrays.asList(MORE_GROUPS));
+      boolean inMore = false;
+      for (String g : groups) {
+        if (g.equals(MORE_ROW)) {
+          inMore = true;
+          if (q.isEmpty()) sideModel.addElement(MORE_ROW);
+          continue;
+        }
+        if (inMore && q.isEmpty() && !moreOpen) continue;
+        List<Tab> in = new ArrayList<>();
+        for (Tab t : tabs) if (t.group.equals(g) && (q.isEmpty() || matches(t, q))) in.add(t);
+        if (in.isEmpty()) continue;
+        sideModel.addElement(g);
+        for (Tab t : in) sideModel.addElement(t);
+      }
+      if (sideModel.isEmpty()) sideModel.addElement("No calculation matches");
+      int i = sideModel.indexOf(current);
+      if (i >= 0) {
+        side.setSelectedIndex(i);
+        side.ensureIndexIsVisible(i);
+      } else {
+        side.clearSelection();
+      }
+    } finally {
+      sideSync = false;
+    }
+  }
+
+  /** Shows a page and remembers it (per user). */
+  void showPage(Tab t) {
+    current = t;
+    ((java.awt.CardLayout) cards.getLayout()).show(cards, "p" + tabs.indexOf(t));
+    try { java.util.prefs.Preferences.userRoot().node("simkit").put("calcPage", t.name); } catch (Throwable x) { /* not kept */ }
+  }
+
+  /** Shows a page and selects it in the sidebar (opens More if needed). */
+  void selectPage(Tab t) {
+    if (t.more) moreOpen = true;
+    showPage(t);
+    refillSide();
+  }
+
+  int moreCount() {
+    int n = 0;
+    for (Tab t : tabs) if (t.more) n++;
+    return n;
+  }
+
+  /** Sidebar look: group headings in small grey capitals, pages indented, the More row as a toggle. */
+  final class SideRenderer extends javax.swing.DefaultListCellRenderer {
+    @Override
+    public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> l, Object v, int i, boolean sel, boolean foc) {
+      if (v instanceof Tab) {
+        JLabel c = (JLabel) super.getListCellRendererComponent(l, ((Tab) v).name, i, sel, false);
+        c.setFont(l.getFont().deriveFont(Font.PLAIN, 13f));
+        c.setBorder(BorderFactory.createEmptyBorder(3, 18, 3, 6));
+        c.setToolTipText(((Tab) v).help);
+        return c;
+      }
+      JLabel c = (JLabel) super.getListCellRendererComponent(l, "", i, false, false);
+      c.setToolTipText(null);
+      if (MORE_ROW.equals(v)) {
+        c.setText((moreOpen ? "\u25BE  " : "\u25B8  ") + "More (" + moreCount() + ")  -  specialist");
+        c.setFont(l.getFont().deriveFont(Font.BOLD, 12f));
+        c.setForeground(new java.awt.Color(0x2F, 0x5B, 0x8A));
+        c.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, new java.awt.Color(0xDD, 0xDD, 0xDD)),
+            BorderFactory.createEmptyBorder(9, 6, 5, 6)));
+        c.setToolTipText(moreOpen ? "Hide the specialist calculations" : "Show the specialist calculations (flow numbers, combustion & spray, units)");
+      } else {
+        c.setText(String.valueOf(v).toUpperCase(Locale.ROOT));
+        c.setFont(l.getFont().deriveFont(Font.BOLD, 11f));
+        c.setForeground(new java.awt.Color(0x55, 0x66, 0x77));
+        c.setBorder(BorderFactory.createEmptyBorder(10, 6, 2, 6));
+      }
+      return c;
+    }
+  }
+
+  /** Runs a short STAR-CCM+ action (read/create a parameter, read a report) from the button, as a Simulation
+   *  Assistant does; the window stays open and STAR-CCM+ stays usable. */
   void starAction(Runnable job) {
-    pending = job;
-    dlg.setVisible(false);
+    try {
+      job.run();
+    } catch (Cancel c) {
+      if (c.getMessage() != null) log.line("cancelled: " + c.getMessage());
+    } catch (Throwable t) {
+      log.line("ERROR: " + reason(t));
+      JOptionPane.showMessageDialog(dlg, "ERROR: " + reason(t), "SimKitCalc", JOptionPane.ERROR_MESSAGE);
+    }
   }
 
   String simName() {
     try { return sim.getPresentationName(); } catch (Throwable t) { return "?"; }
   }
 
-  JComponent layoutTab(Tab t) {
-    JPanel left = new JPanel();
-    left.setLayout(new BoxLayout(left, BoxLayout.Y_AXIS));
-    for (Form fm : t.forms) left.add(layoutForm(fm));
+  /** A page: heading (name, when to use), the form, the result below. */
+  JComponent layoutPage(Tab t) {
+    JPanel head = new JPanel(new java.awt.GridLayout(0, 1, 0, 2));
+    head.setBorder(BorderFactory.createEmptyBorder(2, 6, 6, 6));
+    JLabel title = new JLabel(t.name);
+    title.setFont(title.getFont().deriveFont(Font.BOLD, 17f));
+    head.add(title);
+    JLabel help = new JLabel(t.help);
+    help.setFont(help.getFont().deriveFont(Font.PLAIN, 12f));
+    help.setForeground(new java.awt.Color(0x44, 0x44, 0x44));
+    head.add(help);
+    for (Form fm : t.forms) {
+      if (fm.title.equals(t.name)) continue;
+      JLabel sub = new JLabel(fm.title);
+      sub.setFont(sub.getFont().deriveFont(Font.ITALIC, 11f));
+      sub.setForeground(java.awt.Color.GRAY);
+      head.add(sub);
+    }
+    JPanel forms = new JPanel();
+    forms.setLayout(new BoxLayout(forms, BoxLayout.Y_AXIS));
+    for (Form fm : t.forms) forms.add(layoutForm(fm));
     JPanel holder = new JPanel(new BorderLayout());
-    holder.add(left, BorderLayout.NORTH);
-    JScrollPane ls = new JScrollPane(holder);
+    holder.add(forms, BorderLayout.WEST);
+    JPanel north = new JPanel(new BorderLayout());
+    north.add(holder, BorderLayout.NORTH);
+    JScrollPane ls = new JScrollPane(north);
+    ls.setBorder(BorderFactory.createEmptyBorder());
     ls.getVerticalScrollBar().setUnitIncrement(16);
-    JSplitPane sp = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, ls, new JScrollPane(t.out));
-    sp.setDividerLocation(520);
-    return sp;
+    JScrollPane rs = new JScrollPane(t.view);
+    rs.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+    rs.setOpaque(true);
+    rs.getViewport().setOpaque(true);
+    rs.getViewport().setBackground(java.awt.Color.WHITE);
+    JSplitPane sp = new JSplitPane(JSplitPane.VERTICAL_SPLIT, ls, rs);
+    sp.setBorder(BorderFactory.createEmptyBorder());
+    sp.setDividerLocation(Math.min(holder.getPreferredSize().height + 8, 430));
+    sp.setResizeWeight(0);
+    JPanel page = new JPanel(new BorderLayout());
+    page.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 0));
+    page.add(head, BorderLayout.NORTH);
+    page.add(sp, BorderLayout.CENTER);
+    return page;
+  }
+
+  static final int LABEL_W = 260, FIELD_W = 150, UNIT_W = 60;
+
+  static <C extends JComponent> C fixed(C c, int w) {
+    java.awt.Dimension d = new java.awt.Dimension(w, c.getPreferredSize().height);
+    c.setPreferredSize(d);
+    c.setMinimumSize(d);
+    if (c instanceof JLabel) c.setToolTipText(((JLabel) c).getText());   // full label if cut
+    return c;
   }
 
   JPanel layoutForm(Form fm) {
     JPanel p = new JPanel(new GridBagLayout());
-    p.setBorder(BorderFactory.createTitledBorder(fm.title));
+    p.setBorder(BorderFactory.createEmptyBorder(4, 0, 6, 4));
     GridBagConstraints g = new GridBagConstraints();
-    g.insets = new Insets(1, 3, 1, 3);
+    g.insets = new Insets(2, 3, 2, 3);
     g.anchor = GridBagConstraints.WEST;
     int row = 0;
     for (String o : fm.order) {
@@ -441,60 +766,65 @@ public class SimKitCalc extends StarMacro {
       g.gridwidth = 1;
       if (o.startsWith("f:")) {
         Field f = fm.fields.get(k);
-        p.add(new JLabel(f.label), g);
+        p.add(fixed(new JLabel(f.label), LABEL_W), g);
         g.gridx = 1;
-        g.weightx = 1;
-        g.fill = GridBagConstraints.HORIZONTAL;
-        p.add(f.tf, g);
+        p.add(fixed(f.tf, FIELD_W), g);
         g.gridx = 2;
-        g.weightx = 0;
-        g.fill = GridBagConstraints.NONE;
-        p.add(new JLabel(f.unit), g);
+        JLabel u = new JLabel(f.unit);
+        u.setForeground(java.awt.Color.GRAY);
+        p.add(fixed(u, UNIT_W), g);
       } else {
         JComboBox<String> cb = fm.combos.get(k);
-        p.add(new JLabel(cb.getName()), g);
+        p.add(fixed(new JLabel(cb.getName()), LABEL_W), g);
         g.gridx = 1;
         g.gridwidth = 2;
-        g.weightx = 1;
-        g.fill = GridBagConstraints.HORIZONTAL;
-        p.add(cb, g);
+        p.add(fixed(cb, FIELD_W + UNIT_W + 6), g);
       }
     }
-    JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+    JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
     for (JComponent c : fm.extras) buttons.add(c);
-    buttons.add(button(fm.computeLabel, e -> compute(fm)));
+    JButton go = button(fm.computeLabel, e -> compute(fm));
+    go.setFont(go.getFont().deriveFont(Font.BOLD));
+    buttons.add(go);
     g.gridy = row;
     g.gridx = 0;
     g.gridwidth = 3;
-    g.fill = GridBagConstraints.NONE;
+    g.weightx = 1;
+    g.fill = GridBagConstraints.HORIZONTAL;
     p.add(buttons, g);
+    p.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, p.getPreferredSize().height));
+    fluidFields(fm);   // grey the fields that the selected fluid provides
+    for (Field f : fm.fields.values()) {
+      if (f.label.contains("(library)") || Arrays.asList(PROPERTY_KEYS).contains(f.key)) {
+        f.tf.addActionListener(e -> fluidFields(fm));   // Enter in T / p refreshes the library values
+      }
+    }
     return p;
   }
 
   /** Compute: pure Java on the Swing thread; results + calc_log. */
   void compute(Form fm) {
     Tab t = fm.tab;
-    String head = "[" + Fmt.iso() + "] " + t.name + " / " + fm.title;
+    String head = "[" + Fmt.iso() + "] " + t.name;
     try {
       Core.R r = fm.calc.apply(fm);
       t.last = r;
       t.lastForm = fm.title;
       String inputs = fm.inputs();
-      String logNote = calcLog(t.name + " / " + fm.title, inputs, r.outputs());
-      t.out.setText(head + "\nInputs: " + inputs + "\n\n" + r.text() + "\n" + logNote);
+      String logNote = calcLog(t.name, inputs, r.outputs());
+      t.showResult(head, inputs, r, logNote);
     } catch (IllegalArgumentException e) {
       t.out.setText(head + "\n\nINPUT ERROR: " + e.getMessage());
     } catch (Throwable e) {
       t.out.setText(head + "\n\nERROR: " + reason(e));
     }
-    t.out.setCaretPosition(0);
   }
 
-  /** Appends one row to <case>\audit\calc_log.csv (if a case folder exists) and prints it. Returns a status line. */
+  /** Appends one row to <case>/record/calc_log.csv (if a case folder exists) and prints it. Returns a status line. */
   String calcLog(String tabName, String inputs, String outputs) {
     log.line("calc | " + tabName + " | in: " + inputs + " | out: " + outputs);    // [U52] on the Swing thread
     if (caseDir == null) return "calc_log: not written (no case folder) -- logged in the Output window only.";
-    Path f = caseDir.resolve("audit").resolve("calc_log.csv");
+    Path f = caseDir.resolve("record").resolve("calc_log.csv");
     try {
       Fs.appendCsv(f, caseDir, CALC_LOG_HEADER, new String[] {Fmt.iso(), Fs.user(), tabName, inputs, outputs});
       return "calc_log: appended to " + f;
@@ -502,6 +832,48 @@ public class SimKitCalc extends StarMacro {
       log.line("calc_log: n/a (" + reason(e) + ")");
       return "calc_log: NOT written (" + reason(e) + ")";
     }
+  }
+
+  /** Copies ONE result as a bare number (paste it in a STAR-CCM+ field) and says which STAR unit to select. */
+  void copyValue(Tab t) {
+    if (t.last == null || t.last.items.isEmpty()) {
+      t.out.append("\n(press Compute first: there is no result to copy)");
+      return;
+    }
+    String[] labels = new String[t.last.items.size()];
+    for (int i = 0; i < labels.length; i++) {
+      Core.Item it = t.last.items.get(i);
+      labels[i] = it.key + " = " + Core.g(it.v) + " " + starUnit(it.unit) + "   " + it.desc;
+    }
+    Object c = JOptionPane.showInputDialog(dlg, "Value to copy (paste it in STAR-CCM+, then select the unit shown):",
+        "Copy value for STAR-CCM+", JOptionPane.QUESTION_MESSAGE, null, labels, labels[0]);
+    if (c == null) return;
+    Core.Item it = t.last.items.get(java.util.Arrays.asList(labels).indexOf(c));
+    String v = starNumber(it.v);
+    try {
+      Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(v), null);
+      t.out.append("\nCopied " + it.key + " = " + v + "  -> paste it in STAR-CCM+ and select the unit: " + starUnit(it.unit));
+    } catch (Throwable e) {
+      t.out.append("\n(copy failed: " + reason(e) + "; value " + v + ")");
+    }
+  }
+
+  /** Number as STAR-CCM+ fields accept it: dot decimal, 6 significant digits, no grouping (e.g. 1.23456E-5). */
+  static String starNumber(double v) {
+    if (v == Math.rint(v) && Math.abs(v) < 1e9) return String.valueOf((long) v);
+    String s = String.format(Locale.ROOT, "%.6g", v).trim();
+    if (s.contains("e")) {
+      String[] p = s.split("e");
+      String m = p[0].contains(".") ? p[0].replaceAll("0+$", "").replaceAll("\\.$", "") : p[0];
+      return m + "E" + Integer.parseInt(p[1]);
+    }
+    return s.contains(".") ? s.replaceAll("0+$", "").replaceAll("\\.$", "") : s;
+  }
+
+  /** Unit as written in the STAR-CCM+ unit list: m3 -> m^3, J/kg.K -> J/kg-K, "-" -> dimensionless. */
+  static String starUnit(String u) {
+    if (u == null || u.isEmpty() || u.equals("-")) return "(dimensionless)";
+    return u.replaceAll("([A-Za-z])([0-9])", "$1^$2").replace('.', '-');
   }
 
   void copyResults(Tab t) {
@@ -525,7 +897,40 @@ public class SimKitCalc extends StarMacro {
     JComboBox<String> cb = fm.c("fluid", label, fluidNames(true));
     mixedFluidCombos.add(cb);
     if (lib.fluids.containsKey("air")) cb.setSelectedItem("air");
+    cb.addActionListener(e -> fluidFields(fm));
     return cb;
+  }
+
+  static final String[] PROPERTY_KEYS = {"rho", "mu", "k", "cp"};
+
+  /** Library fluid selected: the property fields are filled from the library and greyed (not to be typed); the
+   *  "(library)" inputs (temperature, pressure) are active. "(entered values)": the other way round. */
+  void fluidFields(Form fm) {
+    if (!fm.combos.containsKey("fluid")) return;
+    String fl = fm.s("fluid");
+    boolean entered = fl.isEmpty() || fl.equals(ENTERED);
+    for (Field f : fm.fields.values()) {
+      boolean prop = Arrays.asList(PROPERTY_KEYS).contains(f.key);
+      boolean libOnly = f.label.contains("(library)");
+      if (prop) setActive(f, entered);
+      else if (libOnly) setActive(f, !entered);
+    }
+    if (entered) return;
+    try {   // show the library values at the temperature / pressure of the form (Compute uses the right temperature)
+      double T = fm.has("T") ? fm.v("T")                                                   // temperature field,
+          : fm.has("Tinf") && fm.has("Ts") ? 0.5 * (fm.v("Tinf") + fm.v("Ts"))             // else film temperature,
+          : fm.has("Tg") ? fm.v("Tg") : Double.NaN;                                           // else gas temperature
+      double p = fm.has("p") ? fm.v("p") : 101325;
+      if (Double.isNaN(T)) return;
+      double[] v = lib.fluidProps(fl, Double.isNaN(p) ? 101325 : p).at(T);
+      for (int i = 0; i < PROPERTY_KEYS.length && i < v.length; i++) if (fm.has(PROPERTY_KEYS[i])) fm.put(PROPERTY_KEYS[i], v[i]);
+    } catch (Throwable t) { /* values appear after Compute */ }
+  }
+
+  static void setActive(Field f, boolean on) {
+    f.tf.setEditable(on);
+    f.tf.setEnabled(on);
+    f.tf.setToolTipText(on ? null : "taken from the selected library fluid (choose \"" + ENTERED + "\" to type your own)");
   }
 
   /** Properties: library fluid (at a temperature chosen by Core) or the entered rho, mu, k, cp. */
@@ -558,25 +963,89 @@ public class SimKitCalc extends StarMacro {
   }
 
   // =====================================================================================================
-  // The 10 tabs
+  // The pages (sidebar order: group, then the order below)
   // =====================================================================================================
 
   void buildTabs() {
-    buildWall();
-    buildDimensionless();
+    buildInlet();
     buildTurbulence();
-    buildTimeStep();
-    buildGci();
     buildFluid();
     buildMaterial();
+    buildWall();
+    buildTimeStep();
+    buildGci();
     buildHeat();
+    buildDimensionless();
     buildCombustion();
     buildUnits();
   }
 
+  void buildInlet() {
+    Form a = new Form(page("Set-up", "Inlet & outlet values",
+        "Give one flow quantity of a section: get mass flow, velocity, flows, total and gauge pressures, Mach."),
+        "Uniform flow through a section of known size; values ready for STAR-CCM+ boundaries");
+    a.c("given", "given quantity", Core.INLET_GIVEN);
+    a.f("value", "value (in the unit shown above)", "", "0.05");
+    fluidCombo(a, "fluid (library) or entered");
+    a.f("p", "static pressure at the section (absolute)", "Pa", "101325").f("T", "static temperature", "K", "300");
+    a.f("pref", "reference pressure of the STAR model", "Pa", "101325");
+    a.f("D", "diameter D (empty: use the area)", "m", "0.05").f("A", "flow area A (if D is empty)", "m^2", "");
+    a.f("rho", "density", "kg/m^3", "1.177").f("mu", "viscosity (for Re)", "Pa-s", "1.846e-5").f("cp", "cp (for gamma)", "J/kg-K", "1007");
+    a.f("gamma", "gamma (empty: cp / (cp - R))", "-", "");
+    a.calc = fm -> {
+      double p = fm.req("p"), T = fm.req("T");
+      Core.Props pr = props(fm, p);
+      double[] x = pr.at(T);
+      Core.R r = Core.inletOutlet(fm.idx("given"), fm.req("value"), p, T, fm.req("pref"), fm.v("D"), fm.v("A"), x[0], x[1], x[3],
+          fm.v("gamma"), gasConstant(fm, x[0], p, T));
+      r.absorb(pr);
+      writeBack(fm, r);
+      return r;
+    };
+
+    Form b = new Form(page("Set-up", "Orifice / nozzle flow",
+        "Mass flow through a hole from the pressures (choked or not), or the pressure or diameter for a flow."),
+        "Restriction (orifice, nozzle, injector holes) fed from upstream total conditions");
+    b.c("solve", "solve for", Core.ORIFICE_SOLVE);
+    fluidCombo(b, "fluid (library) or entered");
+    b.f("p", "upstream total pressure (absolute)", "Pa", "300000").f("pb", "downstream static pressure (absolute)", "Pa", "101325");
+    b.f("T", "upstream total temperature", "K", "300");
+    b.f("D", "hole diameter (each)", "mm", "2").f("n", "number of holes", "-", "1");
+    b.f("Cd", "discharge coefficient Cd", "-", "0.61");
+    b.f("mdot", "mass flow, all holes (to solve pressure or diameter)", "kg/s", "");
+    b.f("rho", "density (upstream)", "kg/m^3", "3.48").f("cp", "cp (for gamma)", "J/kg-K", "1007");
+    b.f("gamma", "gamma (empty: cp / (cp - R))", "-", "");
+    b.calc = fm -> {
+      int solve = fm.idx("solve");
+      double p = Double.isNaN(fm.v("p")) ? 101325 : fm.v("p"), T = fm.req("T");
+      Core.Props pr = props(fm, p);
+      double[] x = pr.at(T);
+      Core.R r = Core.orifice(solve, solve == 0 ? Double.NaN : fm.req("mdot"), solve == 1 ? Double.NaN : fm.req("p"), fm.req("pb"), T,
+          solve == 2 ? Double.NaN : fm.req("D"), fm.req("n"), fm.req("Cd"), x[0], x[3], fm.v("gamma"), gasConstant(fm, x[0], p, T));
+      r.absorb(pr);
+      writeBack(fm, r);
+      return r;
+    };
+  }
+
+  /** Gas constant R [J/kg-K] of the selected fluid, NaN for a liquid. Library: ideal-gas density rows; entered values: an
+   *  apparent p / (rho T) above 20 J/kg-K is taken as a gas. */
+  double gasConstant(Form fm, double rho, double p, double T) {
+    String fl = fm.s("fluid");
+    if (!fl.isEmpty() && !fl.equals(ENTERED)) {
+      Map<String, Library.Prop> m = lib.fluids.get(fl);
+      Library.Prop rp = m == null ? null : m.get("rho"), mp = m == null ? null : m.get("M");
+      if (rp == null || !"idealgas".equals(rp.model)) return Double.NaN;
+      double M = mp != null && mp.c != null && mp.c.length > 0 ? mp.c[0] : rp.c[0];
+      return Core.RU / M;
+    }
+    double re = p / (rho * T);
+    return re > 20 ? re : Double.NaN;
+  }
+
   void buildWall() {
-    Tab t = tab("Wall & prism layers");
-    Form a = new Form(t, "First cell from target y+");
+    Form a = new Form(page("Mesh", "First cell from y+",
+        "First prism layer thickness for a target y+, before meshing."), "First cell from target y+");
     fluidCombo(a, "fluid (library) or entered");
     a.f("T", "temperature (library)", "K", "300").f("p", "pressure (library)", "Pa", "101325");
     a.f("rho", "density rho", "kg/m^3", "1.177").f("mu", "dynamic viscosity mu", "Pa-s", "1.846e-5");
@@ -593,7 +1062,8 @@ public class SimKitCalc extends StarMacro {
       return r;
     };
 
-    Form b = new Form(t, "Prism stack");
+    Form b = new Form(page("Mesh", "Prism stack",
+        "Total thickness, growth ratio or number of prism layers (two given, the third solved)."), "Prism stack");
     b.c("mode", "solve", "total thickness from y1, r, N", "growth r from y1, T, N", "layers N from y1, r, T");
     b.f("y1", "first layer thickness y1", "m", "5e-5").f("r", "growth (stretching) ratio r", "-", "1.2");
     b.f("N", "number of layers N", "-", "15").f("T", "total thickness T", "m", "");
@@ -606,26 +1076,23 @@ public class SimKitCalc extends StarMacro {
       }
     };
 
-    Form c = new Form(t, "y+ correction (From report... fills y+ measured)");
+    Form c = new Form(page("Mesh", "y+ correction",
+        "New first layer thickness from the y+ of a run."), "y+ correction (From report... fills y+ measured)");
     c.f("y1old", "current first layer thickness", "m", "5e-5").f("target", "target y+", "-", "1");
     c.f("measured", "measured y+ (e.g. area average)", "-", "");
     c.calc = fm -> Core.yplusCorrection(fm.req("y1old"), fm.req("target"), fm.req("measured"));
   }
 
   void buildDimensionless() {
-    Tab t = tab("Dimensionless numbers");
-    Form a = new Form(t, "Re, Pr, Sc, Pe");
+    Form a = new Form(page("Flow numbers", "Re, Pr, Sc, Pe",
+        "Flow regime numbers from a velocity, a length and the properties."), "Re, Pr, Sc, Pe");
     a.f("U", "velocity U", "m/s", "10").f("L", "length L", "m", "0.1").f("rho", "density", "kg/m^3", "1.177");
     a.f("mu", "dynamic viscosity", "Pa-s", "1.846e-5").f("cp", "cp (for Pr)", "J/kg-K", "1007");
     a.f("k", "conductivity k (for Pr)", "W/m-K", "0.0263").f("D", "mass diffusivity (for Sc)", "m^2/s", "");
     a.calc = fm -> Core.flowNumbers(fm.req("U"), fm.req("L"), fm.req("rho"), fm.req("mu"), fm.v("cp"), fm.v("k"), fm.v("D"));
 
-    Form b = new Form(t, "Mach number");
-    b.f("U", "velocity U", "m/s", "100").f("gamma", "gamma", "-", "1.4").f("R", "gas constant R", "J/kg-K", "287.05");
-    b.f("T", "static temperature", "K", "300");
-    b.calc = fm -> Core.mach(fm.req("U"), fm.req("gamma"), fm.req("R"), fm.req("T"));
-
-    Form c = new Form(t, "Fr, Ri, Gr, Ra");
+    Form c = new Form(page("Flow numbers", "Fr, Ri, Gr, Ra",
+        "Buoyancy: does natural convection matter?"), "Fr, Ri, Gr, Ra");
     c.f("U", "velocity U (for Fr, Ri)", "m/s", "1").f("L", "length L", "m", "0.5").f("g", "gravity g", "m/s^2", "9.81");
     c.f("dT", "temperature difference dT", "K", "50").f("Tref", "reference temperature", "K", "300");
     c.f("beta", "expansion coeff. beta (empty: 1/T_ref)", "1/K", "");
@@ -633,36 +1100,25 @@ public class SimKitCalc extends StarMacro {
     c.calc = fm -> Core.buoyancy(fm.v("U"), fm.req("L"), fm.req("g"), fm.req("dT"), fm.req("Tref"), fm.v("beta"),
         fm.req("nu"), fm.v("alpha"));
 
-    Form d = new Form(t, "Strouhal number <-> frequency");
+    Form d = new Form(page("Flow numbers", "Strouhal and frequency",
+        "Shedding frequency from St, or St from a frequency."), "Strouhal number <-> frequency");
     d.f("L", "length L", "m", "0.05").f("U", "velocity U", "m/s", "10").f("St", "St (empty: from f)", "-", "0.2");
     d.f("f", "frequency f (used if St empty)", "Hz", "");
     d.calc = fm -> Core.strouhal(fm.req("L"), fm.req("U"), fm.v("St"), fm.v("f"));
 
-    Form e = new Form(t, "Weber and Ohnesorge");
-    e.f("rho", "liquid density", "kg/m^3", "800").f("U", "relative velocity", "m/s", "50");
-    e.f("d", "drop / jet diameter", "um", "50").f("sigma", "surface tension", "N/m", "0.0255");
-    e.f("mu", "liquid viscosity (for Oh)", "Pa-s", "1.3e-3");
-    e.calc = fm -> Core.droplet(fm.req("rho"), fm.req("U"), fm.req("d"), fm.req("sigma"), fm.v("mu"));
-
-    Form f = new Form(t, "Biot and Fourier");
+    Form f = new Form(page("Flow numbers", "Biot and Fourier",
+        "Is a solid lumped? How far has heat gone into it after a time?"), "Biot and Fourier");
     f.f("h", "heat transfer coefficient h", "W/m^2-K", "50").f("L", "length L (V/A for lumped)", "m", "0.002");
     f.f("k", "solid conductivity k", "W/m-K", "16").f("alpha", "solid diffusivity (for Fo)", "m^2/s", "4e-6");
     f.f("t", "time t (for Fo)", "s", "10");
     f.calc = fm -> Core.biotFourier(fm.req("h"), fm.req("L"), fm.req("k"), fm.v("alpha"), fm.v("t"));
 
-    Form g = new Form(t, "Droplet relaxation time and Stokes number");
-    g.f("rhoP", "particle density", "kg/m^3", "800").f("d", "particle diameter", "um", "40");
-    g.f("mu", "gas viscosity", "Pa-s", "1.846e-5").f("rhoG", "gas density (for Re_p)", "kg/m^3", "1.177");
-    g.f("Urel", "slip velocity (for Re_p)", "m/s", "5").f("U", "flow velocity U (for Stk)", "m/s", "10");
-    g.f("L", "flow length L (for Stk)", "m", "0.05");
-    g.c("sn", "drag", "Stokes (no correction)", "Schiller-Naumann factor (1 + 0.15 Re_p^0.687)");
-    g.calc = fm -> Core.particle(fm.req("rhoP"), fm.req("d"), fm.req("mu"), fm.v("rhoG"), fm.v("Urel"), fm.v("U"),
-        fm.v("L"), fm.idx("sn") == 1);
   }
 
   void buildTurbulence() {
-    Tab t = tab("Turbulence inlet");
-    Form a = new Form(t, "k, epsilon, omega at an inlet (C_mu = 0.09)");
+    Form a = new Form(page("Set-up", "Turbulence at an inlet",
+        "k, epsilon, omega from intensity and length scale (or viscosity ratio) for inlet boundaries."),
+        "k, epsilon, omega at an inlet (C_mu = 0.09)");
     a.f("U", "mean velocity U", "m/s", "10").f("I", "intensity I (empty: 0.16 Re_Dh^-1/8)", "%", "5");
     a.f("l", "length scale l (empty: from ratio or 0.07 D_h)", "m", "");
     a.f("VR", "viscosity ratio nu_t/nu (used if l empty)", "-", "");
@@ -674,8 +1130,8 @@ public class SimKitCalc extends StarMacro {
   }
 
   void buildTimeStep() {
-    Tab t = tab("Time step & statistics");
-    Form a = new Form(t, "Time step, periods, cost");
+    Form a = new Form(page("Time & averaging", "Time step & cost",
+        "Time step for a Courant number or a frequency, run length and core-hours."), "Time step, periods, cost");
     a.f("Co", "target Courant number", "-", "1").f("dx", "cell size dx", "m", "5e-4").f("U", "velocity U", "m/s", "20");
     a.f("f", "frequency of interest f (optional)", "Hz", "200").f("Lft", "flow-through length (optional)", "m", "0.5");
     a.f("tInit", "initial transient to discard", "s", "0.05").f("Ncyc", "cycles to average (of f)", "-", "50");
@@ -683,7 +1139,19 @@ public class SimKitCalc extends StarMacro {
     a.calc = fm -> Core.timeStep(fm.req("Co"), fm.req("dx"), fm.req("U"), fm.v("f"), fm.v("Lft"), fm.v("tInit"),
         fm.v("Ncyc"), fm.v("sps"), fm.v("cores"));
 
-    Form b = new Form(t, "From monitor CSV (batch means, integral time scale)");
+    Form ft = new Form(page("Time & averaging", "Flow-through & averaging window",
+        "When to start and stop averaging an unsteady run."), "Flow-through time and averaging window (unsteady runs)");
+    ft.f("mdot", "mass flow through the domain (From report: r_mdot_in)", "kg/s", "0.046");
+    ft.f("rho", "mean density", "kg/m^3", "1.2");
+    ft.f("V", "fluid volume of the domain (optional)", "m^3", "");
+    ft.f("L", "length of the main flow path (optional)", "m", "1.0").f("A", "flow cross-section (optional)", "m^2", "0.01");
+    ft.f("Ninit", "flow-throughs to discard (start-up)", "-", "2").f("Nft", "flow-throughs to average", "-", "3");
+    ft.f("dt", "time step (optional)", "s", "");
+    ft.calc = fm -> Core.flowThrough(fm.req("mdot"), fm.req("rho"), fm.v("V"), fm.v("L"), fm.v("A"), fm.req("Ninit"),
+        fm.req("Nft"), fm.v("dt"));
+
+    Form b = new Form(page("Time & averaging", "Statistics from monitor CSV",
+        "Mean, uncertainty and integral time scale of a monitor (batch means)."), "From monitor CSV (batch means, integral time scale)");
     b.f("file", "CSV file (SimKit export; column 1 = time)", "", "");
     JComboBox<String> col = b.c("col", "column");
     b.f("tDiscard", "discard samples before time", "s", "0").f("nb", "number of batches", "-", "10");
@@ -694,7 +1162,7 @@ public class SimKitCalc extends StarMacro {
       try {
         loadColumns(b, col);
       } catch (IllegalArgumentException ex) {
-        t.out.setText("Monitor CSV: " + ex.getMessage());
+        b.tab.out.setText("Monitor CSV: " + ex.getMessage());
       }
     });
     b.extras.add(browse);
@@ -750,57 +1218,198 @@ public class SimKitCalc extends StarMacro {
   }
 
   void buildGci() {
-    Tab t = tab("Mesh & GCI");
-    Form a = new Form(t, "Grid convergence index (Celik et al. 2008)");
+    Form a = new Form(page("Verification", "Grid convergence (GCI)",
+        "Discretisation uncertainty from three meshes (also directly from your cases)."), "Grid convergence index (Celik et al. 2008)");
     a.f("N1", "N1 cells (fine)", "cells", "18000").f("N2", "N2 cells (medium)", "cells", "8000");
     a.f("N3", "N3 cells (coarse)", "cells", "4500");
     a.f("phi1", "phi1 (fine)", "-", "6.063").f("phi2", "phi2 (medium)", "-", "5.972").f("phi3", "phi3 (coarse)", "-", "5.863");
     a.f("dim", "dimension (3 = 3-D, 2 = 2-D)", "-", "3");
     a.calc = fm -> Core.gci(fm.req("N1"), fm.req("N2"), fm.req("N3"), fm.req("phi1"), fm.req("phi2"), fm.req("phi3"),
         fm.reqInt("dim"));
+    a.extras.add(button("From cases...", e -> gciFromCases(a, a.tab)));
+  }
 
-    Form b = new Form(t, "Cell count estimate");
-    b.f("V", "fluid volume V", "m^3", "0.01").f("dx", "cell size dx", "m", "1e-3");
-    b.calc = fm -> Core.cellCount(fm.req("V"), fm.req("dx"));
+  /** key=value lines of a case_identity.txt (empty map if missing). */
+  static Map<String, String> identity(Path f) {
+    Map<String, String> kv = new LinkedHashMap<>();
+    try {
+      for (String line : Fs.read(f).split("\r?\n")) {
+        int i = line.indexOf('=');
+        if (i > 0 && !line.startsWith("#")) kv.put(line.substring(0, i).trim(), line.substring(i + 1).trim());
+      }
+    } catch (IOException e) { /* none */ }
+    return kv;
+  }
+
+  /** GCI from 3 SimKit cases (mesh levels): reads each case's record/key_results.csv (written by Export results:
+   *  cells, p_meshScale and every report value), lets the user pick the 3 cases and the quantity, fills the form. */
+  void gciFromCases(Form a, Tab t) {
+    try {
+      java.io.File start = caseDir != null && caseDir.getParent() != null ? caseDir.getParent().toFile() : null;
+      JFileChooser fc = new JFileChooser(start);
+      fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+      fc.setDialogTitle("Folder that holds the case folders of the mesh levels");
+      if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) return;
+      Path dir = fc.getSelectedFile().toPath();
+      List<String> names = new ArrayList<>(), studies = new ArrayList<>();
+      List<Map<String, String>> data = new ArrayList<>();
+      try (java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
+        for (Path d : ds) {
+          Path kr = d.resolve("record").resolve("key_results.csv");
+          if (!CASE_ID.matcher(d.getFileName().toString()).matches() || !Files.isRegularFile(kr)) continue;
+          Map<String, String> m = new LinkedHashMap<>();
+          List<String[]> rows = Csv.parse(Fs.read(kr));
+          for (int i = 1; i < rows.size(); i++) if (rows.get(i).length >= 2) m.put(rows.get(i)[0], rows.get(i)[1]);
+          if (!m.containsKey("cells")) continue;
+          String sim = rows.size() > 1 && rows.get(1).length > 4 ? rows.get(1)[4] : d.getFileName().toString();
+          Map<String, String> idm = identity(d.resolve("sim").resolve("case_identity.txt"));
+          String level = idm.getOrDefault("mesh_level", "");
+          names.add(String.format("%-12s %-8s cells %-10s p_meshScale %-6s (%s)", d.getFileName(), level, m.get("cells"),
+              m.getOrDefault("p_meshScale", "-"), sim));
+          studies.add(idm.getOrDefault("mesh_study", ""));
+          data.add(m);
+        }
+      }
+      if (data.size() < 3) {
+        t.out.setText("GCI from cases: found " + data.size() + " case(s) with results in " + dir + ".\n"
+            + "Each mesh level needs its own case and an Export results after its run (that writes cells and the values).");
+        return;
+      }
+      javax.swing.JList<String> list = new javax.swing.JList<>(names.toArray(new String[0]));
+      list.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+      list.setSelectionMode(javax.swing.ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+      // pre-select the levels of a mesh study (Mesh study > Create mesh levels): this case's study, else the only one
+      String mine = caseDir == null ? "" : identity(caseDir.resolve("sim").resolve("case_identity.txt")).getOrDefault("mesh_study", "");
+      Set<String> distinct = new HashSet<>(studies);
+      distinct.remove("");
+      if (mine.isEmpty() && distinct.size() == 1) mine = distinct.iterator().next();
+      List<Integer> pre = new ArrayList<>();
+      for (int i = 0; i < studies.size(); i++) if (!mine.isEmpty() && mine.equals(studies.get(i))) pre.add(i);
+      int[] preArr = new int[pre.size()];
+      for (int i = 0; i < preArr.length; i++) preArr[i] = pre.get(i);
+      list.setSelectedIndices(preArr);
+      JPanel p = new JPanel(new BorderLayout(4, 4));
+      p.add(new JLabel("Select the 3 mesh levels (Ctrl+click):"), BorderLayout.NORTH);
+      p.add(new JScrollPane(list), BorderLayout.CENTER);
+      if (JOptionPane.showConfirmDialog(dlg, p, "GCI from cases", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
+          != JOptionPane.OK_OPTION) return;
+      int[] sel = list.getSelectedIndices();
+      if (sel.length != 3) {
+        t.out.setText("GCI from cases: select exactly 3 cases (selected: " + sel.length + ").");
+        return;
+      }
+      List<Map<String, String>> three = new ArrayList<>();
+      for (int i : sel) three.add(data.get(i));
+      List<String> common = new ArrayList<>();
+      for (String k : three.get(0).keySet()) {
+        if (k.equals("cells") || k.equals("p_meshScale")) continue;
+        boolean all = true;
+        for (Map<String, String> m : three) all &= !Double.isNaN(Fmt.parse(m.get(k)));
+        if (all) common.add(k);
+      }
+      if (common.isEmpty()) {
+        t.out.setText("GCI from cases: the 3 cases have no numeric result in common.");
+        return;
+      }
+      Object q = JOptionPane.showInputDialog(dlg, "Quantity for the GCI:", "GCI from cases", JOptionPane.QUESTION_MESSAGE,
+          null, common.toArray(new String[0]), common.contains("r_p_in_avg") ? "r_p_in_avg" : common.get(0));
+      if (q == null) return;
+      three.sort((x, y) -> Double.compare(Fmt.parse(y.get("cells")), Fmt.parse(x.get("cells"))));   // fine -> coarse
+      for (int i = 0; i < 3; i++) {
+        a.field("N" + (i + 1)).tf.setText(three.get(i).get("cells"));
+        a.field("phi" + (i + 1)).tf.setText(three.get(i).get(q.toString()));
+      }
+      t.out.setText("GCI from cases: " + q + " filled from 3 cases (fine -> coarse by cell count). Press Compute.\n"
+          + "Unsteady cases use the mean over their averaging window (key_results.csv).");
+    } catch (Throwable e) {
+      t.out.setText("GCI from cases: " + reason(e));
+    }
   }
 
   void buildFluid() {
-    Tab t = tab("Fluid properties");
-    Form a = new Form(t, "Fluid from config\\fluids.csv");
+    Form a = new Form(page("Set-up", "Fluid properties",
+        "Density, viscosity, conductivity and cp of a library fluid at a temperature."), "Fluid from data/fluids.csv");
     JComboBox<String> cb = a.c("fluidName", "fluid", fluidNames(false));
     fluidCombos.add(cb);
     a.f("T", "temperature T", "K", "300").f("p", "pressure p (for ideal-gas density)", "Pa", "101325");
-    JButton reload = button("Choose config folder...", e -> {
+    JButton reload = button("Choose data folder...", e -> {
       JFileChooser fc = new JFileChooser(lib.dir == null ? null : lib.dir.toFile());
       fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
       if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) return;
       lib = Library.load(fc.getSelectedFile().toPath());
       refreshLibraryCombos();
-      t.out.setText(lib.summary());
+      a.tab.out.setText(lib.summary());
     });
     a.extras.add(reload);
     a.calc = fm -> lib.fluidReport(fm.s("fluidName"), fm.req("T"), fm.v("p"));
   }
 
+  /** Team MatML folders (config/material_folders.csv, one folder per row) and the user's own folder (remembered). */
+  List<Path> matmlFolders() {
+    List<Path> out = new ArrayList<>();
+    try {
+      Path cfg = Fs.inKit("config/material_folders.csv");
+      if (Files.isRegularFile(cfg)) {
+        List<String[]> rows = Csv.parse(Fs.read(cfg));
+        for (int i = 1; i < rows.size(); i++) {
+          String f = rows.get(i).length > 0 ? rows.get(i)[0].trim() : "";
+          if (!f.isEmpty() && !f.startsWith("#")) out.add(Paths.get(f));
+        }
+      }
+    } catch (Throwable t) { /* no team folder */ }
+    try {
+      String mine = java.util.prefs.Preferences.userRoot().node("simkit").get("matmlFolder", null);
+      if (mine != null && !mine.isEmpty() && !out.contains(Paths.get(mine))) out.add(Paths.get(mine));
+    } catch (Throwable t) { /* no own folder */ }
+    return out;
+  }
+
+  void loadMatMLFolders() {
+    lib.matml.clear();
+    for (Path f : matmlFolders()) {
+      List<String> rep = new ArrayList<>();
+      MatML.loadFolder(lib, f, rep);
+      lib.matml.addAll(rep);
+    }
+  }
+
   void buildMaterial() {
-    Tab t = tab("Material properties");
-    Form a = new Form(t, "Solid from config\\materials.csv (+ emissivity.csv)");
+    Form a = new Form(page("Set-up", "Material properties",
+        "Solid properties from the library and the team MatML folders, at a temperature."), "Solid: data/materials.csv and MatML folders (*.xml)");
     JComboBox<String> cb = a.c("material", "material", lib.materials.keySet().toArray(new String[0]));
     materialCombos.add(cb);
-    a.f("T", "temperature T (degC rows are converted)", "K", "300");
+    a.f("T", "temperature T", "K", "300");
+    a.extras.add(button("MatML folder...", e -> {
+      JFileChooser fc = new JFileChooser(matmlFolders().isEmpty() ? null : matmlFolders().get(matmlFolders().size() - 1).toFile());
+      fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+      fc.setDialogTitle("Folder with MatML material files (*.xml)");
+      if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) return;
+      try { java.util.prefs.Preferences.userRoot().node("simkit").put("matmlFolder", fc.getSelectedFile().toString()); }
+      catch (Throwable x) { /* not remembered */ }
+      List<String> rep = new ArrayList<>();
+      int n = MatML.loadFolder(lib, fc.getSelectedFile().toPath(), rep);
+      lib.matml.addAll(rep);
+      refreshLibraryCombos();
+      a.tab.out.setText(n + " material(s) read from " + fc.getSelectedFile() + " (remembered for next time).\n\n"
+          + String.join("\n", rep));
+    }));
+    a.extras.add(button("What was read", e -> a.tab.out.setText(lib.matml.isEmpty()
+        ? "No MatML folder yet: use MatML folder... (or ask the toolkit owner to set the team folder in config/material_folders.csv)."
+        : String.join("\n", lib.matml))));
     a.calc = fm -> lib.materialReport(fm.s("material"), fm.req("T"));
   }
 
   void buildHeat() {
-    Tab t = tab("Heat transfer");
-    Form a = new Form(t, "Convection coefficient h (properties at the film temperature)");
+    Form a = new Form(page("Heat transfer", "Convection coefficient h",
+        "h and Nu from standard correlations (cylinder, plate, sphere, pipe, jet, natural convection)."),
+        "Convection coefficient h (properties at the film temperature)");
     a.c("corr", "correlation", Core.CONV_CORR);
     fluidCombo(a, "fluid (library) or entered");
     a.f("p", "pressure (library)", "Pa", "101325");
     a.f("U", "velocity U (jet: nozzle exit)", "m/s", "10").f("L", "D (cylinder/sphere/pipe/jet) or L (plate)", "m", "0.01");
     a.f("Tinf", "fluid temperature T_inf", "K", "300").f("Ts", "surface temperature T_s", "K", "350");
-    a.f("rho", "density (entered)", "kg/m^3", "1.1").f("mu", "viscosity (entered)", "Pa-s", "1.9e-5");
-    a.f("k", "conductivity (entered)", "W/m-K", "0.027").f("cp", "cp (entered)", "J/kg-K", "1007");
+    a.f("rho", "density", "kg/m^3", "1.1").f("mu", "viscosity", "Pa-s", "1.9e-5");
+    a.f("k", "conductivity", "W/m-K", "0.027").f("cp", "cp", "J/kg-K", "1007");
     a.f("r", "jet: averaging radius r", "m", "0.05").f("H", "jet: nozzle-to-plate distance H", "m", "0.06");
     a.f("g", "natural conv.: gravity", "m/s^2", "9.81").f("beta", "natural conv.: beta (empty: 1/T_film)", "1/K", "");
     a.calc = fm -> {
@@ -811,18 +1420,21 @@ public class SimKitCalc extends StarMacro {
       return r;
     };
 
-    Form b = new Form(t, "Radiation between a surface and its surroundings");
+    Form b = new Form(page("Heat transfer", "Radiation to surroundings",
+        "Net radiative flux and radiative h between a surface and large surroundings."), "Radiation between a surface and its surroundings");
     b.f("eps", "emissivity", "-", "0.85").f("T", "surface temperature", "K", "800").f("Tsur", "surroundings temperature", "K", "300");
     b.calc = fm -> Core.radiation(fm.req("eps"), fm.req("T"), fm.req("Tsur"));
 
-    Form c = new Form(t, "Thermocouple (virtual instrument): h(Tg - Ttc) = eps(sigma Ttc^4 - G/4)");
+    Form c = new Form(page("Fire test", "Thermocouple correction",
+        "Thermocouple reading from the gas temperature, or the gas temperature from a reading (radiation error)."),
+        "Thermocouple (virtual instrument): h(Tg - Ttc) = eps(sigma Ttc^4 - G/4)");
     c.c("mode", "direction", "gas T -> thermocouple T (Newton)", "thermocouple T -> gas T (explicit)");
     fluidCombo(c, "gas (library) or entered");
     c.f("T", "known temperature (Tg or Ttc)", "K", "1200").f("eps", "bead / sheath emissivity", "-", "0.85");
     c.f("d", "probe diameter", "m", "0.0015").f("U", "gas velocity", "m/s", "10").f("p", "pressure (library)", "Pa", "101325");
     c.f("G", "incident radiation G (empty: 4 sigma T_sur^4)", "W/m^2", "").f("Tsur", "effective T_sur (if G empty)", "K", "600");
-    c.f("rho", "density (entered)", "kg/m^3", "0.29").f("mu", "viscosity (entered)", "Pa-s", "4.6e-5");
-    c.f("k", "conductivity (entered)", "W/m-K", "0.075").f("cp", "cp (entered)", "J/kg-K", "1175");
+    c.f("rho", "density", "kg/m^3", "0.29").f("mu", "viscosity", "Pa-s", "4.6e-5");
+    c.f("k", "conductivity", "W/m-K", "0.075").f("cp", "cp", "J/kg-K", "1175");
     c.calc = fm -> {
       Core.Props pr = props(fm, fm.v("p"));
       Core.R r = Core.thermocouple(fm.idx("mode") == 0, fm.req("T"), fm.req("eps"), fm.v("G"), fm.v("Tsur"),
@@ -831,13 +1443,15 @@ public class SimKitCalc extends StarMacro {
       return r;
     };
 
-    Form d = new Form(t, "Adiabatic surface temperature (Wickstrom)");
+    Form d = new Form(page("Heat transfer", "Adiabatic surface temperature",
+        "Single temperature for a surface exposed to hot gas and radiation (fire exposure boundary)."), "Adiabatic surface temperature (Wickstrom)");
     d.f("qinc", "incident radiative flux q_inc (empty: sigma T_sur^4)", "W/m^2", "").f("Tsur", "black environment T_sur", "K", "1100");
     d.f("h", "convection coefficient h", "W/m^2-K", "50").f("Tg", "gas temperature T_g", "K", "1000");
     d.f("eps", "surface emissivity", "-", "0.9").f("Ts", "a surface temperature for q_net (optional)", "K", "");
     d.calc = fm -> Core.ast(fm.v("qinc"), fm.v("Tsur"), fm.req("h"), fm.req("Tg"), fm.req("eps"), fm.v("Ts"));
 
-    Form e = new Form(t, "Water-cooled calorimeter");
+    Form e = new Form(page("Fire test", "Water-cooled calorimeter",
+        "Heat flux from the water heat-up, or the heat-up for a given flux."), "Water-cooled calorimeter");
     e.c("mode", "direction", "flux from water heat-up (Q = m cp dT)", "water dT from flux");
     e.c("area", "area", "projected A = D L", "full surface A = pi D L");
     e.f("mdot", "water mass flow", "kg/s", "0.05").f("cp", "water cp", "J/kg-K", "4180");
@@ -848,47 +1462,61 @@ public class SimKitCalc extends StarMacro {
   }
 
   void buildCombustion() {
-    Tab t = tab("Combustion & spray");
-    Form a = new Form(t, "Stoichiometry of CxHyOz");
+    Form a = new Form(page("Combustion & spray", "Stoichiometry",
+        "Stoichiometric air-fuel ratio, equivalence ratio and heat release of a CxHyOz fuel."), "Stoichiometry of CxHyOz");
     a.f("x", "C atoms x", "-", "12").f("y", "H atoms y", "-", "23").f("z", "O atoms z", "-", "0");
     a.f("mAir", "air mass flow (for phi)", "kg/s", "").f("mFuel", "fuel mass flow (phi, heat release)", "g/s", "1.89");
     a.f("LHV", "lower heating value", "MJ/kg", "43.2");
     a.calc = fm -> Core.stoich(fm.req("x"), fm.req("y"), fm.req("z"), fm.v("mAir"), fm.v("mFuel"), fm.v("LHV"));
 
-    Form b = new Form(t, "Rosin-Rammler distribution");
+    Form b = new Form(page("Combustion & spray", "Rosin-Rammler spray",
+        "Droplet size distribution parameters for injectors (SMD <-> characteristic size)."), "Rosin-Rammler distribution");
     b.c("mode", "given", "SMD (Sauter mean) -> X", "X (characteristic size) -> SMD");
     b.f("size", "SMD or X", "um", "38").f("n", "spread exponent n", "-", "3.5");
     b.f("d", "diameter d for mass fraction above d (optional)", "um", "100");
     b.f("F", "exceedance mass fraction for d_F (optional)", "-", "0.1");
     b.calc = fm -> Core.rosinRammler(fm.idx("mode") == 0, fm.req("size"), fm.req("n"), fm.v("d"), fm.v("F"));
 
-    Form c = new Form(t, "Flow number of a pressure atomiser");
+    Form c = new Form(page("Combustion & spray", "Atomiser flow number",
+        "Flow number of a pressure atomiser from the flow and the pressure drop."), "Flow number of a pressure atomiser");
     c.f("mdot", "fuel mass flow", "g/s", "1.89").f("rho", "liquid density", "kg/m^3", "800").f("dP", "pressure drop", "Pa", "689476");
     c.calc = fm -> Core.flowNumber(fm.req("mdot"), fm.req("rho"), fm.req("dP"));
 
-    Form d = new Form(t, "Weber and Ohnesorge numbers");
+    Form d = new Form(page("Combustion & spray", "Weber and Ohnesorge",
+        "Break-up regime of drops and jets."), "Weber and Ohnesorge numbers");
     d.f("rho", "liquid density", "kg/m^3", "800").f("U", "relative velocity", "m/s", "30");
     d.f("d", "drop diameter", "um", "40").f("sigma", "surface tension", "N/m", "0.0255").f("mu", "liquid viscosity", "Pa-s", "1.3e-3");
     d.calc = fm -> Core.droplet(fm.req("rho"), fm.req("U"), fm.req("d"), fm.req("sigma"), fm.v("mu"));
+
+    Form g = new Form(page("Combustion & spray", "Droplet response (Stokes)",
+        "Relaxation time and Stokes number: do droplets or particles follow the flow?"), "Droplet relaxation time and Stokes number");
+    g.f("rhoP", "particle density", "kg/m^3", "800").f("d", "particle diameter", "um", "40");
+    g.f("mu", "gas viscosity", "Pa-s", "1.846e-5").f("rhoG", "gas density (for Re_p)", "kg/m^3", "1.177");
+    g.f("Urel", "slip velocity (for Re_p)", "m/s", "5").f("U", "flow velocity U (for Stk)", "m/s", "10");
+    g.f("L", "flow length L (for Stk)", "m", "0.05");
+    g.c("sn", "drag", "Stokes (no correction)", "Schiller-Naumann factor (1 + 0.15 Re_p^0.687)");
+    g.calc = fm -> Core.particle(fm.req("rhoP"), fm.req("d"), fm.req("mu"), fm.v("rhoG"), fm.v("Urel"), fm.v("U"),
+        fm.v("L"), fm.idx("sn") == 1);
   }
 
   void buildUnits() {
-    Tab t = tab("Units");
-    Form a = new Form(t, "Linear conversions");
+    Form a = new Form(page("Units", "Unit conversions", "Heat flux, power, pressure, speed and length (US <-> SI)."),
+        "Linear conversions");
     a.c("conv", "conversion", Core.CONV_NAMES);
-    a.f("v", "value", "(as selected)", "1");
+    a.f("v", "value (in the unit of the conversion)", "", "1");
     a.calc = fm -> Core.convert(fm.idx("conv"), fm.req("v"));
 
-    Form b = new Form(t, "Temperature");
+    Form b = new Form(page("Units", "Temperature", "K, degC and degF."), "Temperature");
     b.c("unit", "unit of the value", "K", "degC", "degF");
-    b.f("v", "value", "(as selected)", "60");
+    b.f("v", "value (in the unit selected above)", "", "60");
     b.calc = fm -> Core.temperature(fm.req("v"), fm.idx("unit"));
 
-    Form c = new Form(t, "US gal/h -> kg/s");
+    Form c = new Form(page("Units", "US gal/h to kg/s", "Liquid fuel flow from US gallons per hour."), "US gal/h -> kg/s");
     c.f("Q", "volume flow", "US gal/h", "1").f("rho", "liquid density", "kg/m^3", "800");
     c.calc = fm -> Core.galPerHour(fm.req("Q"), fm.req("rho"));
 
-    Form d = new Form(t, "SCFM -> kg/s (ideal gas at the standard conditions)");
+    Form d = new Form(page("Units", "SCFM to kg/s", "Gas mass flow from standard cubic feet per minute."),
+        "SCFM -> kg/s (ideal gas at the standard conditions)");
     d.f("Q", "standard volume flow", "SCFM", "10").f("TF", "standard temperature", "degF", "60");
     d.f("ppsi", "standard pressure", "psi", "14.696").f("M", "molar mass", "kg/kmol", "28.965");
     d.calc = fm -> Core.scfm(fm.req("Q"), fm.req("TF"), fm.req("ppsi"), fm.req("M"));
@@ -905,11 +1533,11 @@ public class SimKitCalc extends StarMacro {
     for (Form fm : t.forms) {
       for (Field f : fm.fields.values()) {
         if (f.key.equals("file")) continue;
-        labels.add(fm.title + ":  " + f.label + (f.unit.isEmpty() ? "" : "  [" + f.unit + "]"));
+        labels.add(f.label + (f.unit.isEmpty() ? "" : "  [" + f.unit + "]"));
         fs.add(f);
       }
     }
-    String c = Ui.choose(title, "Input field of tab '" + t.name + "':", labels.toArray(new String[0]));
+    String c = Ui.choose(title, "Input field of '" + t.name + "':", labels.toArray(new String[0]));
     return fs.get(labels.indexOf(c));
   }
 
@@ -1696,15 +2324,227 @@ public class SimKitCalc extends StarMacro {
       return r;
     }
 
-    static R cellCount(double V, double dx) {
-      pos("V", V); pos("dx", dx);
-      R r = new R("Cell count estimate");
-      double n = V / (dx * dx * dx);
-      r.put("Nhex", n, "-", "hex-equivalent cells V/dx^3");
-      r.put("NpolyLow", n / 5, "-", "polyhedral, approx. (/5)").put("NpolyHigh", n / 3, "-", "polyhedral, approx. (/3)");
-      r.f("N = V / dx^3 (uniform hexahedra)");
-      r.line("polyhedral meshes need roughly 3-5x fewer cells for the same face resolution (approximate)");
-      r.src("geometric estimate; prism layers and refinement zones come on top");
+    /** Flow-through / residence time and the averaging window of an unsteady run. */
+    static R flowThrough(double mdot, double rho, double V, double L, double A, double nInit, double nFt, double dt) {
+      pos("mass flow", Math.abs(mdot));
+      pos("density", rho);
+      R r = new R("Flow-through time and averaging window");
+      double Q = Math.abs(mdot) / rho;
+      r.put("Q", Q, "m^3/s", "volume flow |mdot| / rho");
+      double tRef = Double.NaN;
+      if (given(V)) {
+        double tRes = pos("volume", V) / Q;
+        r.put("tResidence", tRes, "s", "mean residence time V / Q (whole domain)");
+        tRef = tRes;
+      }
+      if (given(L) && given(A)) {
+        double U = Q / pos("cross-section", A), tFt = pos("length", L) / U;
+        r.put("Ubulk", U, "m/s", "bulk velocity Q / A");
+        r.put("tFlowThrough", tFt, "s", "flow-through time L / U (main flow path)");
+        tRef = tFt;
+      }
+      if (!given(tRef)) throw new IllegalArgumentException("give the domain volume V, or the length L and the cross-section A");
+      double tInit = nInit * tRef, tAvg = nFt * tRef;
+      r.put("tDiscard", tInit, "s", "start-up to discard = N_init x reference time");
+      r.put("tAvgStart", tInit, "s", "start of the averaging window (enter it when Export results asks)");
+      r.put("tAvg", tAvg, "s", "averaging window = N_avg x reference time");
+      r.put("tEnd", tInit + tAvg, "s", "physical time to run (maximum physical time)");
+      if (given(dt)) r.put("steps", Math.ceil((tInit + tAvg) / pos("time step", dt)), "-", "time steps to run");
+      if (nFt < 2) r.warn("fewer than 2 flow-throughs averaged: the mean is usually not converged");
+      r.f("Q = |mdot|/rho ; t_res = V/Q ; t_ft = L/(Q/A) ; window = N x t_ref (t_ref = t_ft if L and A are given)");
+      r.src("common practice for statistically steady unsteady RANS / LES: discard 1-3, average 2-5 flow-throughs");
+      r.valid("one main flow path; recirculation zones can need longer windows: check the averaged results of Export results (drift_pct)");
+      return r;
+    }
+
+    // ----- Inlet & outlet values, orifice ----------------------------------------------------------------
+
+    static final String[] INLET_GIVEN = {"mass flow [kg/s]", "mass flow [g/s]", "velocity [m/s]", "volume flow [m^3/s]",
+        "volume flow [l/min]", "standard volume flow [Nl/min, 0 degC, 1 atm]", "standard volume flow [SCFM, 60 degF, 14.696 psi]",
+        "total pressure, gauge [Pa] (relative to the reference)", "Mach number [-]"};
+    static final double T_NORMAL = 273.15, T_SCFM = 288.70556, P_STD = 101325, FT3 = 0.028316846592;
+
+    /** Uniform flow through a section: one quantity given, all boundary values out. Rg = NaN: liquid (constant density). */
+    static R inletOutlet(int given, double value, double p, double T, double pref, double D, double A, double rho, double mu,
+        double cp, double gammaIn, double Rg) {
+      pos("static pressure", p); pos("static temperature", T); pos("density", rho);
+      if (Double.isNaN(pref)) throw new IllegalArgumentException("reference pressure is required (STAR: Physics > Reference Values)");
+      double area = given(D) ? Math.PI * pos("diameter D", D) * D / 4 : pos("area A (or a diameter)", A);
+      double dEq = given(D) ? D : Math.sqrt(4 * area / Math.PI);
+      boolean gas = given(Rg) && Rg > 0;
+      R r = new R("Inlet & outlet values");
+      double gam = Double.NaN, c = Double.NaN;
+      if (gas) {
+        if (given(gammaIn)) gam = gammaIn;
+        else if (given(cp) && cp > Rg) gam = cp / (cp - Rg);
+        else {
+          gam = 1.4;
+          r.warn("gamma = 1.4 assumed (no cp): enter gamma for other gases");
+        }
+        if (gam <= 1) throw new IllegalArgumentException("gamma must be > 1 (got " + g(gam) + ")");
+        c = Math.sqrt(gam * Rg * T);
+      }
+      double U;
+      switch (given) {
+        case 0: U = value / (rho * area); break;
+        case 1: U = value * 1e-3 / (rho * area); break;
+        case 2: U = value; break;
+        case 3: U = value / area; break;
+        case 4: U = value / 60000.0 / area; break;
+        case 5:
+        case 6: {
+          double ts = given == 5 ? T_NORMAL : T_SCFM;
+          double rhoS = gas ? P_STD / (Rg * ts) : rho;
+          double qs = given == 5 ? value / 60000.0 : value * FT3 / 60.0;
+          U = qs * rhoS / (rho * area);
+          break;
+        }
+        case 7: {
+          double p0 = value + pref;
+          if (p0 <= p) {
+            throw new IllegalArgumentException("total pressure " + g(p0) + " Pa (absolute = gauge + reference) must be above the static pressure "
+                + g(p) + " Pa");
+          }
+          U = gas ? Math.sqrt(2 / (gam - 1) * (Math.pow(p0 / p, (gam - 1) / gam) - 1)) * c : Math.sqrt(2 * (p0 - p) / rho);
+          break;
+        }
+        case 8:
+          if (!gas) throw new IllegalArgumentException("a Mach number needs a gas (an ideal-gas fluid)");
+          U = value * c;
+          break;
+        default: throw new IllegalArgumentException("unknown given quantity");
+      }
+      if (!(U > 0) || Double.isInfinite(U)) throw new IllegalArgumentException("the flow must be > 0 (got U = " + g(U) + " m/s)");
+      double mdot = rho * U * area, q = 0.5 * rho * U * U;
+      r.put("mdot", mdot, "kg/s", "mass flow  -> Mass Flow Inlet");
+      r.put("U", U, "m/s", "mean velocity  -> Velocity Inlet");
+      if (gas) {
+        double Ma = U / c, fac = 1 + 0.5 * (gam - 1) * Ma * Ma;
+        double p0 = p * Math.pow(fac, gam / (gam - 1)), T0 = T * fac;
+        r.put("p0_gauge", p0 - pref, "Pa", "total pressure (isentropic), gauge  -> Stagnation Inlet");
+        r.put("T0", T0, "K", "total temperature  -> Stagnation / Mass Flow Inlet");
+        r.put("p_gauge", p - pref, "Pa", "static pressure, gauge  -> Pressure Outlet");
+        r.put("Ma", Ma, "-", "Mach number U / c");
+        r.put("Q", U * area, "m^3/s", "actual volume flow at p, T");
+        r.put("Q_lpm", U * area * 60000, "l/min", "actual volume flow at p, T");
+        r.put("Qn_lpm", mdot / (P_STD / (Rg * T_NORMAL)) * 60000, "Nl/min", "standard flow at 0 degC, 1 atm");
+        r.put("SCFM", mdot / (P_STD / (Rg * T_SCFM)) * 60 / FT3, "SCFM", "standard flow at 60 degF, 14.696 psi");
+        r.put("p0_gauge_incomp", p - pref + q, "Pa", "total pressure p + rho U^2/2 (incompressible), gauge");
+        r.put("q", q, "Pa", "dynamic pressure rho U^2 / 2");
+        double mStar = area * p0 * Math.sqrt(gam / (Rg * T0)) * Math.pow(2 / (gam + 1), (gam + 1) / (2 * (gam - 1)));
+        r.put("mdot_choked", mStar, "kg/s", "largest mass flow of this section at these total conditions (Ma = 1)");
+        r.put("c", c, "m/s", "speed of sound sqrt(gamma R T)");
+        r.put("gamma", gam, "-", "ratio of specific heats");
+        r.put("R", Rg, "J/kg-K", "gas constant");
+        if (Ma >= 1) r.warn("Ma = " + g(Ma) + " >= 1: the section cannot carry this flow subsonically; check the area, the flow or the pressure");
+        else if (Ma > 0.7) r.warn("Ma = " + g(Ma) + " > 0.7: close to choking; the flow reacts strongly to the outlet pressure");
+        else if (Ma > 0.3) {
+          r.warn("Ma = " + g(Ma) + " > 0.3: use an ideal-gas (compressible) density in STAR-CCM+; the incompressible total pressure is "
+              + g(100 * (p0 - p - q) / (p0 - p)) + " % low");
+        }
+      } else {
+        r.put("p0_gauge", p - pref + q, "Pa", "total pressure p + rho U^2/2, gauge  -> Stagnation Inlet");
+        r.put("p_gauge", p - pref, "Pa", "static pressure, gauge  -> Pressure Outlet");
+        r.put("Q", U * area, "m^3/s", "volume flow");
+        r.put("Q_lpm", U * area * 60000, "l/min", "volume flow");
+        r.put("q", q, "Pa", "dynamic pressure rho U^2 / 2");
+      }
+      r.put("rho", rho, "kg/m^3", "density at p, T");
+      if (given(mu) && mu > 0) r.put("Re_D", rho * U * dEq / mu, "-", "Reynolds number on " + (given(D) ? "D" : "the equivalent diameter"));
+      r.put("A", area, "m^2", "flow area");
+      r.f("m_dot = rho U A ; Q = U A ; q = rho U^2 / 2 ; gauge = absolute - reference pressure");
+      if (gas) {
+        r.f("p0 = p (1 + (g-1)/2 Ma^2)^(g/(g-1)) ; T0 = T (1 + (g-1)/2 Ma^2) ; m_max = A p0 sqrt(g/(R T0)) (2/(g+1))^((g+1)/(2(g-1)))");
+        r.line("treated as an ideal gas, R = " + g(Rg) + " J/kg-K, gamma = " + g(gam));
+      } else {
+        r.line("treated as a liquid (constant density)");
+      }
+      r.line("standard flows: Nl/min at 0 degC, 101325 Pa; SCFM at 60 degF, 14.696 psi");
+      r.src("mass conservation; isentropic ideal-gas relations (e.g. Anderson, Modern Compressible Flow)");
+      r.valid("uniform (plug) flow over the section; p, T are static values at the section. STAR-CCM+ boundary pressures are gauge, "
+          + "relative to the reference pressure (Continua > Physics > Reference Values)");
+      return r;
+    }
+
+    static final String[] ORIFICE_SOLVE = {"mass flow (from the pressures)", "upstream pressure (for a mass flow)",
+        "hole diameter (for a mass flow)"};
+
+    /** Mass flow through holes of total area A from upstream total (p0, T0) to downstream static pb. */
+    static double orificeFlow(double p0, double pb, double T0, double A, double Cd, double rho, double gam, double Rg) {
+      if (!given(Rg)) return p0 <= pb ? 0 : Cd * A * Math.sqrt(2 * rho * (p0 - pb));
+      double pr = pb / p0, prc = Math.pow(2 / (gam + 1), gam / (gam - 1));
+      if (pr >= 1) return 0;
+      if (pr <= prc) return Cd * A * p0 * Math.sqrt(gam / (Rg * T0)) * Math.pow(2 / (gam + 1), (gam + 1) / (2 * (gam - 1)));
+      return Cd * A * p0 * Math.sqrt(2 * gam / ((gam - 1) * Rg * T0) * (Math.pow(pr, 2 / gam) - Math.pow(pr, (gam + 1) / gam)));
+    }
+
+    static R orifice(int solve, double mdot, double p0, double pb, double T0, double D, double n, double Cd, double rho, double cp,
+        double gammaIn, double Rg) {
+      pos("downstream pressure", pb); pos("upstream temperature", T0); pos("number of holes", n); pos("Cd", Cd);
+      boolean gas = given(Rg) && Rg > 0;
+      if (!gas) pos("density", rho);
+      R r = new R("Orifice / nozzle flow");
+      double gam = Double.NaN;
+      if (gas) {
+        if (given(gammaIn)) gam = gammaIn;
+        else if (given(cp) && cp > Rg) gam = cp / (cp - Rg);
+        else {
+          gam = 1.4;
+          r.warn("gamma = 1.4 assumed (no cp): enter gamma for other gases");
+        }
+        if (gam <= 1) throw new IllegalArgumentException("gamma must be > 1 (got " + g(gam) + ")");
+      }
+      if (solve == 0) {
+        pos("upstream pressure", p0); pos("hole diameter", D);
+        if (p0 <= pb) throw new IllegalArgumentException("upstream pressure must be above the downstream pressure");
+        mdot = orificeFlow(p0, pb, T0, n * Math.PI * D * D / 4, Cd, rho, gam, Rg);
+      } else if (solve == 1) {
+        pos("mass flow", mdot); pos("hole diameter", D);
+        double A = n * Math.PI * D * D / 4, lo = pb, hi = pb * 2;
+        while (orificeFlow(hi, pb, T0, A, Cd, rho, gam, Rg) < mdot) {
+          hi *= 2;
+          if (hi > 1e12) throw new IllegalArgumentException("no pressure below 1e12 Pa gives this flow: check the diameter and the flow");
+        }
+        for (int i = 0; i < 200; i++) {
+          double mid = 0.5 * (lo + hi);
+          if (orificeFlow(mid, pb, T0, A, Cd, rho, gam, Rg) < mdot) lo = mid; else hi = mid;
+        }
+        p0 = 0.5 * (lo + hi);
+      } else {
+        pos("mass flow", mdot); pos("upstream pressure", p0);
+        if (p0 <= pb) throw new IllegalArgumentException("upstream pressure must be above the downstream pressure");
+        double perArea = orificeFlow(p0, pb, T0, 1.0, Cd, rho, gam, Rg);
+        D = Math.sqrt(4 * mdot / perArea / n / Math.PI);
+      }
+      double A = n * Math.PI * D * D / 4;
+      r.put("mdot", mdot, "kg/s", "mass flow, all holes");
+      r.put("p0", p0, "Pa", "upstream total pressure (absolute)");
+      r.put("dp", p0 - pb, "Pa", "pressure drop p0 - pb");
+      r.put("D", D, "m", "hole diameter (each)");
+      r.put("A", A, "m^2", "total hole area");
+      if (gas) {
+        double prc = Math.pow(2 / (gam + 1), gam / (gam - 1)), pr = pb / p0;
+        boolean choked = pr <= prc;
+        double Ma = choked ? 1 : Math.sqrt(2 / (gam - 1) * (Math.pow(p0 / pb, (gam - 1) / gam) - 1));
+        double Tt = T0 / (1 + 0.5 * (gam - 1) * Ma * Ma);
+        r.put("choked", choked ? 1 : 0, "-", choked ? "1 = choked: the flow no longer depends on the downstream pressure" : "0 = not choked");
+        r.put("pr", pr, "-", "pressure ratio pb / p0");
+        r.put("pr_crit", prc, "-", "critical ratio (2/(g+1))^(g/(g-1)); choked below it");
+        r.put("U_jet", Ma * Math.sqrt(gam * Rg * Tt), "m/s", "ideal jet velocity at the throat");
+        r.put("Ma_jet", Ma, "-", "throat Mach number (ideal)");
+        r.put("T_jet", Tt, "K", "static temperature at the throat");
+        r.f("choked (pb/p0 <= pr_crit): m = Cd A p0 sqrt(g/(R T0)) (2/(g+1))^((g+1)/(2(g-1)))");
+        r.f("not choked: m = Cd A p0 sqrt(2g/((g-1) R T0) ((pb/p0)^(2/g) - (pb/p0)^((g+1)/g)))");
+        r.line("ideal gas, R = " + g(Rg) + " J/kg-K, gamma = " + g(gam));
+      } else {
+        r.put("U_jet", Math.sqrt(2 * (p0 - pb) / rho), "m/s", "ideal jet velocity sqrt(2 dp / rho)");
+        r.f("m = Cd A sqrt(2 rho (p0 - pb))  (liquid, incompressible)");
+      }
+      r.put("Cd", Cd, "-", "discharge coefficient");
+      r.line("Cd: sharp-edged orifice 0.60-0.62; short tube 0.8; well-rounded nozzle 0.95-0.99 (measure it when it matters)");
+      r.src("isentropic nozzle flow (e.g. Anderson, Modern Compressible Flow); ISO 5167 for orifice plates in pipes");
+      r.valid("upstream velocity neglected (hole much smaller than the feed pipe, d/D < ~0.3); p0, T0 upstream total values");
+      r.range("Cd", Cd, 0.3, 1.0);
       return r;
     }
 
@@ -2106,8 +2946,20 @@ public class SimKitCalc extends StarMacro {
       sb.append(String.format(Locale.ROOT, "Flow number 1.89 g/s, 800 kg/m3, 689476 Pa -> %.4e m^2 (~8.0e-8)%n",
           flowNumber(1.89e-3, 800, 689476).get("FN")));
       sb.append(String.format(Locale.ROOT, "Churchill-Bernstein Re=1e4 Pr=0.7 -> Nu = %.3f%n", churchillBernstein(1e4, 0.7)));
+      R ftr = flowThrough(0.046, 1.2, 0.01, 1.0, 0.01, 2, 3, 1e-3);
+      sb.append(String.format(Locale.ROOT, "Flow-through mdot 0.046, rho 1.2, L 1, A 0.01 -> t_ft = %.4f s (0.2609), "
+          + "window start %.4f s (0.5217), end %.4f s (1.3043)%n", ftr.get("tFlowThrough"), ftr.get("tAvgStart"), ftr.get("tEnd")));
       sb.append(String.format(Locale.ROOT, "AST with q_inc = sigma Tg^4, Tg = 1000 K -> %.6f K%n",
           ast(SIGMA * 1e12, Double.NaN, 25, 1000, 0.9, Double.NaN).get("TAST")));
+      R io = inletOutlet(0, 0.05, 101325, 300, 101325, 0.05, Double.NaN, 101325 / (287.05 * 300), 1.846e-5, 1007, Double.NaN, 287.05);
+      R io2 = inletOutlet(7, io.get("p0_gauge"), 101325, 300, 101325, 0.05, Double.NaN, 101325 / (287.05 * 300), 1.846e-5, 1007,
+          Double.NaN, 287.05);
+      sb.append(String.format(Locale.ROOT, "Inlet air 0.05 kg/s, D 50 mm, 1 atm, 300 K -> U = %.4f m/s (21.642), Ma = %.5f ; back from p0: "
+          + "mdot = %.6f (0.05)%n", io.get("U"), io.get("Ma"), io2.get("mdot")));
+      R or = orifice(0, Double.NaN, 5e5, 101325, 300, 1e-3, 1, 1, Double.NaN, Double.NaN, 1.4, 287.05);
+      R or2 = orifice(1, or.get("mdot"), Double.NaN, 101325, 300, 1e-3, 1, 1, Double.NaN, Double.NaN, 1.4, 287.05);
+      sb.append(String.format(Locale.ROOT, "Orifice air 5 bar, 300 K, 1 mm, Cd 1 -> mdot = %.5e kg/s (9.1630e-04, choked=%d) ; back: p0 = %.1f Pa%n",
+          or.get("mdot"), (int) or.get("choked"), or2.get("p0")));
       R pf = prismForward(1e-5, 1.2, 15, Double.NaN);
       sb.append(String.format(Locale.ROOT, "Prism y1=1e-5 r=1.2 N=15: T=%.6e ; solve r -> %.9f ; solve N -> %d%n", pf.get("total"),
           prismSolveR(1e-5, pf.get("total"), 15, Double.NaN).get("r"), (int) prismSolveN(1e-5, 1.2, pf.get("total"), Double.NaN).get("N")));
@@ -2147,6 +2999,7 @@ public class SimKitCalc extends StarMacro {
     final List<Emis> emissivity = new ArrayList<>();
     final List<String> errors = new ArrayList<>();
     final List<String> loaded = new ArrayList<>();
+    final List<String> matml = new ArrayList<>();   // what was read from MatML folders (one line per file)
     Path dir;
 
     static Library load(Path configDir) {
@@ -2176,6 +3029,7 @@ public class SimKitCalc extends StarMacro {
       StringBuilder sb = new StringBuilder("library " + dir + ": " + fluids.size() + " fluids, " + materials.size()
           + " materials, " + emissivity.size() + " emissivity rows (" + String.join(", ", loaded) + ")");
       for (String e : errors) sb.append("\n  library WARNING: ").append(e);
+      if (!matml.isEmpty()) sb.append("\n  ").append(matml.get(0));
       return sb.toString();
     }
 
@@ -2393,13 +3247,13 @@ public class SimKitCalc extends StarMacro {
         for (String s : w) r.warn(s);
       }
       Double rho = v.get("rho"), cp = v.get("cp");
-      for (String kk : new String[] {"k", "k_zz", "k_xy"}) {
+      for (String kk : new String[] {"k", "k_x", "k_y", "k_z", "k_zz", "k_xy"}) {
         Double k = v.get(kk);
         if (k != null && rho != null && cp != null) r.put("alpha_" + kk, k / (rho * cp), "m^2/s", "derived " + kk + "/(rho cp)");
       }
       r.valid("each row is valid in its T range (shown); outside it the value is CLAMPED and a warning is given");
       r.lines.add("");
-      r.lines.add("Emissivity (config\\emissivity.csv): typical [min-max] -- source -- note");
+      r.lines.add("Emissivity (data/emissivity.csv): typical [min-max] -- source -- note");
       for (Emis e : emissivity) {
         r.lines.add(String.format(Locale.ROOT, "  %-36s %.2f [%.2f-%.2f] -- %s%s", e.surface, e.typ, e.min, e.max, e.source,
             e.note.isEmpty() ? "" : " -- " + e.note));
@@ -2455,8 +3309,331 @@ public class SimKitCalc extends StarMacro {
   }
 
   // =====================================================================================================
+  // MatML (*.xml) material files -> library materials (no STAR types; unit-testable with a plain JDK)
+  // =====================================================================================================
+
+  /** Reads MatML 3.x files: plain MatML (values in PropertyData/Data) and ANSYS Engineering Data exports (values in
+   *  ParameterValue marked "Dependent", temperature as the "Independent" parameter). Known properties are mapped to
+   *  rho, cp, k (k_x, k_y, k_z if orthotropic) and eps with SI units; temperatures in C/F become K; any other numeric
+   *  property is kept under its own name and unit. A temperature series becomes an interpolated table. */
+  static final class MatML {
+    /** Loads every *.xml below 'folder' (2 levels) into lib.materials; one report line per file in 'report'. */
+    static int loadFolder(Library lib, Path folder, List<String> report) {
+      int n = 0;
+      if (folder == null || !Files.isDirectory(folder)) {
+        report.add("MatML folder not found: " + folder);
+        return 0;
+      }
+      List<Path> files = new ArrayList<>();
+      try (java.util.stream.Stream<Path> w = Files.walk(folder, 3)) {
+        w.filter(p -> Files.isRegularFile(p) && p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".xml"))
+            .sorted().forEach(files::add);
+      } catch (IOException e) {
+        report.add("MatML folder unreadable: " + folder + " (" + e.getMessage() + ")");
+        return 0;
+      }
+      for (Path f : files) {
+        try {
+          int k = loadFile(lib, f, report);
+          n += k;
+        } catch (Throwable t) {
+          report.add(f.getFileName() + ": not read (" + t.getClass().getSimpleName() + ": " + t.getMessage() + ")");
+        }
+      }
+      report.add(0, "MatML folder " + folder + ": " + files.size() + " file(s), " + n + " material(s)");
+      return n;
+    }
+
+    static int loadFile(Library lib, Path f, List<String> report) throws Exception {
+      javax.xml.parsers.DocumentBuilderFactory dbf = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+      dbf.setNamespaceAware(true);
+      try { dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true); } catch (Exception e) { /* parser default */ }
+      dbf.setXIncludeAware(false);
+      dbf.setExpandEntityReferences(false);
+      org.w3c.dom.Document doc = dbf.newDocumentBuilder().parse(f.toFile());
+      Map<String, String[]> props = details(doc, "PropertyDetails"), params = details(doc, "ParameterDetails");
+      int n = 0;
+      for (org.w3c.dom.Element mat : elements(doc.getDocumentElement(), "Material")) {
+        org.w3c.dom.Element bulk = first(mat, "BulkDetails");
+        if (bulk == null) continue;
+        String name = text(first(bulk, "Name"));
+        if (name.isEmpty()) name = f.getFileName().toString().replaceFirst("(?i)\\.xml$", "");
+        String key = name;
+        if (lib.materials.containsKey(key)) key = name + " (" + f.getFileName() + ")";
+        Map<String, Library.Prop> m = new LinkedHashMap<>();
+        List<String> got = new ArrayList<>(), skipped = new ArrayList<>();
+        for (org.w3c.dom.Element pd : children(bulk, "PropertyData")) {
+          String[] pdet = props.getOrDefault(pd.getAttribute("property"), new String[] {pd.getAttribute("property"), ""});
+          double[] temps = null;
+          String tUnit = "";
+          List<Object[]> series = new ArrayList<>();   // {name, unit, double[] values}
+          for (org.w3c.dom.Element pv : children(pd, "ParameterValue")) {
+            String[] det = params.getOrDefault(pv.getAttribute("parameter"), new String[] {pv.getAttribute("parameter"), ""});
+            double[] vals = numbers(text(first(pv, "Data")));
+            if (vals == null) continue;
+            // ANSYS writes one flag per point: "Dependent,Dependent,Dependent"
+            String vt = qualifier(pv, "Variable Type").split(",")[0].trim();
+            if (det[0].toLowerCase(Locale.ROOT).contains("temperature") && !vt.equalsIgnoreCase("Dependent")) {
+              temps = vals;
+              tUnit = det[1];
+            } else if (vt.isEmpty() || vt.equalsIgnoreCase("Dependent")) {
+              series.add(new Object[] {det[0], det[1], vals});
+            }
+          }
+          if (temps != null) {   // ANSYS writes a dummy temperature (7.9e-31) when a property does not depend on T
+            boolean dummy = true;
+            for (double t : temps) dummy &= Math.abs(t) < 1e-20;
+            if (dummy) temps = null;
+          }
+          if (series.isEmpty()) {
+            double[] vals = numbers(text(first(pd, "Data")));
+            if (vals != null) series.add(new Object[] {pdet[0], pdet[1], vals});
+          }
+          if (series.isEmpty()) { skipped.add(pdet[0]); continue; }
+          for (Object[] sr : series) {
+            String pname = (String) sr[0], unit = (String) sr[1];
+            double[] vals = (double[]) sr[2];
+            String k = keyFor(pname.isEmpty() ? pdet[0] : pname, pdet[0]);
+            double scale = scaleToSI(k, unit);
+            Library.Prop p = new Library.Prop();
+            p.owner = key;
+            p.prop = k;
+            p.unit = siUnitOf(k, unit);
+            p.source = "MatML " + f.getFileName() + " (" + pdet[0] + ")";
+            p.note = "";
+            p.tUnit = "K";
+            double[] tk = temps == null ? null : toKelvin(temps, tUnit);
+            boolean table = tk != null && tk.length == vals.length && vals.length > 1 && tk[0] > 1;
+            if (table) {
+              double[][] tab = sortByT(tk, vals, scale);
+              p.model = "table";
+              p.tab = tab;
+              p.tMin = tab[0][0];
+              p.tMax = tab[0][tab[0].length - 1];
+              StringBuilder ct = new StringBuilder();
+              for (int i = 0; i < tab[0].length; i++) ct.append(i == 0 ? "" : ";").append(Core.g(tab[0][i])).append(':').append(Core.g(tab[1][i]));
+              p.coeffText = ct.toString();
+            } else {
+              p.model = "const";
+              p.c = new double[] {vals[0] * scale};
+              p.coeffText = Core.g(p.c[0]);
+              if (tk != null && tk.length == 1 && tk[0] > 1) p.note = "given at " + Core.g(tk[0]) + " K";
+            }
+            m.put(k, p);
+            got.add(k + (table ? "(T)" : ""));
+          }
+        }
+        if (m.isEmpty()) {
+          report.add(f.getFileName() + ": material '" + name + "' has no numeric property");
+          continue;
+        }
+        lib.materials.put(key, m);
+        n++;
+        report.add(f.getFileName() + ": " + key + " -> " + String.join(", ", got)
+            + (skipped.isEmpty() ? "" : " ; not numeric: " + String.join(", ", skipped)));
+      }
+      if (n == 0) report.add(f.getFileName() + ": no MatML material found");
+      return n;
+    }
+
+    /** SimKit key of a property: rho, cp, k, k_x/k_y/k_z, eps; otherwise the name itself (letters/digits/_). */
+    static String keyFor(String name, String propertyName) {
+      String s = (name + " " + propertyName).toLowerCase(Locale.ROOT);
+      if (s.contains("density")) return "rho";
+      if (s.contains("specific heat")) return "cp";
+      if (s.contains("conductivity")) {
+        String n = name.toLowerCase(Locale.ROOT);
+        if (n.matches(".*\\bx\\b.*direction.*|.*\\bx direction.*|.*\\bk_?x\\b.*")) return "k_x";
+        if (n.matches(".*\\by\\b.*direction.*|.*\\by direction.*|.*\\bk_?y\\b.*")) return "k_y";
+        if (n.matches(".*\\bz\\b.*direction.*|.*\\bz direction.*|.*\\bk_?z\\b.*")) return "k_z";
+        return "k";
+      }
+      if (s.contains("emissivity")) return "eps";
+      String k = name.replaceAll("[^A-Za-z0-9]+", "_").replaceAll("^_|_$", "");
+      return k.isEmpty() ? "property" : k;
+    }
+
+    static String norm(String unit) { return unit.replace(" ", "").replace("^", "").toLowerCase(Locale.ROOT); }
+
+    /** Factor to SI for the common MatML unit spellings ("kg m^-3", "g cm^-3", "J kg^-1 C^-1", "W m^-1 C^-1"...). */
+    static double scaleToSI(String key, String unit) {
+      String u = norm(unit);
+      switch (key) {
+        case "rho": return u.startsWith("gcm-3") || u.equals("g/cm3") ? 1000 : u.startsWith("tonnemm-3") ? 1e12 : 1;
+        case "cp": return u.startsWith("jg-1") || u.startsWith("j/g") ? 1000 : u.startsWith("mjtonne-1") ? 1 : 1;
+        case "k": case "k_x": case "k_y": case "k_z": return u.startsWith("wmm-1") ? 1000 : 1;
+        default: return 1;
+      }
+    }
+
+    static String siUnitOf(String key, String unit) {
+      switch (key) {
+        case "rho": return "kg/m3";
+        case "cp": return "J/kg.K";
+        case "k": case "k_x": case "k_y": case "k_z": return "W/m.K";
+        case "eps": return "-";
+        default: return unit.isEmpty() ? "-" : unit;
+      }
+    }
+
+    static double[] toKelvin(double[] t, String unit) {
+      String u = norm(unit);
+      double[] k = new double[t.length];
+      for (int i = 0; i < t.length; i++) {
+        k[i] = u.equals("c") || u.contains("degc") || u.contains("celsius") ? t[i] + 273.15
+            : u.equals("f") || u.contains("degf") || u.contains("fahrenheit") ? (t[i] - 32) * 5 / 9 + 273.15 : t[i];
+      }
+      return k;
+    }
+
+    static double[][] sortByT(double[] t, double[] v, double scale) {
+      Integer[] idx = new Integer[t.length];
+      for (int i = 0; i < idx.length; i++) idx[i] = i;
+      Arrays.sort(idx, (a, b) -> Double.compare(t[a], t[b]));
+      double[][] out = new double[2][t.length];
+      for (int i = 0; i < idx.length; i++) {
+        out[0][i] = t[idx[i]];
+        out[1][i] = v[idx[i]] * scale;
+      }
+      return out;
+    }
+
+    /** id -> {name, units} from Metadata/PropertyDetails or ParameterDetails. */
+    static Map<String, String[]> details(org.w3c.dom.Document doc, String tag) {
+      Map<String, String[]> m = new LinkedHashMap<>();
+      for (org.w3c.dom.Element d : elements(doc.getDocumentElement(), tag)) {
+        m.put(d.getAttribute("id"), new String[] {text(first(d, "Name")), units(d)});
+      }
+      return m;
+    }
+
+    /** Units of a details element: Units/@name, else "kg m^-3" built from Units/Unit[@power]/Name; Unitless -> "". */
+    static String units(org.w3c.dom.Element d) {
+      org.w3c.dom.Element u = first(d, "Units");
+      if (u == null) return "";
+      if (!u.getAttribute("name").isEmpty()) return u.getAttribute("name");
+      List<String> parts = new ArrayList<>();
+      for (org.w3c.dom.Element one : children(u, "Unit")) {
+        String pw = one.getAttribute("power");
+        parts.add(text(first(one, "Name")) + (pw.isEmpty() || pw.equals("1") ? "" : "^" + pw));
+      }
+      return String.join(" ", parts);
+    }
+
+    static String qualifier(org.w3c.dom.Element e, String name) {
+      for (org.w3c.dom.Element q : children(e, "Qualifier")) if (name.equalsIgnoreCase(q.getAttribute("name"))) return text(q);
+      return "";
+    }
+
+    /** "7850, 7840" -> numbers; null if any item is not a number (e.g. "-", "Interpolation"). */
+    static double[] numbers(String s) {
+      if (s == null || s.trim().isEmpty()) return null;
+      String[] parts = s.trim().split("\\s*[,;]\\s*");
+      double[] out = new double[parts.length];
+      for (int i = 0; i < parts.length; i++) {
+        try { out[i] = Double.parseDouble(parts[i].trim()); } catch (NumberFormatException e) { return null; }
+      }
+      return out;
+    }
+
+    static String text(org.w3c.dom.Element e) { return e == null ? "" : e.getTextContent().trim(); }
+
+    static String local(org.w3c.dom.Node n) { return n.getLocalName() != null ? n.getLocalName() : n.getNodeName(); }
+
+    static org.w3c.dom.Element first(org.w3c.dom.Element parent, String name) {
+      if (parent == null) return null;
+      for (org.w3c.dom.Node n = parent.getFirstChild(); n != null; n = n.getNextSibling()) {
+        if (n instanceof org.w3c.dom.Element && local(n).equals(name)) return (org.w3c.dom.Element) n;
+      }
+      return null;
+    }
+
+    static List<org.w3c.dom.Element> children(org.w3c.dom.Element parent, String name) {
+      List<org.w3c.dom.Element> out = new ArrayList<>();
+      for (org.w3c.dom.Node n = parent.getFirstChild(); n != null; n = n.getNextSibling()) {
+        if (n instanceof org.w3c.dom.Element && local(n).equals(name)) out.add((org.w3c.dom.Element) n);
+      }
+      return out;
+    }
+
+    /** All descendants with this local name (any namespace). */
+    static List<org.w3c.dom.Element> elements(org.w3c.dom.Element root, String name) {
+      List<org.w3c.dom.Element> out = new ArrayList<>();
+      org.w3c.dom.NodeList l = root.getElementsByTagNameNS("*", name);
+      for (int i = 0; i < l.getLength(); i++) out.add((org.w3c.dom.Element) l.item(i));
+      if (out.isEmpty()) {
+        l = root.getElementsByTagName(name);
+        for (int i = 0; i < l.getLength(); i++) out.add((org.w3c.dom.Element) l.item(i));
+      }
+      return out;
+    }
+  }
+
+  // =====================================================================================================
   // Helpers (same behaviour as in SimKit.java)
   // =====================================================================================================
+
+  /** Styled-text rendering of a result: warnings first, the results table (tab stops), then the details. */
+  static final class Styled {
+    static final java.awt.Color GREY = new java.awt.Color(0x77, 0x77, 0x77), AMBER = new java.awt.Color(0xFF, 0xF4, 0xD6),
+        HEAD = new java.awt.Color(0xE8, 0xED, 0xF3), ZEBRA = new java.awt.Color(0xF6, 0xF8, 0xFA);
+
+    static javax.swing.text.SimpleAttributeSet style(int size, boolean bold, java.awt.Color fg, java.awt.Color bg) {
+      javax.swing.text.SimpleAttributeSet a = new javax.swing.text.SimpleAttributeSet();
+      javax.swing.text.StyleConstants.setFontFamily(a, Font.SANS_SERIF);
+      javax.swing.text.StyleConstants.setFontSize(a, size);
+      javax.swing.text.StyleConstants.setBold(a, bold);
+      if (fg != null) javax.swing.text.StyleConstants.setForeground(a, fg);
+      if (bg != null) javax.swing.text.StyleConstants.setBackground(a, bg);
+      return a;
+    }
+
+    static void add(javax.swing.text.StyledDocument d, String text, javax.swing.text.AttributeSet a) {
+      try { d.insertString(d.getLength(), text, a); } catch (javax.swing.text.BadLocationException e) { /* never */ }
+    }
+
+    /** Paragraph attributes for the results table: name | value (right-aligned) | unit | meaning. */
+    static void tabs(javax.swing.text.StyledDocument d, int start, java.awt.Color bg) {
+      javax.swing.text.SimpleAttributeSet p = new javax.swing.text.SimpleAttributeSet();
+      javax.swing.text.StyleConstants.setTabSet(p, new javax.swing.text.TabSet(new javax.swing.text.TabStop[] {
+          new javax.swing.text.TabStop(240, javax.swing.text.TabStop.ALIGN_RIGHT, javax.swing.text.TabStop.LEAD_NONE),
+          new javax.swing.text.TabStop(255), new javax.swing.text.TabStop(340)}));
+      javax.swing.text.StyleConstants.setSpaceAbove(p, 2);
+      javax.swing.text.StyleConstants.setSpaceBelow(p, 2);
+      d.setParagraphAttributes(start, Math.max(1, d.getLength() - start), p, false);
+    }
+
+    static javax.swing.text.StyledDocument result(String head, String inputs, Core.R r, String logNote) {
+      javax.swing.text.StyledDocument d = new javax.swing.text.DefaultStyledDocument();
+      add(d, r.title + "\n", style(15, true, java.awt.Color.BLACK, null));
+      add(d, head + "\n\n", style(10, false, GREY, null));
+      for (String w : r.warns) add(d, " \u26A0 " + w + " \n", style(12, false, new java.awt.Color(0x6B, 0x4E, 0x00), AMBER));
+      if (!r.warns.isEmpty()) add(d, "\n", style(6, false, null, null));
+      int start = d.getLength();
+      add(d, "result\tvalue\tunit\tmeaning\n", style(12, true, java.awt.Color.DARK_GRAY, HEAD));
+      int i = 0;
+      for (Core.Item it : r.items) {
+        java.awt.Color bg = i++ % 2 == 1 ? ZEBRA : null;
+        add(d, it.key + "\t", style(12, false, java.awt.Color.BLACK, bg));
+        add(d, Core.g(it.v), style(12, true, java.awt.Color.BLACK, bg));
+        add(d, "\t" + (it.unit.equals("-") ? "" : it.unit) + "\t", style(12, false, java.awt.Color.BLACK, bg));
+        add(d, it.desc + "\n", style(12, false, new java.awt.Color(0x44, 0x44, 0x44), bg));
+      }
+      tabs(d, start, null);
+      add(d, "\n", style(6, false, null, null));
+      for (String l : r.lines) {
+        int c = l.indexOf(':');
+        if (!l.isEmpty() && c > 0 && c < 10) {
+          add(d, l.substring(0, c + 1), style(11, true, GREY, null));
+          add(d, l.substring(c + 1) + "\n", style(11, false, GREY, null));
+        } else {
+          add(d, l + "\n", style(11, false, GREY, null));
+        }
+      }
+      add(d, "\nInputs: " + inputs + "\n" + logNote + "\n", style(10, false, new java.awt.Color(0x99, 0x99, 0x99), null));
+      return d;
+    }
+  }
 
   static final class Cancel extends RuntimeException {
     private static final long serialVersionUID = 1L;
@@ -2475,14 +3652,14 @@ public class SimKitCalc extends StarMacro {
   }
 
   static final class Fs {
-    static Path share() {
-      String s = System.getenv("SIMKIT_SHARE");
-      if (s == null || s.trim().isEmpty()) s = System.getProperty("simkit.share", SHARE_ROOT);
-      return Paths.get(s.trim());
+    static Path kit() { return ROOT; }
+    /** A file or folder of the kit, relative to the SimKit root with '/' (same text on Windows and Linux). */
+    static Path inKit(String rel) {
+      Path p = kit();
+      for (String part : rel.split("/")) if (!part.isEmpty()) p = p.resolve(part);
+      return p;
     }
 
-    static Path kit() { return share().resolve("_SIMKIT"); }
-    static Path projectsDir() { return share().resolve("PROJECTS"); }
     static String user() { return System.getProperty("user.name", "unknown"); }
 
     /** Comparison key of a path: case-insensitive on Windows only (Linux file systems are case-sensitive). */
