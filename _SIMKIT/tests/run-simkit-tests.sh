@@ -3,7 +3,7 @@
 # SimKit - automated batch validation on a licensed STAR-CCM+ installation, LINUX (RHEL 7 / RHEL 9).
 # Same steps and same PASTE_THIS.txt as tests/Run-SimKitTests.ps1 (Windows 10/11):
 #   00 version | 01 build test sim (tests/BuildSimKitTestSim.java) | 02 SimKitCalc self-check |
-#   03 check | 04 record | 05 export | 06 default (record + export) | optional 07 short solver run.
+#   04 record | 05 export | 06 default (record + export) | optional 07 short solver run.
 # Needs only bash >= 4.2, GNU coreutils/grep/sed/awk, tar (all standard on RHEL 7 and 9).
 #
 # Usage:
@@ -136,7 +136,6 @@ log "test case     : $CASE_SIM"
 # ------------------------------------------------------------------ 2-13. batch runs
 declare -A RCS
 invoke_star 02_SimKitCalc_selfcheck "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/lib/generic/SimKitCalc.java" "$CASE_SIM"; RCS[calc]=$RC
-invoke_star 03_SimKit_check check ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[check]=$RC
 invoke_star 04_SimKit_record record ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[record]=$RC
 invoke_star 05_SimKit_export export ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[export]=$RC
 invoke_star 06_SimKit_default "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[default]=$RC
@@ -145,7 +144,7 @@ invoke_star 07b_SimKit_reports_again reports ${COMMON[@]+"${COMMON[@]}"} -batch 
 invoke_star 07c_SimKit_meshparams meshparams ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshpar]=$RC
 invoke_star 07d_SimKit_scenes scenes ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[scenes]=$RC
 invoke_star 07e_SimKit_meshstudy meshstudy ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshstudy]=$RC
-invoke_star 08_button_Check "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_Check.java" "$CASE_SIM"; RCS[button]=$RC
+invoke_star 08_button_Export "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_ExportResults.java" "$CASE_SIM"; RCS[button]=$RC
 
 # Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
 # keys): every settings.props under ~/.star-* is copied aside first and put back afterwards, and only the
@@ -228,7 +227,7 @@ PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a
   echo "----- files produced in the test case -----"
   (cd "$CASE" && find . -type f ! -name '*.sim' ! -name '*.sim~' -printf '%P  %s B\n' | sort)
   echo
-  for pat in 'check_*.csv' 'setup_*.csv'; do
+  for pat in 'setup_*.csv'; do
     f=$(ls -t "$CASE"/record/$pat 2>/dev/null | head -n 1)
     if [ -n "$f" ]; then
       echo "----- $(basename "$f") (first 60 lines; n/a rows first) -----"

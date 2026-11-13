@@ -35,7 +35,6 @@ public class SimKit_InstallButtons extends StarMacro {
   static final String[][] BUTTONS = {
       {"SimKit_Menu", "SimKit (all tools)"},
       {"SimKit_SaveNewVersion", "SimKit: Save as new"},
-      {"SimKit_Check", "SimKit: Check before a run"},
       {"SimKit_ExportResults", "SimKit: Export results"},
       {"SimKit_CaseTracker", "SimKit: Case tracker"},
       {"SimKit_Calculators", "SimKit: Calculators"},

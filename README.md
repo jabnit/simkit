@@ -15,7 +15,7 @@ study helper, a case tracker and engineering calculators.
 | Path | Content |
 |---|---|
 | `_SIMKIT/` | **The kit.** Copy this folder as-is to the team share. Its inner layout must be kept: every macro finds the kit root from its own location. |
-| `_SIMKIT/SimKit.java` | The macro users play: Save as new, Check, Export results and the other tools. |
+| `_SIMKIT/SimKit.java` | The macro users play: Save as new, Export results and the other tools. |
 | `_SIMKIT/buttons/` | One small macro per toolbar button, their icons and `SimKit_InstallButtons.java` (see `_SIMKIT/buttons/README.txt`). |
 | `_SIMKIT/config/` | Projects, naming rules, Guideline links and MatML material folders (CSV, edited by the owner). |
 | `_SIMKIT/lib/generic/` | `SimKitCalc.java` (Calculators window) and its property tables in `data/`. |
@@ -57,7 +57,7 @@ The GUI test and the expected results are in `_SIMKIT/TESTING.txt`.
 | Tag | Content |
 |---|---|
 | `v0.2.1` | Full kit (20 tools, tags, groups, parameter sync, project workbook, register Apps Script). |
-| `v0.3` | Simplified kit: New case, Save version, Check, Export results, Calculators, Case list (Compare versions removed later), Guideline, About. |
+| `v0.3` | Simplified kit: New case, Save version, Export results, Calculators, Case list (Check and Compare versions removed later), Guideline, About. |
 
 `_SIMKIT/VERSION.txt` holds the current version line. Tag each release `v<version>`.
 

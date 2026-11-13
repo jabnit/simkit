@@ -1,4 +1,0 @@
-object,pattern,example,explanation
-# Only parts and part surfaces are checked (their names become region and boundary names). Default STAR-CCM+ names are always reported. Keep the quotes around each pattern.
-part,"^[A-Z]{2,5}_[a-z][A-Za-z0-9]*(_[0-9]+)?$",BRN_stator,<ZONE>_<component>
-surface,"^(IN|OUT|OPEN|WALL|SYM|IF)_[A-Za-z0-9_]+$",WALL_vane_ps,<BC>_<feature>

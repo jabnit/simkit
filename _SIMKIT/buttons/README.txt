@@ -5,7 +5,6 @@ and runs the current version of the tool, so the buttons never need updating whe
 
   SimKit_Menu.java             the SimKit window (all tools)
   SimKit_SaveNewVersion.java   Save as new (next version, or a new case; creates the case the first time)
-  SimKit_Check.java            Check
   SimKit_ExportResults.java    Export results
   SimKit_StandardReports.java  Standard reports
   SimKit_MeshStudy.java        Mesh study (parametrize only, or one case per mesh level)

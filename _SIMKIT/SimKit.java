@@ -3,9 +3,8 @@
 // Team helper for STAR-CCM+ cases. It keeps the native STAR-CCM+ workflow; it only adds:
 //   * Save as new: not a case yet -> creates the case folder and <CASEID>[_<label>]_v01.sim (number automatic);
 //                     a case -> keeps the open file as it is and continues in <CASEID>[_<label>]_v<nn+1>.sim (Enter),
-//                     or starts a new case from it; records the version it is based on, the set-up and the changes.
+//                     or starts a new case from it; records the version it is based on and the set-up.
 //                     The normal STAR-CCM+ Save (Ctrl+S) keeps saving the current version file as usual.
-//   * Check         : a short list of things that would spoil a run (PASS / WARN / FAIL); changes nothing
 //   * Export results: monitor plots to CSV, scenes to PNG, report values to CSV in the case results folder
 //   Other: Calculators (lib/generic/SimKitCalc.java), Case tracker, Guideline, About, ...
 //   Nothing in the sim is renamed, re-organised or parameterised by SimKit. The label in the file name is free
@@ -20,7 +19,7 @@
 //   on the model. A tool runs in a background thread (STAR-CCM+ calls as in a Simulation Assistant); only its short
 //   questions wait for an answer; results open in floating windows.
 // Batch: starccm+ -batch SimKit.java <sim>  writes the set-up record and exports results (no dialog);
-//   SIMKIT_ACTION=check | record | export runs one of them only.
+//   SIMKIT_ACTION=record | export runs one of them only.
 //
 // Conventions: every STAR-CCM+ call that may differ between releases runs inside try/catch and logs
 // "n/a (<reason>)" instead of failing. SimKit writes only inside the folder that holds the case folders
@@ -102,7 +101,6 @@ public class SimKit extends StarMacro {
   static final String[] AUDIT_HEADER = {"section", "object_path", "property", "value"};
   static final String[] AUDIT_SECTIONS = {"VERSION", "PARAMETERS", "CONTINUA", "REGIONS", "BOUNDARIES",
       "INTERFACES", "MESH", "SOLVERS", "STOPPING", "REPORTS"};
-  static final String[] CHECK_HEADER = {"level", "check", "detail"};
   static final String[] CASE_LIST_COLS = {"case_id", "description", "configuration", "parent_case", "latest_file",
       "last_saved", "created", "created_by"};
   /** Name of the case list written in every folder that holds case folders. */
@@ -113,19 +111,9 @@ public class SimKit extends StarMacro {
   static final String[] KEY_COLS = {"r_mdot_in", "r_mdot_net", "r_p_in_avg", "r_p_out_avg", "r_T_in_mfavg",
       "r_T_out_mfavg", "r_Q_wall", "r_yplus_wall_max", "r_Co_max"};
 
-  /** Default STAR-CCM+ names ("Report 3", "Plane Section 2", "Default", ...): Check lists them as a WARN. */
-  static final String DEFAULT_NAME_REGEX = "^(Report|Plot|Scene|Monitor|Plane Section|Line Probe|Point Probe|"
-      + "Isosurface|Threshold|User Field Function|Parameter|Scalar|Vector|Body|Default|Region|Interface|"
-      + "Continuum|Physics|Mesh|Automated Mesh|Volumetric Control|Surface Control|Block|Cylinder|Sphere|Cone)( [0-9]+)?$"
-      + "|^[A-Z][A-Za-z]*( [A-Z][A-Za-z]*)* [0-9]+$";   // any "Capitalised Words <n>" (Maximum 1, Surface Average 2)
-
-  /** Built-in naming rules, used when config/naming_rules.csv is missing: object, pattern, example, explanation. */
-  static final String[][] DEFAULT_NAMING_RULES = {
-      {"part", "^[A-Z]{2,5}_[a-z][A-Za-z0-9]*(_[0-9]+)?$", "BRN_stator", "<ZONE>_<component>"},
-      {"surface", "^(IN|OUT|OPEN|WALL|SYM|IF)_[A-Za-z0-9_]+$", "WALL_vane_ps", "<BC>_<feature>"}};
   static final String[][] DEFAULT_PROJECTS = {{"ISO", "ISO 2685 burner", ""}};
 
-  static final String[] TOOL_NAMES = {"", "New case", "Save as new", "Check", "Export results",
+  static final String[] TOOL_NAMES = {"", "New case", "Save as new", "", "Export results",
       "Calculators", "", "Case tracker", "Guideline", "About", "Standard reports", "",
       "Mesh study", "Standard scenes", "Case report"};
   static final String[] TOOL_HELP = {"",
@@ -147,7 +135,7 @@ public class SimKit extends StarMacro {
           + "sensitivity study or GCI",
       "Same views for every case: y+ and temperature on the WALL_ surfaces, velocity, pressure, temperature and mesh "
           + "on a mid-plane (you choose; existing scenes are never changed). Export results saves them as images",
-      "One HTML page for the current version: identity, what changed, Check, key results, "
+      "One HTML page for the current version: identity, key results, "
           + "averages, images (in the case record folder, opened in your browser)"};
 
   /** <CASEID>[_<label>]_v<nn>.sim ; label = free text, letters/digits, starts with a letter (old STAGE names fit). */
@@ -223,7 +211,6 @@ public class SimKit extends StarMacro {
     log.line("batch action: " + (action.isEmpty() ? "(default) record + export" : action));
     try {
       switch (action) {
-        case "check": case "precheck": toolCheck(); break;
         case "record": case "audit": writeAudit(requireCase()); break;
         case "export": toolExport(); break;
         case "reports": {   // test action: create the standard reports and save the sim in place
@@ -268,8 +255,7 @@ public class SimKit extends StarMacro {
   void runBatchTool(int id) {
     log.line("button " + TOOL_NAMES[id] + " (batch)");
     try {
-      if (id == 3) toolCheck();
-      else if (id == 4) toolExport();
+      if (id == 4) toolExport();
       else log.line(TOOL_NAMES[id] + " needs the STAR-CCM+ window: nothing done in batch");
     } catch (Cancel c) {
       log.line("stopped: " + c.getMessage());
@@ -280,7 +266,7 @@ public class SimKit extends StarMacro {
 
   /** Tools whose text is the result: their window opens. The others report on the status line (Details... shows
    *  their text); an error always opens the window. Everything is also in the STAR-CCM+ Output window. */
-  static final Set<Integer> SHOWS_TEXT = new HashSet<>(Arrays.asList(3, 6, 9));
+  static final Set<Integer> SHOWS_TEXT = new HashSet<>(Arrays.asList(9));
   volatile String summary;                         // one-line outcome of the tool (set by the tool)
   volatile String lastText, lastTitle;             // full text of the last tool, for Details...
   volatile String lastStatus;
@@ -297,7 +283,6 @@ public class SimKit extends StarMacro {
       switch (id) {
         case 1: toolNewCase(); break;
         case 2: toolSave(); break;
-        case 3: toolCheck(); break;
         case 4: toolExport(); break;
         case 5: toolCalc(); break;
         case 7: toolTracker(); break;
@@ -363,11 +348,11 @@ public class SimKit extends StarMacro {
   /** Main window layout: one column per stage of the work; each button with a one-line explanation under it. */
   static final Object[][] SECTIONS = {
       {"Case", new int[] {2, 7}},
-      {"Set-up", new int[] {3, 10, 13, 12}},
+      {"Set-up", new int[] {10, 13, 12}},
       {"Results", new int[] {4, 14}},
       {"Tools", new int[] {5, 8, 9}}};
   static final String[] TOOL_SHORT = {"",
-      "Start a case folder (v01)", "Next version, or a new case", "Check before running", "Plots, images, values, averages",
+      "Start a case folder (v01)", "Next version, or a new case", "", "Plots, images, values, averages",
       "y+, Re, time step, properties, GCI", "", "All versions, comments, status",
       "Team guideline", "Version and kit location", "Mass balance, p, T, y+ ...", "",
       "Parametrize, or mesh levels", "Same views for every case", "One page for reviews"};
@@ -2913,142 +2898,6 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Object inventory (what the name check works on)
-  // =====================================================================================================
-
-  /** One object of the simulation tree, with its SimKit object type and a readable tree path. */
-  static final class Obj {
-    final String type, path;
-    final ClientServerObject o;
-
-    Obj(String type, String parentPath, Object o) {
-      this.type = type;
-      this.o = (ClientServerObject) o;
-      this.path = parentPath + "/" + nm(o);
-    }
-
-    String name() { return nm(o); }
-  }
-
-  /** Collects every renamable object (and boundaries if asked). Each category fails independently. */
-  List<Obj> collect(boolean withBoundaries) {
-    List<Obj> out = new ArrayList<>();
-    try { add(out, "parameter", "Tools/Parameters", sim.get(GlobalParameterManager.class).getObjects()); }   // [U10]
-    catch (Throwable t) { log.na("parameters", t); }
-    try { collectParts(out); } catch (Throwable t) { log.na("geometry parts", t); }
-    try { collectRegions(out, withBoundaries); } catch (Throwable t) { log.na("regions", t); }
-    try { add(out, "interface", "Interfaces", sim.getInterfaceManager().getObjects()); }
-    catch (Throwable t) { log.na("interfaces", t); }
-    try {
-      for (Object c : sim.getContinuumManager().getObjects()) {
-        if (c instanceof PhysicsContinuum) out.add(new Obj("continuum", "Continua", c));
-      }
-    } catch (Throwable t) { log.na("continua", t); }
-    try {
-      for (Object f : sim.getFieldFunctionManager().getObjects()) {
-        if (f instanceof UserFieldFunction) out.add(new Obj("field_function", "Tools/Field Functions", f));
-      }
-    } catch (Throwable t) { log.na("field functions", t); }
-    try {                                                                                                  // [U18]
-      add(out, "coordinate_system", "Tools/Coordinate Systems/Laboratory",
-          sim.getCoordinateSystemManager().getLabCoordinateSystem().getLocalCoordinateSystemManager().getObjects());
-    } catch (Throwable t) { log.na("coordinate systems", t); }
-    try { add(out, "derived_part", "Derived Parts", sim.getPartManager().getObjects()); }                  // [U18]
-    catch (Throwable t) { log.na("derived parts", t); }
-    try { add(out, "report", "Reports", sim.getReportManager().getObjects()); }
-    catch (Throwable t) { log.na("reports", t); }
-    try {
-      for (Object m : sim.getMonitorManager().getObjects()) {
-        if (m instanceof ReportMonitor) out.add(new Obj("monitor", "Monitors", m));
-      }
-    } catch (Throwable t) { log.na("monitors", t); }
-    try {
-      for (Object p : sim.getPlotManager().getObjects()) {
-        if (!"ResidualPlot".equals(cls(p))) out.add(new Obj("plot", "Plots", p));
-      }
-    } catch (Throwable t) { log.na("plots", t); }
-    try { add(out, "scene", "Scenes", sim.getSceneManager().getScenes()); }
-    catch (Throwable t) { log.na("scenes", t); }
-    try { collectMeshOps(out); } catch (Throwable t) { log.na("mesh operations", t); }
-    try { add(out, "simulation_operation", "Simulation Operations", simulationOperations()); }
-    catch (Throwable t) { log.na("simulation operations", t); }
-    return out;
-  }
-
-  /** [U23] Simulation operations. The manager class/package is not certain for 2402, so it is looked up by
-   *  name and called through reflection (compiles in any build; empty list if not found). */
-  List<Object> simulationOperations() {
-    for (String cn : new String[] {"star.automation.SimDriverWorkflowManager",   // 2604 (Simulation Operations node)
-        "star.common.SimulationOperationManager", "star.automation.SimulationOperationManager"}) {
-      try {
-        Object mgr = Reflect.tryCall(sim, "get", Class.forName(cn));
-        Object objs = Reflect.tryCall(mgr, "getObjects");
-        if (objs != null) return Reflect.items(objs);
-      } catch (Throwable t) { /* try the next name */ }
-    }
-    log.line("  simulation operations: n/a (SimulationOperationManager not found)");
-    return new ArrayList<>();
-  }
-
-  static void add(List<Obj> out, String type, String parentPath, Collection<?> items) {
-    for (Object o : items) out.add(new Obj(type, parentPath, o));
-  }
-
-  /** Geometry parts. A simple shape part (block, cylinder, ...) counts as a volumetric shape (VC_ rule) only when a
-   *  volumetric custom control uses it; a shape used as geometry (e.g. a test box) is a geometry part. [U02] */
-  void collectParts(List<Obj> out) {
-    Set<Object> vcParts = volumetricControlParts();
-    for (Object o : sim.get(SimulationPartManager.class).getParts()) {
-      boolean shape = cls(o).startsWith("Simple") && cls(o).endsWith("Part") && vcParts.contains(o);
-      out.add(new Obj(shape ? "volumetric_shape" : "geometry_part", "Geometry/Parts", o));
-      if (!shape && o instanceof GeometryPart) {
-        try { add(out, "part_surface", "Geometry/Parts/" + nm(o), ((GeometryPart) o).getPartSurfaces()); }
-        catch (Throwable t) { log.na("part surfaces of " + nm(o), t); }
-      }
-    }
-  }
-
-  /** Parts referenced by the volumetric custom controls of the automated mesh operations (reflection:
-   *  VolumeCustomMeshControl.getGeometryObjects().getObjects(), same in 2402..2604). [U03] */
-  Set<Object> volumetricControlParts() {
-    Set<Object> parts = Collections.newSetFromMap(new IdentityHashMap<>());
-    try {
-      for (Object op : sim.get(MeshOperationManager.class).getObjects()) {
-        if (!(op instanceof AutoMeshOperation)) continue;
-        for (Object cc : ((AutoMeshOperation) op).getCustomMeshControls().getObjects()) {
-          if (!cls(cc).startsWith("Volume")) continue;
-          try {
-            Object g = Reflect.invoke(cc, "getGeometryObjects");
-            Object objs = g == null ? null : Reflect.invoke(g, "getObjects");
-            if (objs instanceof Collection) parts.addAll((Collection<?>) objs);
-          } catch (Throwable t) { log.na("geometry of volumetric control " + nm(cc), t); }
-        }
-      }
-    } catch (Throwable t) { log.na("volumetric controls", t); }
-    return parts;
-  }
-
-  void collectRegions(List<Obj> out, boolean withBoundaries) {
-    for (Region r : sim.getRegionManager().getRegions()) {
-      out.add(new Obj("region", "Regions", r));
-      if (withBoundaries) add(out, "boundary", "Regions/" + nm(r), r.getBoundaryManager().getBoundaries());
-    }
-  }
-
-  /** Mesh operations and the custom controls of automated mesh operations. [U03] */
-  void collectMeshOps(List<Obj> out) {
-    for (Object op : sim.get(MeshOperationManager.class).getObjects()) {
-      out.add(new Obj("mesh_operation", "Geometry/Operations", op));
-      if (op instanceof AutoMeshOperation) {
-        try {
-          add(out, "mesh_control", "Geometry/Operations/" + nm(op) + "/Custom Controls",
-              ((AutoMeshOperation) op).getCustomMeshControls().getObjects());                            // [U03]
-        } catch (Throwable t) { log.na("custom controls of " + nm(op), t); }
-      }
-    }
-  }
-
-  // =====================================================================================================
   // STAR API wrappers (tagged; see TESTING.txt)
   // =====================================================================================================
 
@@ -3151,115 +3000,8 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Names (used by Check)
+  // Surfaces by name prefix (IN_, OUT_, OPEN_, WALL_, SYM_, IF_)
   // =====================================================================================================
-
-  /** Naming issues {object_type, path, name, rule, message}: default STAR-CCM+ names on any object, and part /
-   *  part-surface names against config/naming_rules.csv. Read only. */
-  List<String[]> namingIssues() {
-    List<String[]> rules = config("naming_rules.csv", new String[] {"object", "pattern", "example", "explanation"},
-        DEFAULT_NAMING_RULES);
-    Pattern def = Pattern.compile(DEFAULT_NAME_REGEX);
-    List<String[]> issues = new ArrayList<>();
-    for (Obj ob : collect(false)) {
-      String n = ob.name();
-      if (def.matcher(n).find()) {
-        issues.add(new String[] {ob.type, ob.path, n, "default name", "default STAR-CCM+ name: give it a meaningful name"});
-        continue;
-      }
-      String[] failed = null;
-      boolean ok = false;
-      for (String[] r : rules) {
-        Pattern p = typeMatches(r[0], ob.type) ? rx(r[1]) : null;
-        if (p == null) continue;
-        if (p.matcher(n).find()) { ok = true; break; }
-        if (failed == null) failed = r;
-      }
-      if (!ok && failed != null) {
-        issues.add(new String[] {ob.type, ob.path, n, failed[3], "expected " + failed[3] + " (e.g. " + failed[2] + ")"});
-      }
-    }
-    return issues;
-  }
-
-  // =====================================================================================================
-  // Check (read only)
-  // =====================================================================================================
-
-  /** Check -> PASS / WARN / FAIL lines + record/check_<sim>.csv. FAIL = the run would fail or be wrong. */
-  void toolCheck() throws IOException {
-    CaseInfo c = caseOrNull();
-    List<String[]> rows = new ArrayList<>();
-    checkRegions(rows);
-    checkBoundaryTypes(rows);
-    checkBoundaryValues(rows);
-    checkMesh(rows);
-    checkStopping(rows);
-    String as = autoSaveState();
-    rows.add(chk("enabled".equals(as) ? "PASS" : "WARN", "auto-save during the run", as));
-    List<String[]> names = namingIssues();
-    rows.add(chk(names.isEmpty() ? "PASS" : "WARN", "names", names.isEmpty() ? "parts, surfaces and default names OK"
-        : names.size() + " to improve (list below)"));
-    rows.add(c == null ? chk("WARN", "case folder", "not a SimKit case: use Save as new to keep a record of it")
-        : chk("PASS", "case folder", c.caseDir.toString()));
-    int fail = 0, warn = 0;
-    StringBuilder sb = new StringBuilder();
-    for (String[] r : rows) {
-      sb.append(String.format("%-5s %-26s %s%n", r[0], r[1], r[2]));
-      if ("FAIL".equals(r[0])) fail++;
-      if ("WARN".equals(r[0])) warn++;
-    }
-    log.line("\n" + sb + "=> " + (fail > 0 ? "FAIL" : warn > 0 ? "WARN" : "PASS") + " (" + fail + " fail, " + warn + " warn)");
-    if (!names.isEmpty()) {
-      StringBuilder t = new StringBuilder("\nNames to improve (first 15):\n");
-      for (int i = 0; i < Math.min(15, names.size()); i++) {
-        String[] n = names.get(i);
-        t.append(String.format("  %-44s %s%n", Fmt.cut(n[1], 44), n[4]));
-      }
-      log.line(t.toString());
-    }
-    if (c == null) return;
-    List<String[]> all = new ArrayList<>(rows);
-    for (String[] n : names) all.add(chk("WARN", "name", n[1] + ": " + n[4]));
-    Path out = c.sub("record").resolve("check_" + c.simBase() + ".csv");
-    Csv.write(out, CHECK_HEADER, all);
-    log.line("written " + out);
-  }
-
-  static String[] chk(String level, String check, String detail) { return new String[] {level, check, detail}; }
-
-  void checkStopping(List<String[]> rows) {
-    List<String[]> crit = stoppingCriteria();
-    int used = 0;
-    for (String[] c : crit) if (!"false".equals(c[2])) used++;
-    rows.add(used > 0 ? chk("PASS", "stopping criteria", used + " in use")
-        : chk("FAIL", "stopping criteria", "none in use: the run would not stop"));
-  }
-
-  void checkRegions(List<String[]> rows) {
-    try {
-      List<String> none = new ArrayList<>();
-      int n = 0;
-      for (Region r : sim.getRegionManager().getRegions()) {
-        n++;
-        if (r.getPhysicsContinuum() == null) none.add(nm(r));
-      }
-      rows.add(n == 0 ? chk("FAIL", "regions have physics", "no regions")
-          : none.isEmpty() ? chk("PASS", "regions have physics", n + " region(s)")
-          : chk("FAIL", "regions have physics", "without a physics continuum: " + String.join(" ", none)));
-    } catch (Throwable t) {
-      rows.add(chk("WARN", "regions have physics", "n/a (" + reason(t) + ")"));
-    }
-  }
-
-  /** Boundary types that fit each surface prefix (simple class names of the STAR-CCM+ boundary types). */
-  static final String[][] BC_TYPES = {
-      {"IN", "InletBoundary MassFlowBoundary StagnationBoundary FreeStreamBoundary", "an inlet (velocity, mass flow, stagnation or free stream)"},
-      {"OUT", "PressureBoundary OutletBoundary FreeStreamBoundary MassFlowBoundary", "an outlet (pressure, flow-split, free stream or mass flow)"},
-      {"OPEN", "PressureBoundary StagnationBoundary FreeStreamBoundary", "an open boundary (pressure, stagnation or free stream)"},
-      {"WALL", "WallBoundary", "a wall"},
-      {"SYM", "SymmetryBoundary", "a symmetry plane"},
-      {"IF", "*Interface*", "part of an interface (contact between regions)"}};
 
   /** Prefix of a boundary name (IN, OUT, OPEN, WALL, SYM, IF) from its surface part ("Part.IN_air" -> IN); null if none. */
   static String bcToken(String boundaryName) {
@@ -3278,92 +3020,6 @@ public class SimKit extends StarMacro {
       }
     }
     return out;
-  }
-
-  /** Each IN_/OUT_/OPEN_/WALL_/SYM_/IF_ boundary must have a matching type (catches e.g. an inlet left as a wall). */
-  void checkBoundaryTypes(List<String[]> rows) {
-    try {
-      List<String> bad = new ArrayList<>();
-      int n = 0;
-      for (Map.Entry<String, List<Boundary>> e : boundariesByToken().entrySet()) {
-        String[] rule = null;
-        for (String[] r : BC_TYPES) if (r[0].equals(e.getKey())) rule = r;
-        for (Boundary b : e.getValue()) {
-          n++;
-          String type = cls(b.getBoundaryType());
-          boolean ok = rule[1].startsWith("*") ? type.contains("Interface")
-              : Arrays.asList(rule[1].split(" ")).contains(type);
-          if (!ok) bad.add(nm(b.getRegion()) + "/" + nm(b) + " is " + nm(b.getBoundaryType()) + ", expected " + rule[2]);
-        }
-      }
-      rows.add(n == 0 ? chk("WARN", "boundary types", "no IN_/OUT_/OPEN_/WALL_/SYM_/IF_ boundaries: types not checked")
-          : bad.isEmpty() ? chk("PASS", "boundary types", n + " boundaries match their names")
-          : chk("FAIL", "boundary types", bad.size() + " do not match their names: " + String.join("; ", bad)));
-    } catch (Throwable t) {
-      rows.add(chk("WARN", "boundary types", "n/a (" + reason(t) + ")"));
-    }
-  }
-
-  /** Constant value (SI) of a boundary profile, e.g. star.flow.MassFlowRateProfile; null if absent or not constant. */
-  static Double profileValue(Boundary b, String profileClass) {
-    try {
-      Class<?> k = Reflect.cls(profileClass);
-      if (k == null) return null;
-      Object prof = Reflect.invoke(b.getValues(), "get", k);
-      Object meth = Reflect.invoke(prof, "getMethod", Reflect.cls("star.common.ConstantScalarProfileMethod"));
-      Object q = Reflect.invoke(meth, "getQuantity");
-      Object v = Reflect.tryCall(q, "getSIValue");
-      if (v == null) v = Reflect.tryCall(q, "getRawValue");
-      return v instanceof Number ? ((Number) v).doubleValue() : null;
-    } catch (Throwable t) {
-      return null;   // not this kind of boundary, or a field function / table: not checked
-    }
-  }
-
-  /** Values most often forgotten: inlet flow 0, inlet temperature still at STAR's 300 K, reference pressure 0 with an
-   *  ideal gas, gravity off in a case with energy and an ideal gas. FAIL = the run is wrong; WARN = please confirm. */
-  void checkBoundaryValues(List<String[]> rows) {
-    try {
-      List<String> fail = new ArrayList<>(), warn = new ArrayList<>();
-      String models = "";
-      for (Object co : sim.getContinuumManager().getObjects()) {
-        if (co instanceof PhysicsContinuum) for (Object md : ((PhysicsContinuum) co).getModelManager().getObjects()) models += nm(md) + ";";
-      }
-      boolean energy = fieldFunction("Temperature") != null, idealGas = models.contains("Ideal Gas");
-      for (Boundary b : boundariesByToken().getOrDefault("IN", Collections.emptyList())) {
-        String where = nm(b.getRegion()) + "/" + nm(b);
-        String type = cls(b.getBoundaryType());
-        Double flow = type.equals("MassFlowBoundary") ? profileValue(b, "star.flow.MassFlowRateProfile")
-            : type.equals("InletBoundary") ? profileValue(b, "star.flow.VelocityMagnitudeProfile") : null;
-        if (flow != null && flow == 0) fail.add(where + ": " + (type.equals("MassFlowBoundary") ? "mass flow" : "velocity") + " is 0");
-        if (energy) {
-          Double t = profileValue(b, "star.energy.TotalTemperatureProfile");
-          if (t == null) t = profileValue(b, "star.energy.StaticTemperatureProfile");
-          if (t != null && Math.abs(t - 300.0) < 1e-9) warn.add(where + ": temperature still at STAR's default 300 K");
-        }
-      }
-      if (idealGas) {
-        for (Object co : sim.getContinuumManager().getObjects()) {
-          if (!(co instanceof PhysicsContinuum)) continue;
-          try {
-            Object rp = Reflect.invoke(((PhysicsContinuum) co).getReferenceValues(), "get", Reflect.cls("star.flow.ReferencePressure"));
-            Object v = Reflect.tryCall(rp, "getSIValue");
-            if (v instanceof Number && ((Number) v).doubleValue() == 0) fail.add(nm(co) + ": reference pressure is 0 Pa with an ideal gas");
-          } catch (Throwable t) { /* not readable: not checked */ }
-        }
-        if (energy && !models.contains("Gravity")) warn.add("gravity is off (buoyancy ignored) in a case with energy and an ideal gas");
-      }
-      rows.add(!fail.isEmpty() ? chk("FAIL", "boundary values", String.join("; ", fail) + (warn.isEmpty() ? "" : "; " + String.join("; ", warn)))
-          : !warn.isEmpty() ? chk("WARN", "boundary values", String.join("; ", warn) + " -- intended?")
-          : chk("PASS", "boundary values", "no inlet at 0, no value left at a suspicious default"));
-    } catch (Throwable t) {
-      rows.add(chk("WARN", "boundary values", "n/a (" + reason(t) + ")"));
-    }
-  }
-
-  void checkMesh(List<String[]> rows) {
-    rows.add(volumeMeshExists() ? chk("PASS", "volume mesh", "present")
-        : chk("FAIL", "volume mesh", "no volume mesh found (generate the mesh before running)"));
   }
 
   // ---------------------------------------------------------------- audit
@@ -3653,7 +3309,7 @@ public class SimKit extends StarMacro {
     for (StdReport x : all) any |= x.why == null;
     if (!any) {
       if (gui) Ui.sheet("Standard reports", "Nothing to add to this simulation.", Ui.muted("<html>Every standard report is already there, or "
-          + "the surfaces are not named yet: IN_..., OUT_..., OPEN_..., WALL_... (Check lists the names to fix).</html>"),
+          + "the surfaces are not named yet: IN_..., OUT_..., OPEN_..., WALL_....</html>"),
           Ui.primary("OK"), null);
       log.line("nothing to add.");
       for (StdReport x : all) log.line(String.format("  %-22s %s", x.def[0], x.why));
@@ -3999,7 +3655,6 @@ public class SimKit extends StarMacro {
     for (String[] r : ident) h.append("<tr><td class=\"k\">").append(Html.esc(r[0])).append("</td><td>").append(identCell(r)).append("</td></tr>");
     h.append("</table>\n");
     Path rec = c.sub("record");
-    reportTable(h, "Check (before the run)", rec.resolve("check_" + base + ".csv"), true);
     reportTable(h, "Key results", rec.resolve(KEY_RESULTS), false);
     reportTable(h, "Averaged results", latest(c.sub("results/csv"), base + "_averages_*.csv"), false);
     List<Path> imgs = Fs.list(c.sub("results/img"), base + "_*.png");
@@ -4010,7 +3665,7 @@ public class SimKit extends StarMacro {
       h.append("<a href=\"").append(Html.esc(rel)).append("\"><img src=\"").append(Html.esc(rel)).append("\" title=\"")
           .append(Html.esc(p.getFileName().toString())).append("\"></a>");
     }
-    h.append("\n<p style=\"color:#777\">Missing sections: run Check or Export results on this version.</p>")
+    h.append("\n<p style=\"color:#777\">Missing sections: run Export results on this version.</p>")
         .append("</body></html>\n");
     Path out = rec.resolve("case_report_" + base + ".html");
     Fs.write(out, h.toString());
@@ -4799,7 +4454,7 @@ public class SimKit extends StarMacro {
         .append("\nSimKit root: ").append(Fs.kit()).append(" (folder of SimKit.java)")
         .append("\nSTAR-CCM+: ").append(starVersion()).append("\nJava: ").append(System.getProperty("java.version"))
         .append("\nuser: ").append(Env.user()).append("\n").append(contextLine()).append("\n\nconfig files:");
-    for (String f : new String[] {"projects.csv", "naming_rules.csv", "links.csv"}) {
+    for (String f : new String[] {"projects.csv", "standard_reports.csv", "links.csv"}) {
       sb.append("\n  ").append(Files.isRegularFile(Fs.config(f)) ? "found    " : "missing  ").append(f);
     }
     log.line(sb.toString());

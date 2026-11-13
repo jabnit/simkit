@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   SimKit 0.3 - automated batch validation on a licensed STAR-CCM+ installation (Windows 10/11).
 
@@ -7,7 +7,7 @@
     0. environment and STAR-CCM+ version
     1. test share set-up (copy of _SIMKIT + a ready-made test case ISO-001 built from your sim)
     2. SimKitCalc.java in batch  -> compiles the calculator macro and prints its self-check
-    3. SimKit.java  check        -> compiles SimKit and runs Check
+    3. (Check removed)
     4. SimKit.java  record       -> set-up record + case card
     5. SimKit.java  export       -> monitor CSV, scene PNG, report values
     6. SimKit.java  (default)    -> record + export, as at the end of a cluster run
@@ -161,7 +161,6 @@ $q = { param($s) "`"$s`"" }
 # ------------------------------------------------------------------ 2-5. batch runs
 $rc = @{}
 $rc["calc"]     = Invoke-Star "02_SimKitCalc_selfcheck" ($common + @("-batch", (& $q (Join-Path $kit "lib\generic\SimKitCalc.java")), (& $q $caseSim))) ""
-$rc["check"]    = Invoke-Star "03_SimKit_check"         ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "check"
 $rc["record"]   = Invoke-Star "04_SimKit_record"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "record"
 $rc["export"]   = Invoke-Star "05_SimKit_export"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "export"
 $rc["default"]  = Invoke-Star "06_SimKit_default"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) ""
@@ -170,7 +169,7 @@ $rc["reports2"] = Invoke-Star "07b_SimKit_reports_again" ($common + @("-batch", 
 $rc["meshpar"]  = Invoke-Star "07c_SimKit_meshparams"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "meshparams"
 $rc["scenes"]   = Invoke-Star "07d_SimKit_scenes"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "scenes"
 $rc["meshstudy"] = Invoke-Star "07e_SimKit_meshstudy"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "meshstudy"
-$rc["button"]   = Invoke-Star "08_button_Check"         ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_Check.java")), (& $q $caseSim))) ""
+$rc["button"]   = Invoke-Star "08_button_Export"        ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_ExportResults.java")), (& $q $caseSim))) ""
 
 # Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
 # keys): every settings.props of the user is copied aside first and put back afterwards, and only the
@@ -269,7 +268,7 @@ Get-ChildItem $case -Recurse -File | Where-Object { $_.Extension -ne ".sim" } |
 $out.Add("")
 
 # heads of the key audit outputs
-foreach ($pat in "check_*.csv", "setup_*.csv") {
+foreach ($pat in "setup_*.csv") {
   $f = Get-ChildItem (Join-Path $case "record") -Filter $pat -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
   if ($f) {
     $out.Add("----- $($f.Name) (first 60 lines; n/a rows first) -----")

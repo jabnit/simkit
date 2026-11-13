@@ -58,8 +58,7 @@ A. BATCH VALIDATION (no GUI; about 10 min)
     07a standard reports (batch action 'reports', saves the sim) | 07b the same again (must add nothing)
     08 toolbar button buttons/SimKit_Check.java (plays SimKit.java from the kit and runs Check directly)
   Then paste <TestRoot>/results/PASTE_THIS.txt (the licence location is masked) to whoever maintains SimKit.
-  Expected: every exit code 0; Check => WARN (auto-save disabled; names: 1 to improve = the report left as
-  "Maximum 1" on purpose); record/setup_ISO-CF-001_v01.csv, case_card_*.html and check_*.csv written;
+  Expected: every exit code 0; record/setup_ISO-CF-001_v01.csv and case_card_*.html written;
   plots/scenes/report values exported.
 
 B. GUI TEST (on the release and OS the team uses; about 15 min)
@@ -92,11 +91,8 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       proposes the same folder.
    3. Change something (e.g. the base size), click Save as new: "Next version of ISO-00n (v02)" is selected, the name pre-filled; Enter ->
       ISO-00n_v02.sim (same name); type mesh2 -> ISO-00n_mesh2_v0x.sim; "v3" or "my name" is refused;
-      record/changes_*_v01_to_*_v02.csv lists the change; the tracker shows ISO-00n.v02 "based on ISO-00n.v01".
+      the tracker shows ISO-00n.v02 "based on ISO-00n.v01".
       Open v01 again and click Save as new, Enter -> ISO-00n.v03 "based on ISO-00n.v01". Ctrl+S keeps saving the open file.
-   4. Check: PASS / WARN / FAIL table + names to improve; record/check_*.csv written. Nothing in the sim changes.
-      Boundary types: set a surface named IN_... to Wall -> Check gives FAIL "boundary types: ... is Wall, expected
-      an inlet"; set it back -> PASS.
    4b. Standard reports: the list proposes only what fits (IN_/OUT_/OPEN_/WALL_ surfaces present, energy on,
       unsteady); untick one, OK -> reports r_..., one monitor each, plots pl_massBalance, pl_pressure, ...
       Click it again -> "nothing to add ... already exists" (nothing duplicated or changed).
@@ -370,4 +366,8 @@ C. RESULTS SO FAR
   Standard reports: one window, rows grouped by purpose with the surfaces (double-click to choose others) or the
   reason in grey; list in config/standard_reports.csv (types by plain name); new: r_mdot_imbalance_pct, r_p0_in_avg,
   r_dp_static (expression reports), r_T_wall_max. Offline window pictures (DialogShot) checked.
+  Check removed (user: not enough value): the tool, its button (buttons/SimKit_Check.java and icon), batch actions
+  check / precheck, the case report section, config/naming_rules.csv and the object inventory it used. Test runners:
+  step 03 removed; the button test (08) now plays buttons/SimKit_ExportResults.java. The installer clears the old
+  Check slot with the other SimKit slots when it is played again.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.
