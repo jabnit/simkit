@@ -1244,6 +1244,35 @@ public class SimKit extends StarMacro {
   }
 
   /** Small painted icons (no font glyphs: the same on Windows and RHEL). kind: 0 folded, 1 unfolded, 2 open in STAR, 3 blank. */
+  /** Case row: fold arrow, then the pin star (filled amber = pinned to the top, pale outline = not pinned). */
+  static javax.swing.Icon caseIcon(final boolean open, final boolean pinned) {
+    final javax.swing.Icon arrow = trackerIcon(open ? 1 : 0);
+    return new javax.swing.Icon() {
+      @Override public int getIconWidth() { return 28; }
+      @Override public int getIconHeight() { return 12; }
+      @Override public void paintIcon(java.awt.Component c, java.awt.Graphics g0, int x, int y) {
+        arrow.paintIcon(c, g0, x, y);
+        java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+        g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+        java.awt.geom.Path2D.Double star = new java.awt.geom.Path2D.Double();
+        for (int k = 0; k < 10; k++) {
+          double r = k % 2 == 0 ? 6.0 : 2.6, a = -Math.PI / 2 + k * Math.PI / 5;
+          double px = x + 22 + r * Math.cos(a), py = y + 6.5 + r * Math.sin(a);
+          if (k == 0) star.moveTo(px, py); else star.lineTo(px, py);
+        }
+        star.closePath();
+        if (pinned) {
+          g.setColor(new java.awt.Color(0xE0, 0x9A, 0x10));
+          g.fill(star);
+        } else {
+          g.setColor(new java.awt.Color(0xC4, 0xCA, 0xD2));
+          g.draw(star);
+        }
+        g.dispose();
+      }
+    };
+  }
+
   static javax.swing.Icon trackerIcon(final int kind) {
     return new javax.swing.Icon() {
       @Override public int getIconWidth() { return 12; }
@@ -1307,14 +1336,28 @@ public class SimKit extends StarMacro {
     final JPanel cards = new JPanel(cardLayout), editPanel = new JPanel(new BorderLayout(0, 2));
     boolean editing = false;
     final JButton folderBtn = new JButton("Open case folder"), hideBtn = new JButton("Hide..."),
-        simBtn = new JButton("Open in STAR-CCM+");
+        simBtn = new JButton("Open in STAR-CCM+"), resultsBtn = new JButton("Open results folder");
     boolean opening = false;
+    final Set<String> pins = new LinkedHashSet<>();   // pinned case folders (this user only)
+
+    String pinKey(String caseId) { return dir.resolve(caseId).toAbsolutePath().normalize().toString(); }
+
+    boolean pinned(String caseId) { return pins.contains(pinKey(caseId)); }
+
+    void togglePin(String caseId) {
+      boolean on = !pins.remove(pinKey(caseId));
+      if (on) pins.add(pinKey(caseId));
+      Env.setPref("trackerPins", String.join("\n", pins));
+      rebuild();
+      say(on ? caseId + " pinned to the top (for you only)" : caseId + " unpinned", grey);
+    }
     String areaKey = null;   // what the details text area edits: version ID (comment) or "case:<id>" (description)
 
     TrackerWindow(Path dir0, String openId) {
       this.dir = dir0;
       this.openId = openId;
       if (openId != null) expanded.add(caseOf(openId));
+      for (String p : Env.pref("trackerPins").split("\n")) if (!p.trim().isEmpty()) pins.add(p.trim());
       model = new javax.swing.table.AbstractTableModel() {
         private static final long serialVersionUID = 1L;
         @Override public int getRowCount() { return view.size(); }
@@ -1363,6 +1406,10 @@ public class SimKit extends StarMacro {
         table.getColumnModel().getColumn(i).setMaxWidth(widths[i] + 120);
       }
       table.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
+      table.getActionMap().put("copy", new javax.swing.AbstractAction() {   // Ctrl+C: ID and path of the selected rows
+        private static final long serialVersionUID = 1L;
+        @Override public void actionPerformed(java.awt.event.ActionEvent e) { copyLinks(); }
+      });
       javax.swing.DefaultCellEditor statusEd = new javax.swing.DefaultCellEditor(new JComboBox<>(STATUSES));
       statusEd.setClickCountToStart(1);
       table.getColumnModel().getColumn(T_STATUS).setCellEditor(statusEd);
@@ -1378,6 +1425,7 @@ public class SimKit extends StarMacro {
           Item it = view.get(row);
           if (col == T_COMMENT && e.getClickCount() == 2) startEdit();   // write in the box below
           else if (!it.isCase() && col == T_ID && e.getClickCount() == 2) openSelected();
+          else if (it.isCase() && col == T_ID && onStar(row, e)) togglePin(it.caseId);
           else if (it.isCase() && (col == T_ID || e.getClickCount() == 2)) toggle(it.caseId);
           else if (!it.isCase() && col == T_BASED && byId(it.r[COL_BASED]) != null) jumpTo(it.r[COL_BASED]);
         }
@@ -1469,6 +1517,8 @@ public class SimKit extends StarMacro {
       cards.add(editPanel, "edit");
       folderBtn.addActionListener(e -> openFolder());
       simBtn.addActionListener(e -> openSelected());
+      resultsBtn.addActionListener(e -> openResults());
+      resultsBtn.setToolTipText("Exported plots (CSV) and images of the case");
       simBtn.setToolTipText("Open the selected version in this STAR-CCM+ (another simulation tab); a case row: its latest version");
       hideBtn.addActionListener(e -> hideOrShow());
       headline.setFont(headline.getFont().deriveFont(Font.BOLD));
@@ -1519,8 +1569,9 @@ public class SimKit extends StarMacro {
       details.add(areaBox, BorderLayout.CENTER);
       details.setPreferredSize(new java.awt.Dimension(1250, 210));
       details.setMinimumSize(new java.awt.Dimension(400, 120));
-      JPanel acts = new JPanel(new GridLayout(3, 1, 0, 6));
+      JPanel acts = new JPanel(new GridLayout(4, 1, 0, 6));
       acts.add(simBtn);
+      acts.add(resultsBtn);
       acts.add(folderBtn);
       acts.add(hideBtn);
       JPanel actsBox = new JPanel(new BorderLayout());
@@ -1609,7 +1660,10 @@ public class SimKit extends StarMacro {
       String t = filter.getText().trim().toLowerCase(Locale.ROOT);
       view.clear();
       int nCases = 0, nVers = 0, nRunning = 0, nHidden = 0;
-      for (Map.Entry<String, List<String[]>> e : byCase.entrySet()) {
+      List<Map.Entry<String, List<String[]>>> order = new ArrayList<>();   // pinned cases first
+      for (Map.Entry<String, List<String[]>> e : byCase.entrySet()) if (pinned(e.getKey())) order.add(e);
+      for (Map.Entry<String, List<String[]>> e : byCase.entrySet()) if (!pinned(e.getKey())) order.add(e);
+      for (Map.Entry<String, List<String[]>> e : order) {
         String cid = e.getKey();
         boolean ch = caseHidden(cid);
         List<String[]> vis = new ArrayList<>();
@@ -1714,12 +1768,14 @@ public class SimKit extends StarMacro {
       hideBtn.setEnabled(!sel.isEmpty());
       folderBtn.setEnabled(!sel.isEmpty());
       simBtn.setEnabled(sel.size() == 1 && !opening);
+      resultsBtn.setEnabled(!sel.isEmpty());
       String key = null, text = "";
       if (sel.isEmpty()) {
         headline.setText("Select a case or a version to see its details");
         areaLabel.setText("Comment");
       } else if (sel.size() > 1) {
-        headline.setText(sel.size() + " rows selected");
+        headline.setText("<html>" + sel.size() + " rows selected&nbsp;&nbsp;<font color='#6B7580'>right-click: set their status, "
+            + "copy their references</font></html>");
         areaLabel.setText("Comment");
       } else if (sel.get(0).isCase()) {
         Item it = sel.get(0);
@@ -1879,6 +1935,66 @@ public class SimKit extends StarMacro {
 
     // ----- actions -----
 
+    /** The click is on the pin star of a case row (cell border 6 px, arrow 12 px, star from 16 to 28 px). */
+    boolean onStar(int row, java.awt.event.MouseEvent e) {
+      int x = e.getX() - table.getCellRect(row, T_ID, false).x;
+      return x >= 20 && x <= 36;
+    }
+
+    /** Copies "ID  path" of each selected row (a version: its .sim; a case: its folder), to paste in a mail or a document. */
+    void copyLinks() {
+      List<String> lines = new ArrayList<>();
+      for (Item it : selected()) {
+        if (it.isCase()) lines.add(it.caseId + "  " + dir.resolve(it.caseId).toAbsolutePath().normalize());
+        else lines.add(it.r[COL_ID] + "  " + dir.resolve(it.caseId).resolve("sim").resolve(it.r[COL_FILE]).toAbsolutePath().normalize());
+      }
+      if (lines.isEmpty()) return;
+      try {
+        java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(
+            String.join(System.lineSeparator(), lines)), null);
+        say("Copied " + (lines.size() == 1 ? lines.get(0) : lines.size() + " references (ID and path)")
+            + "  -  paste it in a mail or a document", green);
+      } catch (Throwable t) {
+        say("Cannot copy: " + reason(t), red);
+      }
+    }
+
+    /** Opens the results folder of the selected case (results/csv, results/img written by Export results). */
+    void openResults() {
+      List<Item> sel = selected();
+      if (sel.isEmpty()) return;
+      Path res = dir.resolve(sel.get(0).caseId).resolve("results");
+      if (!Files.isDirectory(res)) { say("No results yet for " + sel.get(0).caseId + ": run Export results on it", grey); return; }
+      try { Ui.browse(res.toUri().toString()); } catch (Throwable t) { say("Cannot open: " + reason(t), red); }
+    }
+
+    /** Sets one status on every selected version (case rows: all their versions). */
+    void setStatusAll(String status) {
+      List<String[]> vs = new ArrayList<>();
+      for (Item it : selected()) {
+        if (it.isCase()) { for (String[] r : byCase.get(it.caseId)) if (!vs.contains(r)) vs.add(r); }
+        else if (!vs.contains(it.r)) vs.add(it.r);
+      }
+      int n = 0;
+      List<String> bad = new ArrayList<>();
+      for (String[] r : vs) {
+        if (r[COL_STATUS].equals(status)) continue;
+        try {
+          setIdentityKey(dir, caseOf(r[COL_ID]), "status_v" + verOf(r[COL_ID]), status);
+          r[COL_STATUS] = status;
+          n++;
+        } catch (Throwable t) {
+          bad.add(r[COL_ID]);
+        }
+      }
+      try { writeTrackerCsv(dir, rows); } catch (Throwable t) { /* a copy only */ }
+      if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);
+      log.line("case tracker: status '" + status + "' on " + n + " version(s)");
+      say(bad.isEmpty() ? "Saved: status " + (status.isEmpty() ? "(none)" : "'" + status + "'") + " on " + n + " version(s)"
+          : "NOT saved on " + String.join(", ", bad), bad.isEmpty() ? green : red);
+      showDetails();
+    }
+
     /** The .sim of the selected version (a case row: its latest version). */
     Path selectedSim() {
       List<Item> sel = selected();
@@ -2009,8 +2125,32 @@ public class SimKit extends StarMacro {
       ex.addActionListener(a -> { expanded.addAll(byCase.keySet()); rebuild(); });
       javax.swing.JMenuItem co = new javax.swing.JMenuItem("Fold all cases");
       co.addActionListener(a -> { expanded.clear(); rebuild(); });
+      javax.swing.JMenuItem res = new javax.swing.JMenuItem("Open results folder");
+      res.addActionListener(a -> openResults());
+      res.setEnabled(row >= 0);
+      javax.swing.JMenuItem copy = new javax.swing.JMenuItem("Copy reference (ID and path)   Ctrl+C");
+      copy.addActionListener(a -> copyLinks());
+      copy.setEnabled(row >= 0);
+      int nSel = table.getSelectedRowCount();
+      javax.swing.JMenu status = new javax.swing.JMenu(nSel > 1 ? "Set status of the " + nSel + " rows" : "Set status");
+      for (String st : STATUSES) {
+        javax.swing.JMenuItem si = new javax.swing.JMenuItem(st.isEmpty() ? "(none)" : st);
+        si.addActionListener(a -> setStatusAll(st));
+        status.add(si);
+      }
+      status.setEnabled(row >= 0);
+      final boolean caseRow = row >= 0 && view.get(row).isCase();
+      final String rowCase = row >= 0 ? view.get(row).caseId : null;
+      javax.swing.JMenuItem pin = new javax.swing.JMenuItem(caseRow && pinned(rowCase) ? "Unpin" : "Pin to the top");
+      pin.addActionListener(a -> togglePin(rowCase));
+      pin.setEnabled(caseRow);
       m.add(openSim);
+      m.add(res);
       m.add(open);
+      m.add(copy);
+      m.addSeparator();
+      m.add(status);
+      m.add(pin);
       m.add(hide);
       m.addSeparator();
       m.add(ex);
@@ -2062,7 +2202,9 @@ public class SimKit extends StarMacro {
           setFont(f.deriveFont(ch ? Font.BOLD | Font.ITALIC : Font.BOLD));
           if (ch) setForeground(grey);
           if (col == T_ID) {
-            setIcon(trackerIcon(expanded.contains(it.caseId) || filtering() ? 1 : 0));
+            setIcon(caseIcon(expanded.contains(it.caseId) || filtering(), pinned(it.caseId)));
+            setToolTipText(pinned(it.caseId) ? "Pinned to the top (for you only): click the star to unpin"
+                : "Click the arrow to fold or unfold; click the star to pin this case to the top (for you only)");
             setIconTextGap(6);
           } else if (col == T_COMMENT && s.isEmpty()) {
             setFont(f.deriveFont(Font.ITALIC));

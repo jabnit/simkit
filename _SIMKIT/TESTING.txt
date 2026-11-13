@@ -133,7 +133,12 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       select the case row, click the box: same; case_list.csv follows.
       Open in STAR-CCM+: select another version, click the button (or double-click its ID): bottom line "Opening
       ...", the tracker stays usable, then a new simulation tab with that file; again on the same row: "already
-      open". On a case row: its latest version. Note how long loading took and whether the new tab was in front. Click a "based on" link: jumps to that version. Filter "prism": only matching versions,
+      open". On a case row: its latest version. Note how long loading took and whether the new tab was in front.
+      Pin: click the pale star of a case: it turns amber and the case moves to the top; close and reopen the
+      tracker: still on top; a colleague's tracker is unchanged; click again: unpinned. Open results folder: the
+      case's results folder opens (a case without results: "No results yet"). Select two versions, Ctrl+C, paste
+      in Notepad: two lines "ID  path". Select two versions (or a case row), right-click > Set status > done:
+      all of them done; the bottom line counts them. Click a "based on" link: jumps to that version. Filter "prism": only matching versions,
       cases unfolded; status filter Active / Done / Dropped / No status. Change...: another cases folder.
       Open the tracker from another STAR-CCM+ session (another user) -> same status and comments. Export CSV ->
       case_tracker.csv imports in Google Sheets (tab Versions). Leave the tracker open and keep working on the model
@@ -306,4 +311,7 @@ C. RESULTS SO FAR
   Tracker: Open in STAR-CCM+ (button, right-click, double-click on a version's ID) = new Simulation(path) in a
   background thread (SimulationManager: a file already open is not loaded twice). Runner step 11b (batch opensim):
   the open file is reported as already open, another version is loaded and closed again.
+  Tracker: pin a case to the top (star; personal, kept in the SimKit preferences, key trackerPins = case folder
+  paths), Open results folder, Copy reference (Ctrl+C / right-click: "ID  path" per selected row), Set status
+  on several versions (right-click; a case row = all its versions). Offline test (MoreShot) passed.
   Not yet run: section B (GUI: Save new version, Compare, Case tracker, Calculators copy), release 2402, Linux.
