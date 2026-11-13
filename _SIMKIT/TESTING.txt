@@ -34,7 +34,7 @@ Path map
     <folder chosen at the first Save new version>/case_list.csv
     <folder chosen at the first Save new version>/<CASEID>/sim/<CASEID>[_label]_v<nn>.sim, case_identity.txt
     <folder chosen at the first Save new version>/<CASEID>/record/  results/csv/  results/img/
-  case_identity.txt keeps the full path of the parent case's sim (for Compare with the parent case).
+  case_identity.txt keeps the full path of the parent case's sim.
 
 Site set-up (once)
   1. Copy the _SIMKIT folder anywhere on the share (e.g. S:\CFD\_SIMKIT on Windows = /mnt/cfd/_SIMKIT on Linux).
@@ -65,12 +65,12 @@ A. BATCH VALIDATION (no GUI; about 10 min)
 B. GUI TEST (on the release and OS the team uses; about 15 min)
   Open a COPY of a real sim (or <TestRoot>/scratch/SimKit_testcase.sim) and play SimKit.java.
    1. The window shows a header (case ID, version, name, description and file; or "Not a SimKit case yet"
-      in amber with what to do) and 4 columns: CASE (Save new version, Case tracker, Compare versions), SET-UP
+      in amber with what to do) and 4 columns: CASE (Save new version, Case tracker), SET-UP
       (Check, Standard reports, Standard scenes, Mesh study), RESULTS (Export results, Case
       report), TOOLS (Calculators, Guideline, About), each button with a grey
-      line under it. On a sim that is not a case, Export results, Compare versions and Case
+      line under it. On a sim that is not a case, Export results and Case
       report are greyed. The bottom line shows Running: / Done: and the header updates after Save new version.
-      RESULT WINDOWS: only Check, Compare versions and About open a text window (and any tool
+      RESULT WINDOWS: only Check and About open a text window (and any tool
       that stops on an error). Save new version, Export results, Standard reports / scenes, Parametrize
       mesh, Case report, Case tracker, Guideline: no extra window; the status line says what was done (green),
       cancelled or skipped (amber) and Details shows the full text. Creating a case with an empty description: the
@@ -125,11 +125,13 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       (ID + grey file name, coloured status, comment, based on, saved). The open case is unfolded, its version has
       a green dot and is selected. Click the arrow of another case: it unfolds; again: it folds. Right-click > Fold
       all / Unfold all. Click a status, pick "running": saved at once (bottom line "Saved: status of ..."); "dropped"
-      strikes the comment through. The formatting bar (B, I, U, A colour, lists, Done) is always shown above the
-      box; pressing one while the formatted text is shown opens the box for writing. Double-click a comment: the box
-      below opens for writing. Type several lines with B / I / U / A (pick red) / "- List" / "1. List" (Ctrl+B, Ctrl+I, Ctrl+U; Enter in a list adds the next bullet or number, Enter on an
-      empty item ends the list); click another row (or Done, Esc): saved, the box shows it formatted and the table
-      shows the first line + "+n lines" (point at it: the whole comment). Close and reopen the tracker: the lines are
+      strikes the comment through. The formatting bar (B, I, U, A colour, lists, Template) is always shown above the
+      box beside the table, titled "Comments" (a case row: "Description"). Double-click a comment: the caret goes in
+      the box. Type several lines; select a word and press B, I, U, A (pick red, then "No colour"); the list button:
+      Bullets, Numbered, No list; press B with nothing selected, type, press B again; type "- "
+      at the start of a line (a bullet appears), Enter (next bullet), Enter on the empty bullet (list ends);
+      "1. List" on two lines; Ctrl+Z. The box shows the formatting only, no marks (** __ [red] never visible).
+      Click another row (or Esc): saved; the table shows the first line + "+n lines" (point at it: the whole comment). Close and reopen the tracker: the lines are
       kept; case_identity.txt holds comment_vNN=ml:...\n...; Case report shows it formatted. A case description:
       select the case row, click the box: same; case_list.csv follows.
       Open in STAR-CCM+...: select another version, click the blue button (or Enter, or double-click its ID): STAR-CCM+'s
@@ -161,7 +163,7 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       1 atm, 2 mm, Cd 0.61 -> 1.341e-3 kg/s, choked = 1. Then on any page: Compute; "Copy value for STAR-CCM+..." -> paste in a STAR field: the number pastes as
       typed (e.g. 1.23457E-5) and the unit to select is shown (e.g. m). To parameter... creates p_<name>.
    7. Save new version > "New case from this one" (step 3 sim): the new case shows the parent; the parent file is untouched.
-   8. Compare versions > Previous version; Case list; Guideline (opens the links.csv URL); About (shows the kit
+   8. Case list; Guideline (opens the links.csv URL); About (shows the kit
       root = the folder of SimKit.java on the share).
    9. Toolbar buttons: play buttons/SimKit_InstallButtons.java: 10 ticked buttons with their icons; Install ->
       "10 button(s) on the SimKit toolbar". A toolbar named SimKit appears at once with the 10 icons and tooltips
@@ -337,4 +339,25 @@ C. RESULTS SO FAR
   dialog; no direct load in the window any more. Offline tests (UiShot both modes, earlier harnesses in the other
   mode) passed. Bold was also read as italic (italic pattern matched inside **): fixed in the box, the view and
   the one-line text.
-  Not yet run: section B (GUI: Save new version, Compare, Case tracker, Calculators copy), release 2402, Linux.
+  Comment box like a word processor (user: the marks in grey were hard to read; both trials kept): the box shows
+  bold / italic / underline / colour and bullets with no marks; the file keeps the marks (one reader and one writer
+  in Md: marks switch on and off, a mark only counts where it can open or close, so 2*3, a ** b, [m/s] stay text;
+  spaces at the edge of a formatted piece are left out, italic inside a word takes the whole word, so it reads back
+  the same; an unchanged box gives back exactly the text it showed). "- " at the start of a line makes a bullet;
+  Ctrl+Z / Ctrl+Y; "No colour"; grey hint in an empty box. The trial switches and the earlier view-then-edit box
+  are gone; details always on the right. Offline RichShot (marks round trip, box typing, buttons, lists, template,
+  undo, saving) and TrackerShot passed.
+  Formatting bar redrawn as icons (B, serif italic I, U, A with a colour bar and a menu, one list button with a menu:
+  bullets / numbered / no list, template page); box title "Comments" / "Description".
+  Calculators: formulas written in a small LaTeX (class TeX: \frac, \sqrt, ^ _, \left \right, \dot, \text, Greek)
+  and drawn as mathematics in the results (no library); the copied text and calc_log keep a plain form made from
+  the same formula. All 46 formulas drawn and checked on review sheets (FormulaSheet). Form: label without the
+  bracket part, which is shown in grey inside the empty field (optional, empty: ...); units shown as kg/m3 with a
+  raised 3, Pa.s with a middle dot; Compute in blue; a page with one form no longer repeats its title. Source kept
+  ASCII (non-ASCII as \u escapes).
+  Template: standard = Goal / Changes / Result / Next, each with an empty bullet, caret on the first bullet; Template
+  menu: Insert, Use this comment as my template (Java preference trackerTemplate, for this user), Back to the standard
+  template; team template config/comment_template.txt if present. Compare versions removed (button, tool, the list of
+  changes written by Save new version, its table in the case report); the set-up record is still written.
+  Offline RichShot passed.
+  Not yet run: section B (GUI: Save new version, Case tracker, Calculators copy), release 2402, Linux.

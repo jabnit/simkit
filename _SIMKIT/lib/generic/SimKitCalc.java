@@ -325,6 +325,44 @@ public class SimKitCalc extends StarMacro {
     JTextField tf;
   }
 
+  /** A text field showing a grey hint while it is empty ("optional", "empty: from the area" ...). */
+  static final class HintField extends JTextField {
+    private static final long serialVersionUID = 1L;
+    String hint = "";
+
+    HintField(String text, int cols) { super(text, cols); }
+
+    @Override protected void paintComponent(java.awt.Graphics g) {
+      super.paintComponent(g);
+      if (getText().isEmpty() && !hint.isEmpty() && !isFocusOwner()) {
+        java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+        g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g2.setColor(new java.awt.Color(0xA8, 0xB0, 0xBA));
+        g2.setFont(getFont().deriveFont(Font.ITALIC));
+        java.awt.Insets in = getInsets();
+        java.awt.FontMetrics fm = g2.getFontMetrics();
+        String h = hint;
+        while (h.length() > 3 && fm.stringWidth(h) > getWidth() - in.left - in.right - 4) h = h.substring(0, h.length() - 2);
+        if (!h.equals(hint)) h = h.substring(0, h.length() - 1) + "\u2026";
+        g2.drawString(h, in.left + 2, (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
+        g2.dispose();
+      }
+    }
+  }
+
+  /** "mass flow (From report: r_mdot_in)" -> {"mass flow", "From report: r_mdot_in"}: label and hint. */
+  static String[] labelHint(String label) {
+    int i = label.indexOf(" (");
+    if (i > 0 && label.endsWith(")")) return new String[] {label.substring(0, i), label.substring(i + 2, label.length() - 1)};
+    return new String[] {label, ""};
+  }
+
+  /** A unit as shown: kg/m^3 -> kg/m\u00B3, Pa-s -> Pa\u00B7s, "-" (no unit) -> nothing. */
+  static String showUnit(String u) {
+    if (u == null || u.equals("-")) return "";
+    return u.replace("^2", "\u00B2").replace("^3", "\u00B3").replace("^4", "\u2074").replaceAll("(?<=[A-Za-z\u00B2\u00B3\u2074])-(?=[A-Za-z])", "\u00B7");
+  }
+
   /** A sub-panel with inputs, choices and a Compute button. */
   final class Form {
     final Tab tab;
@@ -348,7 +386,10 @@ public class SimKitCalc extends StarMacro {
       f.label = label;
       f.unit = unit;
       f.scale = scaleOf(unit);
-      f.tf = new JTextField(def, 12);
+      HintField hf = new HintField(def, 12);
+      hf.hint = labelHint(label)[1];
+      if (!hf.hint.isEmpty()) hf.setToolTipText(label);
+      f.tf = hf;
       fields.put(key, f);
       order.add("f:" + key);
       return this;
@@ -708,7 +749,7 @@ public class SimKitCalc extends StarMacro {
     help.setForeground(new java.awt.Color(0x44, 0x44, 0x44));
     head.add(help);
     for (Form fm : t.forms) {
-      if (fm.title.equals(t.name)) continue;
+      if (fm.title.equals(t.name) || t.forms.size() == 1) continue;   // one form: the page title says it
       JLabel sub = new JLabel(fm.title);
       sub.setFont(sub.getFont().deriveFont(Font.ITALIC, 11f));
       sub.setForeground(java.awt.Color.GRAY);
@@ -740,7 +781,7 @@ public class SimKitCalc extends StarMacro {
     return page;
   }
 
-  static final int LABEL_W = 260, FIELD_W = 150, UNIT_W = 60;
+  static final int LABEL_W = 230, FIELD_W = 150, UNIT_W = 60;
 
   static <C extends JComponent> C fixed(C c, int w) {
     java.awt.Dimension d = new java.awt.Dimension(w, c.getPreferredSize().height);
@@ -766,11 +807,13 @@ public class SimKitCalc extends StarMacro {
       g.gridwidth = 1;
       if (o.startsWith("f:")) {
         Field f = fm.fields.get(k);
-        p.add(fixed(new JLabel(f.label), LABEL_W), g);
+        JLabel lab = fixed(new JLabel(labelHint(f.label)[0]), LABEL_W);
+        lab.setToolTipText(f.label);
+        p.add(lab, g);
         g.gridx = 1;
         p.add(fixed(f.tf, FIELD_W), g);
         g.gridx = 2;
-        JLabel u = new JLabel(f.unit);
+        JLabel u = new JLabel(showUnit(f.unit));
         u.setForeground(java.awt.Color.GRAY);
         p.add(fixed(u, UNIT_W), g);
       } else {
@@ -785,6 +828,12 @@ public class SimKitCalc extends StarMacro {
     for (JComponent c : fm.extras) buttons.add(c);
     JButton go = button(fm.computeLabel, e -> compute(fm));
     go.setFont(go.getFont().deriveFont(Font.BOLD));
+    go.setForeground(java.awt.Color.WHITE);
+    go.setBackground(new java.awt.Color(0x1F, 0x5F, 0xAF));
+    go.setOpaque(true);
+    go.setBorderPainted(false);
+    go.setFocusPainted(false);
+    go.setMargin(new Insets(5, 18, 5, 18));
     buttons.add(go);
     g.gridy = row;
     g.gridx = 0;
@@ -1774,7 +1823,14 @@ public class SimKitCalc extends StarMacro {
         throw new IllegalArgumentException("no result " + key);
       }
 
-      R f(String s) { lines.add("Formula:  " + s); return this; }
+      final List<String> tex = new ArrayList<>();   // formulas as written (a small LaTeX), drawn in the window
+
+      /** A formula in a small LaTeX (see TeX): drawn in the window, plain text in the copied results. */
+      R f(String s) {
+        tex.add(s);
+        lines.add("Formula:  " + TeX.plain(s));
+        return this;
+      }
       R src(String s) { lines.add("Source:   " + s); return this; }
       R valid(String s) { lines.add("Validity: " + s); return this; }
       R line(String s) { lines.add("Note:     " + s); return this; }
@@ -1880,7 +1936,7 @@ public class SimKitCalc extends StarMacro {
         tau = f / 8 * rho * U * U;
         r.put("fDarcy", f, "-", "Darcy friction factor (Blasius)");
         r.put("cf", f / 4, "-", "Fanning friction coefficient f/4");
-        r.f("f = 0.316 Re^-0.25 ; tau_w = f/8 rho U^2   (U = bulk velocity, L = hydraulic diameter)");
+        r.f("f = 0.316\\,Re^{-0.25} ; \\tau_w = \\frac{f}{8} \\rho U^2 \\quad \\text{(U: bulk velocity, L: hydraulic diameter)}");
         r.src("Blasius (1913), smooth pipe; e.g. White, Fluid Mechanics");
         r.valid("smooth pipe, turbulent, 4e3 <= Re_Dh <= 1e5");
         r.range("Re_Dh", Re, 4e3, 1e5);
@@ -1888,7 +1944,7 @@ public class SimKitCalc extends StarMacro {
         double cf = 0.664 / Math.sqrt(Re);
         tau = cf * qdyn;
         r.put("cf", cf, "-", "local skin-friction coefficient at x = L");
-        r.f("cf = 0.664 / sqrt(Re_x) ; tau_w = cf 1/2 rho U^2");
+        r.f("c_f = \\frac{0.664}{\\sqrt{Re_x}} ; \\tau_w = c_f \\frac{1}{2} \\rho U^2");
         r.src("Blasius laminar flat-plate solution; Schlichting, Boundary-Layer Theory");
         r.valid("laminar flat plate, zero pressure gradient, Re_x < 5e5");
         r.range("Re_x", Re, 0, 5e5);
@@ -1896,7 +1952,7 @@ public class SimKitCalc extends StarMacro {
         double cf = Math.pow(2 * Math.log10(Re) - 0.65, -2.3);
         tau = cf * qdyn;
         r.put("cf", cf, "-", "local skin-friction coefficient at x = L");
-        r.f("cf = (2 log10(Re_x) - 0.65)^-2.3 ; tau_w = cf 1/2 rho U^2");
+        r.f("c_f = \\left(2 \\log_{10} Re_x - 0.65\\right)^{-2.3} ; \\tau_w = c_f \\frac{1}{2} \\rho U^2");
         r.src("Schlichting, Boundary-Layer Theory (turbulent flat plate, smooth)");
         r.valid("turbulent flat plate, smooth, 5e5 <= Re_x <= 1e9 (below 5e5 the layer is laminar unless tripped)");
         r.range("Re_x", Re, 5e5, 1e9);
@@ -1909,7 +1965,7 @@ public class SimKitCalc extends StarMacro {
       r.put("mu", mu, "Pa-s", "viscosity used");
       r.put("yCentroid", y, "m", "wall distance of the first cell centroid y = y+ nu / u_tau");
       r.put("firstLayer", 2 * y, "m", "FIRST PRISM LAYER THICKNESS = 2 y");
-      r.f("u_tau = sqrt(tau_w / rho) ; y = y+ nu / u_tau ; first layer = 2 y");
+      r.f("u_\\tau = \\sqrt{\\frac{\\tau_w}{\\rho}} ; y = \\frac{y^+ \\nu}{u_\\tau} ; \\text{first layer} = 2y");
       r.line("STAR-CCM+ evaluates y+ at the centroid of the wall cell, i.e. at half the first layer thickness: "
           + "the prism first-layer thickness is therefore 2 y.");
       r.line("cf is the local value at x = L; nearer the leading edge (or at flow impingement) tau_w and y+ are higher.");
@@ -1961,7 +2017,7 @@ public class SimKitCalc extends StarMacro {
       int n = Math.max(1, (int) Math.ceil(exact - 1e-9));
       res.put("N", n, "-", "layers (ceil of " + g(exact) + ")");
       res.put("total", prismTotal(y1, r, n), "m", "total thickness with N layers (>= T)");
-      res.f("N = ceil( ln(1 + T (r - 1)/y1) / ln r )");
+      res.f("N = \\left\\lceil \\frac{\\ln\\left(1 + T (r - 1)/y_1\\right)}{\\ln r} \\right\\rceil");
       prismCommon(res, y1, r, n, core);
       return res;
     }
@@ -1969,7 +2025,7 @@ public class SimKitCalc extends StarMacro {
     static void prismCommon(R res, double y1, double r, int n, double core) {
       double last = y1 * Math.pow(r, n - 1);
       res.put("last", last, "m", "last layer thickness y1 r^(N-1)");
-      res.f("T = y1 (r^N - 1)/(r - 1) ; last layer = y1 r^(N-1)");
+      res.f("T = y_1 \\frac{r^N - 1}{r - 1} ; \\text{last layer} = y_1 r^{N-1}");
       if (given(core)) {
         pos("core cell size", core);
         double ratio = last / core;
@@ -1986,7 +2042,7 @@ public class SimKitCalc extends StarMacro {
       R r = new R("y+ correction of the first layer");
       r.put("y1new", y1old * target / measured, "m", "new first layer thickness");
       r.put("factor", target / measured, "-", "scale factor");
-      r.f("y1_new = y1_old * y+_target / y+_measured");
+      r.f("y_{1,new} = y_{1,old} \\frac{y^+_{target}}{y^+_{measured}}");
       r.valid("holds in the viscous sublayer only (y+ < ~5, where y+ is proportional to y); iterate if the change is large");
       r.src("u_tau ~ unchanged for a small change of the first cell");
       if (measured > 5 || target > 5) r.warn("y+ above ~5: outside the viscous sublayer -- the linear scaling is approximate, re-check after remeshing");
@@ -2000,15 +2056,15 @@ public class SimKitCalc extends StarMacro {
       R r = new R("Re, Pr, Sc, Pe");
       double Re = rho * U * L / mu, nu = mu / rho;
       r.put("Re", Re, "-", "rho U L / mu").put("nu", nu, "m^2/s", "mu / rho");
-      r.f("Re = rho U L / mu");
+      r.f("Re = \\frac{\\rho U L}{\\mu}");
       if (given(cp) && given(k)) {
         double Pr = mu * pos("cp", cp) / pos("k", k);
         r.put("Pr", Pr, "-", "mu cp / k").put("alpha", k / (rho * cp), "m^2/s", "k/(rho cp)").put("Pe", Re * Pr, "-", "Re Pr = U L / alpha");
-        r.f("Pr = mu cp / k ; Pe = Re Pr");
+        r.f("Pr = \\frac{\\mu c_p}{k} ; Pe = Re\\,Pr");
       }
       if (given(D)) {
         r.put("Sc", nu / pos("D", D), "-", "nu / D");
-        r.f("Sc = nu / D");
+        r.f("Sc = \\frac{\\nu}{D}");
       }
       r.src("definitions");
       return r;
@@ -2019,7 +2075,7 @@ public class SimKitCalc extends StarMacro {
       R r = new R("Mach number");
       double c = Math.sqrt(gamma * Rg * T);
       r.put("c", c, "m/s", "speed of sound sqrt(gamma R T)").put("Ma", U / c, "-", "U / c");
-      r.f("c = sqrt(gamma R T) ; Ma = U / c").src("ideal gas");
+      r.f("c = \\sqrt{\\gamma R T} ; Ma = \\frac{U}{c}").src("ideal gas");
       if (U / c > 0.3) r.warn("Ma > 0.3: compressibility matters (density changes > ~5 %)");
       return r;
     }
@@ -2044,7 +2100,7 @@ public class SimKitCalc extends StarMacro {
         r.put("Ra", ra, "-", "g beta dT L^3 / (nu alpha)").put("Pr", nu / alpha, "-", "nu / alpha");
         if (ra > 1e9) r.line("Ra > 1e9: turbulent natural convection on a vertical plate");
       }
-      r.f("Fr = U/sqrt(gL) ; Ri = g beta dT L/U^2 ; Gr = g beta dT L^3/nu^2 ; Ra = Gr Pr").src("definitions");
+      r.f("Fr = \\frac{U}{\\sqrt{g L}} ; Ri = \\frac{g \\beta \\Delta T L}{U^2} ; Gr = \\frac{g \\beta \\Delta T L^3}{\\nu^2} ; Ra = Gr\\,Pr").src("definitions");
       return r;
     }
 
@@ -2055,7 +2111,7 @@ public class SimKitCalc extends StarMacro {
       else if (given(f)) r.put("St", f * L / U, "-", "St = f L / U").put("f", f, "Hz", "given");
       else throw new IllegalArgumentException("enter St or f");
       r.put("period", L / (r.get("St") * U), "s", "1/f");
-      r.f("St = f L / U").src("definition (cylinder vortex shedding St ~ 0.2 for 300 < Re < 2e5)");
+      r.f("St = \\frac{f L}{U}").src("definition (cylinder vortex shedding St ~ 0.2 for 300 < Re < 2e5)");
       return r;
     }
 
@@ -2068,7 +2124,7 @@ public class SimKitCalc extends StarMacro {
         double oh = pos("mu", mu) / Math.sqrt(rho * sigma * d);
         r.put("Oh", oh, "-", "mu / sqrt(rho sigma d)").put("Re", rho * U * d / mu, "-", "rho U d / mu (liquid)");
       }
-      r.f("We = rho U^2 d / sigma ; Oh = mu / sqrt(rho sigma d) = sqrt(We)/Re");
+      r.f("We = \\frac{\\rho U^2 d}{\\sigma} ; Oh = \\frac{\\mu}{\\sqrt{\\rho \\sigma d}} = \\frac{\\sqrt{We}}{Re}");
       r.src("definitions; breakup regimes: Pilch & Erdman 1987 (We_crit ~ 12 for Oh < 0.1)");
       if (we > 12) r.line("We > ~12: secondary (bag) breakup expected for Oh < 0.1");
       return r;
@@ -2080,7 +2136,7 @@ public class SimKitCalc extends StarMacro {
       double bi = h * L / k;
       r.put("Bi", bi, "-", "h L / k");
       if (given(alpha) && given(t)) r.put("Fo", alpha * t / (L * L), "-", "alpha t / L^2");
-      r.f("Bi = h L / k ; Fo = alpha t / L^2").src("definitions");
+      r.f("Bi = \\frac{h L}{k} ; Fo = \\frac{\\alpha t}{L^2}").src("definitions");
       r.line(bi < 0.1 ? "Bi < 0.1: lumped capacitance acceptable (L = V/A)" : "Bi >= 0.1: internal gradients matter");
       return r;
     }
@@ -2110,7 +2166,7 @@ public class SimKitCalc extends StarMacro {
         r.put("Stk", stk, "-", "tau_p U / L");
         r.line(stk < 0.1 ? "Stk << 1: droplets follow the flow" : stk > 10 ? "Stk >> 1: ballistic droplets" : "Stk ~ 1: partial response");
       }
-      r.f("tau_p = rho_p d^2/(18 mu) / (1 + 0.15 Re_p^0.687) ; Stk = tau_p U / L");
+      r.f("\\tau_p = \\frac{\\rho_p d^2}{18 \\mu \\left(1 + 0.15\\,Re_p^{0.687}\\right)} ; Stk = \\frac{\\tau_p U}{L}");
       r.src("Stokes drag; Schiller & Naumann 1933 (valid Re_p < 1000)");
       return r;
     }
@@ -2156,8 +2212,8 @@ public class SimKitCalc extends StarMacro {
       r.put("eps", eps, "m^2/s^3", "dissipation C_mu^0.75 k^1.5 / l");
       r.put("omega", Math.sqrt(k) / (Math.pow(CMU, 0.25) * l), "1/s", "specific dissipation k^0.5/(C_mu^0.25 l)");
       r.put("nutRatio", nut / nu, "-", "viscosity ratio nu_t/nu, nu_t = C_mu k^2/eps");
-      r.f("k = 1.5 (U I)^2 ; eps = C_mu^0.75 k^1.5 / l ; omega = k^0.5 / (C_mu^0.25 l) ; nu_t = C_mu k^2 / eps");
-      r.f("pipe estimates: I = 0.16 Re_Dh^(-1/8), l = 0.07 D_h");
+      r.f("k = 1.5\\,(U I)^2 ; \\varepsilon = \\frac{C_\\mu^{0.75} k^{1.5}}{l} ; \\omega = \\frac{k^{0.5}}{C_\\mu^{0.25} l} ; \\nu_t = \\frac{C_\\mu k^2}{\\varepsilon}");
+      r.f("\\text{pipe estimates:}\\quad I = 0.16\\,Re_{D_h}^{-1/8}, \\quad l = 0.07\\,D_h");
       r.src("standard k-epsilon relations (Launder & Spalding 1974); pipe estimates: common CFD practice (e.g. Versteeg & Malalasekera)");
       r.valid("pipe estimates for fully developed turbulent pipe flow; STAR-CCM+ 'Turbulent Length Scale' uses the same l definition");
       return r;
@@ -2191,7 +2247,7 @@ public class SimKitCalc extends StarMacro {
           r.put("wallHours", steps * sps / 3600, "h", "wall-clock hours");
         }
       }
-      r.f("dt = Co dx / U ; steps/period = 1/(f dt) ; t_avg = N/f ; core-h = steps * s/step * cores / 3600");
+      r.f("\\Delta t = \\frac{Co\\,\\Delta x}{U} ; \\text{steps per period} = \\frac{1}{f\\,\\Delta t} ; t_{avg} = \\frac{N}{f} ; \\text{core-h} = \\frac{\\text{steps} \\cdot \\text{s/step} \\cdot \\text{cores}}{3600}");
       r.src("definitions; Co is the convective Courant number");
       r.valid("Co ~ 1 for scale-resolving (LES/DES); implicit URANS tolerates larger Co if the frequency is resolved");
       return r;
@@ -2271,7 +2327,7 @@ public class SimKitCalc extends StarMacro {
       }
       r.put("T", span, "s", "record length used");
       if (mean != 0 && half > 0.03 * Math.abs(mean)) r.warn("95 % CI = " + g(100 * half / Math.abs(mean)) + " % of the mean (> 3 %): average longer");
-      r.f("CI95 = t(0.975, n_b - 1) s_b / sqrt(n_b) ; tau_int = int_0^(first zero) rho(tau) dtau ; N_eff = T / (2 tau_int)");
+      r.f("CI_{95} = \\frac{t_{0.975,\\,n_b - 1}\\; s_b}{\\sqrt{n_b}} ; \\tau_{int} = \\int_0^{\\text{first zero}} \\rho(\\tau)\\,d\\tau ; N_{eff} = \\frac{T}{2\\,\\tau_{int}}");
       r.src("batch means: e.g. Law & Kelton, Simulation Modeling and Analysis; integral time scale: Pope, Turbulent Flows; Student t table");
       r.valid("statistically stationary signal after the discard time; batches longer than ~10 tau_int");
       return r;
@@ -2311,8 +2367,8 @@ public class SimKitCalc extends StarMacro {
       r.put("GCIfine21", 100 * gci21, "%", "fine-grid GCI = 1.25 e_a21/(r21^p - 1)");
       r.put("GCI32", 100 * gci32, "%", "medium-grid GCI = 1.25 e_a32/(r32^p - 1)");
       r.put("asymptotic", gci32 / (r21p * gci21), "-", "GCI32/(r21^p GCI21): ~1 in the asymptotic range");
-      r.f("h = (1/N)^(1/dim) ; p = |ln|e32/e21| + q(p)| / ln r21 ; q = ln((r21^p - s)/(r32^p - s)) ; s = sign(e32/e21)");
-      r.f("phi_ext21 = (r21^p phi1 - phi2)/(r21^p - 1) ; GCI_fine21 = 1.25 e_a21/(r21^p - 1)");
+      r.f("h = \\left(\\frac{1}{N}\\right)^{1/dim} ; p = \\frac{\\left|\\,\\ln\\left|e_{32}/e_{21}\\right| + q(p)\\,\\right|}{\\ln r_{21}} ; q = \\ln \\frac{r_{21}^p - s}{r_{32}^p - s} ; s = \\text{sign}(e_{32}/e_{21})");
+      r.f("\\phi_{ext}^{21} = \\frac{r_{21}^p \\phi_1 - \\phi_2}{r_{21}^p - 1} ; GCI_{fine}^{21} = \\frac{1.25\\,e_a^{21}}{r_{21}^p - 1}");
       r.src("Celik et al. 2008, J. Fluids Eng. 130:078001 (ASME V&V procedure)");
       r.valid("monotonic convergence, r > 1.3, solutions in the asymptotic range, same discretisation on all grids");
       r.line("Celik's published example (N = 18000/8000/4500) is 2-D: dimension 2 reproduces p = 1.53, r21 = 1.5. "
@@ -2351,7 +2407,7 @@ public class SimKitCalc extends StarMacro {
       r.put("tEnd", tInit + tAvg, "s", "physical time to run (maximum physical time)");
       if (given(dt)) r.put("steps", Math.ceil((tInit + tAvg) / pos("time step", dt)), "-", "time steps to run");
       if (nFt < 2) r.warn("fewer than 2 flow-throughs averaged: the mean is usually not converged");
-      r.f("Q = |mdot|/rho ; t_res = V/Q ; t_ft = L/(Q/A) ; window = N x t_ref (t_ref = t_ft if L and A are given)");
+      r.f("Q = \\frac{|\\dot m|}{\\rho} ; t_{res} = \\frac{V}{Q} ; t_{ft} = \\frac{L}{Q/A} ; \\text{window} = N \\times t_{ref} \\quad \\text{(}t_{ref} = t_{ft} \\text{ if L and A are given)}");
       r.src("common practice for statistically steady unsteady RANS / LES: discard 1-3, average 2-5 flow-throughs");
       r.valid("one main flow path; recirculation zones can need longer windows: check the averaged results of Export results (drift_pct)");
       return r;
@@ -2452,9 +2508,9 @@ public class SimKitCalc extends StarMacro {
       r.put("rho", rho, "kg/m^3", "density at p, T");
       if (given(mu) && mu > 0) r.put("Re_D", rho * U * dEq / mu, "-", "Reynolds number on " + (given(D) ? "D" : "the equivalent diameter"));
       r.put("A", area, "m^2", "flow area");
-      r.f("m_dot = rho U A ; Q = U A ; q = rho U^2 / 2 ; gauge = absolute - reference pressure");
+      r.f("\\dot m = \\rho U A ; Q = U A ; q = \\frac{1}{2} \\rho U^2 ; p_{gauge} = p_{abs} - p_{ref}");
       if (gas) {
-        r.f("p0 = p (1 + (g-1)/2 Ma^2)^(g/(g-1)) ; T0 = T (1 + (g-1)/2 Ma^2) ; m_max = A p0 sqrt(g/(R T0)) (2/(g+1))^((g+1)/(2(g-1)))");
+        r.f("p_0 = p \\left(1 + \\frac{\\gamma - 1}{2} Ma^2\\right)^{\\gamma/(\\gamma - 1)} ; T_0 = T \\left(1 + \\frac{\\gamma - 1}{2} Ma^2\\right) ; \\dot m_{max} = A\\,p_0 \\sqrt{\\frac{\\gamma}{R T_0}} \\left(\\frac{2}{\\gamma + 1}\\right)^{\\frac{\\gamma + 1}{2(\\gamma - 1)}}");
         r.line("treated as an ideal gas, R = " + g(Rg) + " J/kg-K, gamma = " + g(gam));
       } else {
         r.line("treated as a liquid (constant density)");
@@ -2533,12 +2589,12 @@ public class SimKitCalc extends StarMacro {
         r.put("U_jet", Ma * Math.sqrt(gam * Rg * Tt), "m/s", "ideal jet velocity at the throat");
         r.put("Ma_jet", Ma, "-", "throat Mach number (ideal)");
         r.put("T_jet", Tt, "K", "static temperature at the throat");
-        r.f("choked (pb/p0 <= pr_crit): m = Cd A p0 sqrt(g/(R T0)) (2/(g+1))^((g+1)/(2(g-1)))");
-        r.f("not choked: m = Cd A p0 sqrt(2g/((g-1) R T0) ((pb/p0)^(2/g) - (pb/p0)^((g+1)/g)))");
+        r.f("\\text{choked}\\;(p_b/p_0 \\le (p_b/p_0)_{crit}): \\quad \\dot m = C_d A\\,p_0 \\sqrt{\\frac{\\gamma}{R T_0}} \\left(\\frac{2}{\\gamma + 1}\\right)^{\\frac{\\gamma + 1}{2(\\gamma - 1)}}");
+        r.f("\\text{not choked:}\\quad \\dot m = C_d A\\,p_0 \\sqrt{\\frac{2\\gamma}{(\\gamma - 1) R T_0} \\left[\\left(\\frac{p_b}{p_0}\\right)^{2/\\gamma} - \\left(\\frac{p_b}{p_0}\\right)^{(\\gamma + 1)/\\gamma}\\right]}");
         r.line("ideal gas, R = " + g(Rg) + " J/kg-K, gamma = " + g(gam));
       } else {
         r.put("U_jet", Math.sqrt(2 * (p0 - pb) / rho), "m/s", "ideal jet velocity sqrt(2 dp / rho)");
-        r.f("m = Cd A sqrt(2 rho (p0 - pb))  (liquid, incompressible)");
+        r.f("\\dot m = C_d A \\sqrt{2 \\rho\\,(p_0 - p_b)} \\quad \\text{(liquid, incompressible)}");
       }
       r.put("Cd", Cd, "-", "discharge coefficient");
       r.line("Cd: sharp-edged orifice 0.60-0.62; short tube 0.8; well-rounded nozzle 0.95-0.99 (measure it when it matters)");
@@ -2589,26 +2645,26 @@ public class SimKitCalc extends StarMacro {
       switch (corr) {
         case 0:
           nuS = churchillBernstein(re, Pr);
-          r.f("Nu = 0.3 + 0.62 Re^0.5 Pr^(1/3) / [1 + (0.4/Pr)^(2/3)]^0.25 * [1 + (Re/282000)^(5/8)]^(4/5)");
+          r.f("Nu = 0.3 + \\frac{0.62\\,Re^{1/2} Pr^{1/3}}{\\left[1 + (0.4/Pr)^{2/3}\\right]^{1/4}} \\left[1 + \\left(\\frac{Re}{282000}\\right)^{5/8}\\right]^{4/5}");
           r.src("Churchill & Bernstein 1977, J. Heat Transfer 99:300 (Incropera eq. 7.54)");
           r.valid("Re Pr >= 0.2, properties at T_film");
           r.range("Re Pr", re * Pr, 0.2, Double.POSITIVE_INFINITY);
           break;
         case 1:
           nuS = 0.664 * Math.sqrt(re) * Math.cbrt(Pr);
-          r.f("Nu_avg = 0.664 Re_L^0.5 Pr^(1/3)").src("Incropera eq. 7.30 (laminar flat plate, average)");
+          r.f("Nu_{avg} = 0.664\\,Re_L^{1/2}\\,Pr^{1/3}").src("Incropera eq. 7.30 (laminar flat plate, average)");
           r.valid("Re_L <= 5e5, Pr >= 0.6");
           r.range("Re_L", re, 0, 5e5).range("Pr", Pr, 0.6, Double.POSITIVE_INFINITY);
           break;
         case 2:
           nuS = (0.037 * Math.pow(re, 0.8) - 871) * Math.cbrt(Pr);
-          r.f("Nu_avg = (0.037 Re_L^0.8 - 871) Pr^(1/3)").src("Incropera eq. 7.38 (mixed boundary layer, Re_x,c = 5e5)");
+          r.f("Nu_{avg} = \\left(0.037\\,Re_L^{0.8} - 871\\right) Pr^{1/3}").src("Incropera eq. 7.38 (mixed boundary layer, Re_x,c = 5e5)");
           r.valid("5e5 < Re_L <= 1e8, 0.6 <= Pr <= 60");
           r.range("Re_L", re, 5e5, 1e8).range("Pr", Pr, 0.6, 60);
           break;
         case 3:
           nuS = 2 + (0.4 * Math.sqrt(re) + 0.06 * Math.pow(re, 2.0 / 3)) * Math.pow(Pr, 0.4);
-          r.f("Nu = 2 + (0.4 Re^0.5 + 0.06 Re^(2/3)) Pr^0.4 (mu/mu_s)^(1/4), mu/mu_s = 1");
+          r.f("Nu = 2 + \\left(0.4\\,Re^{1/2} + 0.06\\,Re^{2/3}\\right) Pr^{0.4} \\left(\\frac{\\mu}{\\mu_s}\\right)^{1/4}, \\quad \\mu/\\mu_s = 1");
           r.src("Whitaker 1972, AIChE J. 18:361 (Incropera eq. 7.56)");
           r.valid("3.5 <= Re <= 7.6e4, 0.71 <= Pr <= 380; Whitaker evaluates properties at T_inf (here T_film)");
           r.range("Re", re, 3.5, 7.6e4).range("Pr", Pr, 0.71, 380);
@@ -2616,7 +2672,7 @@ public class SimKitCalc extends StarMacro {
         case 4:
           nuS = gnielinski(re, Pr);
           r.put("f", Math.pow(0.790 * Math.log(re) - 1.64, -2), "-", "Petukhov friction factor");
-          r.f("f = (0.790 ln Re - 1.64)^-2 ; Nu = (f/8)(Re - 1000) Pr / (1 + 12.7 (f/8)^0.5 (Pr^(2/3) - 1))");
+          r.f("f = \\left(0.790 \\ln Re - 1.64\\right)^{-2} ; Nu = \\frac{(f/8)\\,(Re - 1000)\\,Pr}{1 + 12.7 \\sqrt{f/8}\\,\\left(Pr^{2/3} - 1\\right)}");
           r.src("Gnielinski 1976, Int. Chem. Eng. 16:359 (Incropera eq. 8.62)");
           r.valid("3000 <= Re_D <= 5e6, 0.5 <= Pr <= 2000, fully developed; properties at the bulk temperature (here T_film)");
           r.range("Re_D", re, 3000, 5e6).range("Pr", Pr, 0.5, 2000);
@@ -2626,7 +2682,7 @@ public class SimKitCalc extends StarMacro {
           double rd = rad / L, hd = H / L;
           nuS = martinJet(re, Pr, 1 / rd, hd);
           r.put("rOverD", rd, "-", "r/D").put("HOverD", hd, "-", "H/D");
-          r.f("Nu = Pr^0.42 G F ; F = 2 Re^0.5 (1 + 0.005 Re^0.55)^0.5 ; G = (D/r)(1 - 1.1 D/r)/(1 + 0.1 (H/D - 6) D/r)");
+          r.f("Nu = Pr^{0.42}\\,G\\,F ; F = 2\\,Re^{1/2} \\left(1 + 0.005\\,Re^{0.55}\\right)^{1/2} ; G = \\frac{D}{r} \\cdot \\frac{1 - 1.1\\,D/r}{1 + 0.1\\,(H/D - 6)\\,D/r}");
           r.src("Martin 1977, Adv. Heat Transfer 13:1 (Incropera eq. 7.79-7.80), area average over radius r");
           r.valid("2000 <= Re <= 4e5, 2 <= H/D <= 12, 2.5 <= r/D <= 7.5; Re with the nozzle exit velocity and diameter");
           r.range("Re", re, 2000, 4e5).range("H/D", hd, 2, 12).range("r/D", rd, 2.5, 7.5);
@@ -2639,7 +2695,7 @@ public class SimKitCalc extends StarMacro {
           double ra = g * b * Math.abs(tS - tInf) * L * L * L / (nu * alpha);
           r.put("Ra", ra, "-", "g beta |T_s - T_inf| L^3 / (nu alpha)");
           nuS = churchillChu(ra, Pr);
-          r.f("Nu = {0.825 + 0.387 Ra^(1/6) / [1 + (0.492/Pr)^(9/16)]^(8/27)}^2");
+          r.f("Nu = \\left\\{0.825 + \\frac{0.387\\,Ra^{1/6}}{\\left[1 + (0.492/Pr)^{9/16}\\right]^{8/27}}\\right\\}^2");
           r.src("Churchill & Chu 1975, Int. J. Heat Mass Transfer 18:1323 (Incropera eq. 9.26)");
           r.valid("vertical plate, all Ra (laminar and turbulent), Ra <= 1e12");
           r.range("Ra", ra, 0.1, 1e12);
@@ -2662,7 +2718,7 @@ public class SimKitCalc extends StarMacro {
       double q = eps * SIGMA * (Math.pow(T, 4) - Math.pow(tSur, 4));
       r.put("q", q, "W/m^2", "net radiative flux leaving the surface");
       r.put("hRad", Math.abs(T - tSur) < 1e-9 ? 4 * eps * SIGMA * T * T * T : q / (T - tSur), "W/m^2-K", "equivalent radiative h");
-      r.f("q = eps sigma (T^4 - T_sur^4) ; sigma = 5.670374e-8 W/m^2K^4").src("Stefan-Boltzmann, grey diffuse surface");
+      r.f("q = \\varepsilon \\sigma \\left(T^4 - T_{sur}^4\\right) ; \\sigma = 5.670374 \\times 10^{-8}\\;\\text{W/m}^2\\text{K}^4").src("Stefan-Boltzmann, grey diffuse surface");
       r.valid("small grey surface enclosed by large isothermal surroundings");
       return r;
     }
@@ -2726,8 +2782,8 @@ public class SimKitCalc extends StarMacro {
       r.put("h", h, "W/m^2-K", "Churchill-Bernstein on the probe diameter");
       r.put("Re", o[0], "-", "probe Reynolds number").put("Pr", o[1], "-", "at T_film").put("Nu", o[2], "-", "Churchill-Bernstein");
       r.put("rho", o[3], "kg/m^3", "at T_film").put("mu", o[4], "Pa-s", "at T_film").put("k", o[5], "W/m-K", "at T_film").put("cp", o[6], "J/kg-K", "at T_film");
-      r.f("h (T_g - T_tc) = eps (sigma T_tc^4 - G/4) ; G/4 = irradiation on a sphere/cylinder in a field of incident radiation G");
-      r.f("h from Nu_CB(Re_d, Pr), properties at (T_g + T_tc)/2");
+      r.f("h\\,(T_g - T_{tc}) = \\varepsilon \\left(\\sigma T_{tc}^4 - \\frac{G}{4}\\right) ; \\text{G/4: irradiation of a sphere or cylinder in a field of incident radiation G}");
+      r.f("h \\text{ from } Nu_{CB}(Re_d, Pr), \\quad \\text{properties at } \\frac{T_g + T_{tc}}{2}");
       r.src("steady energy balance of the junction (conduction along the wires neglected); Churchill & Bernstein 1977");
       r.valid("Re_d Pr >= 0.2; steady state (no time constant); grey bead");
       r.range("Re Pr", o[0] * o[1], 0.2, Double.POSITIVE_INFINITY);
@@ -2752,7 +2808,7 @@ public class SimKitCalc extends StarMacro {
       r.put("qinc", qinc, "W/m^2", "incident radiative flux");
       r.put("TAST", T, "K", "adiabatic surface temperature");
       if (given(tS)) r.put("qNet", eps * (qinc - SIGMA * Math.pow(tS, 4)) + h * (tg - tS), "W/m^2", "net flux into a surface at T_s");
-      r.f("eps (q_inc - sigma T_AST^4) + h (T_g - T_AST) = 0  (Newton) ; q_net(T_s) = eps (q_inc - sigma T_s^4) + h (T_g - T_s)");
+      r.f("\\varepsilon \\left(q_{inc} - \\sigma T_{AST}^4\\right) + h\\,(T_g - T_{AST}) = 0 \\quad \\text{(Newton)} ; q_{net}(T_s) = \\varepsilon \\left(q_{inc} - \\sigma T_s^4\\right) + h\\,(T_g - T_s)");
       r.src("Wickstrom, Duthinh & McGrattan 2007, 'Adiabatic surface temperature for calculating heat transfer to fire exposed structures', Interflam 2007");
       r.valid("plane grey surface, absorptivity = emissivity");
       return r;
@@ -2770,7 +2826,7 @@ public class SimKitCalc extends StarMacro {
         double q = pos("flux", flux) * A;
         r.put("Q", q, "W", "flux A").put("dT", q / (mdot * cp), "K", "Q / (m cp)");
       }
-      r.f("Q = m cp dT ; flux = Q / A").src("steady energy balance of the cooling water");
+      r.f("Q = \\dot m\\,c_p \\Delta T ; \\text{flux} = \\frac{Q}{A}").src("steady energy balance of the cooling water");
       r.valid("steady state, no heat loss from the water lines; the area choice must match the reference flux definition");
       return r;
     }
@@ -2789,7 +2845,7 @@ public class SimKitCalc extends StarMacro {
       r.put("FARst", 1 / afr, "-", "fuel/air");
       double turns = o2 * 4.76 * 28.85 / mf;
       r.put("AFRstTurns", turns, "-", "same with 4.76 kmol air/kmol O2 and M_air = 28.85 (Turns convention)");
-      r.f("AFR_st = (x + y/4 - z/2)/0.2095 * M_air/M_fuel ; M_air = 28.965 ; phi = AFR_st / (m_air/m_fuel)");
+      r.f("AFR_{st} = \\frac{x + y/4 - z/2}{0.2095} \\cdot \\frac{M_{air}}{M_{fuel}} ; M_{air} = 28.965 ; \\phi = \\frac{AFR_{st}}{\\dot m_{air}/\\dot m_{fuel}}");
       r.src("mass balance; SimKit spec B.2.9; textbook variant (Turns, An Introduction to Combustion) shown for comparison");
       r.line("the two conventions differ by ~0.7 %: the textbook 14.57 (C12H23) / 14.69 (C10H20) use 4.76 x 28.85");
       if (given(mAir) && given(mFuel)) {
@@ -2828,7 +2884,7 @@ public class SimKitCalc extends StarMacro {
         if (!(F > 0 && F < 1)) throw new IllegalArgumentException("exceedance fraction must be in (0, 1)");
         r.put("dF", X * Math.pow(-Math.log(F), 1 / n), "m", "diameter exceeded by mass fraction F: X (-ln F)^(1/n)");
       }
-      r.f("Q(>d) = exp(-(d/X)^n) ; SMD = X / Gamma(1 - 1/n) ; d_F = X (-ln F)^(1/n)");
+      r.f("Q(>d) = \\exp\\left[-\\left(\\frac{d}{X}\\right)^n\\right] ; SMD = \\frac{X}{\\Gamma(1 - 1/n)} ; d_F = X\\,(-\\ln F)^{1/n}");
       r.src("Rosin & Rammler 1933; SMD relation e.g. Lefebvre & McDonell, Atomization and Sprays");
       r.valid("n > 1; typical pressure atomisers n = 1.5-4");
       if (n > 6) r.warn("n > 6 is unusually narrow for a spray");
@@ -2841,7 +2897,7 @@ public class SimKitCalc extends StarMacro {
       double fn = mdot / Math.sqrt(rho * dp);
       r.put("FN", fn, "m^2", "m / sqrt(rho_L dP)");
       r.put("FNus", (mdot * 7936.641439) / Math.sqrt(dp / 6894.757293), "lb/h/psi^0.5", "US flow number (lb/h)/sqrt(psi)");
-      r.f("FN = m_dot / sqrt(rho_L dP)").src("Lefebvre & McDonell, Atomization and Sprays");
+      r.f("FN = \\frac{\\dot m}{\\sqrt{\\rho_L \\Delta p}}").src("Lefebvre & McDonell, Atomization and Sprays");
       r.valid("pressure (simplex) atomiser; FN constant at fixed geometry for turbulent nozzle flow");
       return r;
     }
@@ -2873,7 +2929,7 @@ public class SimKitCalc extends StarMacro {
       if (k < 0) throw new IllegalArgumentException("below absolute zero");
       R r = new R("Temperature");
       r.put("K", k, "K", "kelvin").put("degC", k - 273.15, "-", "degC (not SI)").put("degF", (k - 273.15) * 1.8 + 32, "-", "degF (not SI)");
-      r.f("T[K] = T[degC] + 273.15 ; T[degF] = 1.8 T[degC] + 32").src("definition");
+      r.f("T\\,[\\text{K}] = T\\,[\\text{\u00B0C}] + 273.15 ; T\\,[\\text{\u00B0F}] = 1.8\\,T\\,[\\text{\u00B0C}] + 32").src("definition");
       return r;
     }
 
@@ -2882,7 +2938,7 @@ public class SimKitCalc extends StarMacro {
       R r = new R("US gal/h -> kg/s");
       double v = q * 3.785411784e-3 / 3600;
       r.put("Vdot", v, "m^3/s", "volume flow").put("mdot", v * rho, "kg/s", "mass flow");
-      r.f("m = Q[gal/h] * 3.785411784e-3 / 3600 * rho").src("1 US gal = 3.785411784 L (exact)");
+      r.f("\\dot m = Q\\,[\\text{gal/h}] \\cdot \\frac{3.785411784 \\times 10^{-3}}{3600} \\cdot \\rho").src("1 US gal = 3.785411784 L (exact)");
       return r;
     }
 
@@ -2893,7 +2949,7 @@ public class SimKitCalc extends StarMacro {
       r.put("Tstd", T, "K", "standard temperature").put("pstd", p, "Pa", "standard pressure");
       r.put("rhoStd", rho, "kg/m^3", "ideal-gas density p M / (R_u T)");
       r.put("Vdot", v, "m^3/s", "standard volume flow").put("mdot", v * rho, "kg/s", "mass flow");
-      r.f("rho_std = p M / (R_u T), R_u = 8314.462618 J/kmol-K ; m = SCFM * 0.028316846592/60 * rho_std");
+      r.f("\\rho_{std} = \\frac{p M}{R_u T}, \\quad R_u = 8314.462618\\;\\text{J/kmol K} ; \\dot m = \\text{SCFM} \\cdot \\frac{0.028316846592}{60} \\cdot \\rho_{std}");
       r.src("1 ft^3 = 0.028316846592 m^3 ; 1 psi = 6894.757 Pa ; standard conditions are an input (60 degF, 14.696 psi by default)");
       r.line("air at 60 degF / 14.696 psi: rho = 1.2228 kg/m^3 with M = 28.965 (the often quoted 1.2232 uses M = 28.97 / older R)");
       return r;
@@ -3574,6 +3630,546 @@ public class SimKitCalc extends StarMacro {
   // =====================================================================================================
 
   /** Styled-text rendering of a result: warnings first, the results table (tab stops), then the details. */
+  /** Formulas written in a small part of LaTeX and drawn as mathematics, with no library (STAR-CCM+ macros cannot load
+   *  one without set-up): \frac{a}{b}, \sqrt{x}, x^{2}, x_{i}, \left( ... \right) (also [ ] \{ \} | \lceil \rceil),
+   *  \dot m, \text{...}, \ln \log \exp, \int, Greek letters, \cdot \times \le \ge, spaces \, \; \quad. One letter is a
+   *  variable (italic), several letters a name (Re, Pr, upright). The same formula gives a plain-text form, copied with
+   *  the results and written in calc_log. */
+  static final class TeX {
+    static final Map<String, String[]> CMD = new java.util.HashMap<>();   // name -> {symbol, plain text, kind}
+    static {
+      String[][] s = {{"alpha", "\u03B1"}, {"beta", "\u03B2"}, {"gamma", "\u03B3"}, {"delta", "\u03B4"}, {"varepsilon", "\u03B5", "eps"},
+          {"epsilon", "\u03B5", "eps"}, {"eta", "\u03B7"}, {"theta", "\u03B8"}, {"kappa", "\u03BA"}, {"lambda", "\u03BB"},
+          {"mu", "\u03BC"}, {"nu", "\u03BD"}, {"pi", "\u03C0"}, {"rho", "\u03C1"}, {"sigma", "\u03C3"}, {"tau", "\u03C4"},
+          {"phi", "\u03C6"}, {"omega", "\u03C9"}, {"Gamma", "\u0393"}, {"Delta", "\u0394", "d"}, {"Phi", "\u03A6"},
+          {"Omega", "\u03A9"}, {"Sigma", "\u03A3"}};
+      for (String[] x : s) CMD.put(x[0], new String[] {x[1], x.length > 2 ? x[2] : x[0], Character.isLowerCase(x[0].charAt(0)) ? "var" : "ord"});
+      String[][] o = {{"cdot", "\u00B7", "*", "bin"}, {"times", "\u00D7", "x", "bin"}, {"pm", "\u00B1", "+/-", "bin"},
+          {"le", "\u2264", "<=", "rel"}, {"ge", "\u2265", ">=", "rel"}, {"approx", "\u2248", "~", "rel"}, {"to", "\u2192", "->", "rel"},
+          {"infty", "\u221E", "inf", "ord"}, {"circ", "\u00B0", "deg", "ord"}, {"lceil", "\u2308", "ceil(", "open"},
+          {"rceil", "\u2309", ")", "close"}, {"{", "{", "{", "open"}, {"}", "}", "}", "close"}, {"int", "\u222B", "int", "big"}};
+      for (String[] x : o) CMD.put(x[0], new String[] {x[1], x[2], x[3]});
+      for (String f : new String[] {"ln", "log", "exp", "max", "min", "sin", "cos", "sign"}) CMD.put(f, new String[] {f, f, "fn"});
+    }
+
+    static final java.awt.font.FontRenderContext FRC = new java.awt.font.FontRenderContext(null, true, true);
+    static final java.awt.Color INK = new java.awt.Color(0x1D, 0x27, 0x33);
+
+    /** A laid-out piece: width, height above and below the baseline. */
+    abstract static class Box {
+      double w, a, d;
+      abstract void draw(java.awt.Graphics2D g, double x, double y);
+    }
+
+    static Box empty() {
+      return new Box() { @Override void draw(java.awt.Graphics2D g, double x, double y) { } };
+    }
+
+    static Box text(final String t, final float size, final boolean italic) {
+      final Font f = new Font(Font.SERIF, italic ? Font.ITALIC : Font.PLAIN, Math.round(size));
+      final Box b = new Box() {
+        @Override void draw(java.awt.Graphics2D g, double x, double y) {
+          g.setFont(f);
+          g.drawString(t, (float) x, (float) y);
+        }
+      };
+      java.awt.font.TextLayout tl = new java.awt.font.TextLayout(t.isEmpty() ? " " : t, f, FRC);
+      java.awt.geom.Rectangle2D r = tl.getBounds();
+      b.w = t.isEmpty() ? 0 : tl.getAdvance() + (italic ? size * 0.06 : 0);
+      b.a = Math.max(-r.getY(), size * 0.5);
+      b.d = Math.max(r.getY() + r.getHeight(), 0);
+      return b;
+    }
+
+    static Box space(double w) {
+      Box b = empty();
+      b.w = w;
+      return b;
+    }
+
+    /** A parsed formula part: drawn (box) or written as plain text. */
+    abstract static class Node {
+      String kind = "ord";   // ord, var, bin, rel, open, close, punct, fn, big, space
+      abstract Box box(float size, int level);
+      abstract String plain();
+    }
+
+    static final class Sym extends Node {
+      final String t, p;
+      final boolean italic;
+
+      Sym(String t, String p, boolean italic, String kind) {
+        this.t = t;
+        this.p = p;
+        this.italic = italic;
+        this.kind = kind;
+      }
+
+      @Override Box box(float size, int level) { return text(t, kind.equals("big") ? size * 1.5f : size, italic); }
+
+      @Override String plain() { return kind.equals("bin") || kind.equals("rel") ? " " + p + " " : kind.equals("fn") ? p + " " : p; }
+    }
+
+    static final class Gap extends Node {
+      final double em;
+
+      Gap(double em) {
+        this.em = em;
+        kind = "space";
+      }
+
+      @Override Box box(float size, int level) { return space(em * size); }
+
+      @Override String plain() { return " "; }
+    }
+
+    static final class Group extends Node {
+      final List<Node> ns;
+
+      Group(List<Node> ns) { this.ns = ns; }
+
+      @Override Box box(float size, int level) {
+        final List<Box> bs = new ArrayList<>();
+        final List<Double> xs = new ArrayList<>();
+        double x = 0, a = 0, d = 0, m = level == 0 ? 1 : 0.65;
+        String prev = "start";
+        for (int i = 0; i < ns.size(); i++) {
+          Node n = ns.get(i);
+          String k = n.kind;
+          if (k.equals("soft")) {   // a typed space: a thin space between two plain parts only
+            String next = i + 1 < ns.size() ? ns.get(i + 1).kind : "end";
+            if (!(prev.equals("ord") || prev.equals("var") || prev.equals("close") || prev.equals("fn"))
+                || !(next.equals("ord") || next.equals("var") || next.equals("open") || next.equals("fn") || next.equals("big"))) continue;
+            x += size * 0.17;
+            continue;
+          }
+          boolean unary = k.equals("bin") && (prev.equals("start") || prev.equals("bin") || prev.equals("rel") || prev.equals("open") || prev.equals("punct"));
+          if (k.equals("bin") && !unary) x += size * 0.22 * m;
+          if (k.equals("rel") && !prev.equals("open")) x += size * 0.3 * m;
+          Box b = n.box(size, level);
+          bs.add(b);
+          xs.add(x);
+          x += b.w;
+          a = Math.max(a, b.a);
+          d = Math.max(d, b.d);
+          if (k.equals("bin") && !unary) x += size * 0.22 * m;
+          if (k.equals("rel")) x += size * 0.3 * m;
+          if (k.equals("punct")) x += size * 0.17;
+          if (k.equals("fn") && i + 1 < ns.size() && !ns.get(i + 1).kind.equals("open")) x += size * 0.12;
+          prev = unary ? "ord" : k.equals("fn") ? "ord" : k;
+        }
+        Box g = new Box() {
+          @Override void draw(java.awt.Graphics2D gr, double x0, double y) {
+            for (int i = 0; i < bs.size(); i++) bs.get(i).draw(gr, x0 + xs.get(i), y);
+          }
+        };
+        g.w = x;
+        g.a = a;
+        g.d = d;
+        return g;
+      }
+
+      @Override String plain() {
+        StringBuilder sb = new StringBuilder();
+        String prev = "start";
+        for (Node n : ns) {
+          boolean unary = n.kind.equals("bin") && (prev.equals("start") || prev.equals("bin") || prev.equals("rel") || prev.equals("open") || prev.equals("punct"));
+          sb.append(n.kind.equals("soft") ? " " : unary ? n.plain().trim() : n.plain());
+          if (!n.kind.equals("soft")) prev = unary ? "ord" : n.kind;
+        }
+        return sb.toString();
+      }
+    }
+
+    static String wrap(String p) {
+      p = p.trim();
+      return p.length() <= 1 || p.matches("-?[\\w.\u0080-\uFFFF]+") || p.matches("\\w*\\(.*\\)") && depthOk(p) ? p : "(" + p + ")";
+    }
+
+    static boolean depthOk(String p) {   // "(a)(b)" is not one bracket
+      int d = 0;
+      for (int i = 0; i < p.length(); i++) {
+        if (p.charAt(i) == '(') d++;
+        if (p.charAt(i) == ')' && --d == 0 && i < p.length() - 1) return false;
+      }
+      return true;
+    }
+
+    static float smaller(float size, int level) { return Math.max(9f, size * (level == 0 ? 0.88f : 0.8f)); }
+
+    static final class Frac extends Node {
+      final Node n, dn;
+
+      Frac(Node n, Node dn) {
+        this.n = n;
+        this.dn = dn;
+      }
+
+      @Override Box box(float size, int level) {
+        float s = smaller(size, level);
+        final Box nb = n.box(s, level + 1), db = dn.box(s, level + 1);
+        final double t = Math.max(1, size * 0.055), axis = size * 0.28, gap = size * 0.14, pad = size * 0.12;
+        Box b = new Box() {
+          @Override void draw(java.awt.Graphics2D g, double x, double y) {
+            nb.draw(g, x + (w - nb.w) / 2, y - axis - t / 2 - gap - nb.d);
+            db.draw(g, x + (w - db.w) / 2, y - axis + t / 2 + gap + db.a);
+            g.fill(new java.awt.geom.Rectangle2D.Double(x + pad / 2, y - axis - t / 2, w - pad, t));
+          }
+        };
+        b.w = Math.max(nb.w, db.w) + 2 * pad;
+        b.a = axis + t / 2 + gap + nb.d + nb.a;
+        b.d = Math.max(0, -axis + t / 2 + gap + db.a + db.d);
+        return b;
+      }
+
+      @Override String plain() { return wrap(n.plain()) + "/" + wrap(dn.plain()); }
+    }
+
+    static final class Sqrt extends Node {
+      final Node in;
+
+      Sqrt(Node in) { this.in = in; }
+
+      @Override Box box(float size, int level) {
+        final Box ib = in.box(size, level);
+        final double t = Math.max(1, size * 0.055), gap = size * 0.12, rw = size * 0.6;
+        Box b = new Box() {
+          @Override void draw(java.awt.Graphics2D g, double x, double y) {
+            double top = y - a + t / 2, bottom = y + d - t;
+            java.awt.geom.Path2D.Double p = new java.awt.geom.Path2D.Double();
+            p.moveTo(x + rw * 0.05, y - (a - d) * 0.35);
+            p.lineTo(x + rw * 0.25, y - (a - d) * 0.42);
+            p.lineTo(x + rw * 0.55, bottom);
+            p.lineTo(x + rw * 0.95, top);
+            p.lineTo(x + w, top);
+            java.awt.Stroke old = g.getStroke();
+            g.setStroke(new java.awt.BasicStroke((float) t, java.awt.BasicStroke.CAP_BUTT, java.awt.BasicStroke.JOIN_MITER));
+            g.draw(p);
+            g.setStroke(old);
+            ib.draw(g, x + rw + size * 0.05, y);
+          }
+        };
+        b.w = rw + ib.w + size * 0.12;
+        b.a = ib.a + gap + t;
+        b.d = Math.max(ib.d, size * 0.12) + t;
+        return b;
+      }
+
+      @Override String plain() { return "sqrt(" + in.plain().trim() + ")"; }
+    }
+
+    static final class Scr extends Node {
+      final Node base;
+      Node sup, sub;
+
+      Scr(Node base) {
+        this.base = base;
+        kind = base.kind.equals("big") ? "big" : base.kind.equals("close") ? "close" : "ord";
+      }
+
+      @Override Box box(float size, int level) {
+        float s = Math.max(8f, size * 0.7f);
+        final Box bb = base.box(size, level);
+        final Box pb = sup == null ? null : sup.box(s, level + 1), sb = sub == null ? null : sub.box(s, level + 1);
+        boolean ital = base instanceof Sym && ((Sym) base).italic;
+        final double u = pb == null ? 0 : Math.max(size * 0.38, bb.a - pb.a * 0.55);
+        double v0 = sb == null ? 0 : Math.max(size * 0.2, sb.a - size * 0.28);
+        if (pb != null && sb != null) v0 = Math.max(v0, sb.a - u + pb.d + size * 0.1);   // the two scripts apart
+        final double v = v0, kern = ital ? size * 0.06 : 0;
+        Box b = new Box() {
+          @Override void draw(java.awt.Graphics2D g, double x, double y) {
+            bb.draw(g, x, y);
+            if (pb != null) pb.draw(g, x + bb.w + kern, y - u);
+            if (sb != null) sb.draw(g, x + bb.w - (ital ? size * 0.04 : 0), y + v);
+          }
+        };
+        b.w = bb.w + Math.max(pb == null ? 0 : pb.w + kern, sb == null ? 0 : sb.w) + size * 0.04;
+        b.a = Math.max(bb.a, pb == null ? 0 : u + pb.a);
+        b.d = Math.max(bb.d, sb == null ? 0 : v + sb.d);
+        return b;
+      }
+
+      @Override String plain() {
+        String s = base.plain().trim();
+        if (sub != null) s += "_" + wrap(sub.plain());
+        if (sup != null) s += "^" + wrap(sup.plain());
+        return s;
+      }
+    }
+
+    static final class Delim extends Node {
+      final String open, close;
+      final Node in;
+
+      Delim(String open, String close, Node in) {
+        this.open = open;
+        this.close = close;
+        this.in = in;
+      }
+
+      static String plainOf(String dl) { return dl.equals(".") ? "" : dl.equals("\u2308") ? "ceil(" : dl.equals("\u2309") ? ")" : dl; }
+
+      @Override Box box(float size, int level) {
+        final Box ib = in.box(size, level);
+        final double h = ib.a + ib.d;
+        if (h <= size * 1.05) {   // small: the ordinary characters
+          List<Node> ns = new ArrayList<>();
+          ns.add(new Sym(open.equals(".") ? "" : open, "", false, "open"));
+          ns.add(in);
+          ns.add(new Sym(close.equals(".") ? "" : close, "", false, "close"));
+          return new Group(ns).box(size, level);
+        }
+        final double ext = size * 0.12, top0 = ib.a + ext, bot0 = ib.d + ext, t = Math.max(1, size * 0.06);
+        final double ow = width(open, h, size), cw = width(close, h, size);
+        Box b = new Box() {
+          @Override void draw(java.awt.Graphics2D g, double x, double y) {
+            java.awt.Stroke old = g.getStroke();
+            g.setStroke(new java.awt.BasicStroke((float) t, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND));
+            shape(g, open, x, ow, y - top0, y + bot0, false);
+            ib.draw(g, x + ow, y);
+            shape(g, close, x + ow + ib.w, cw, y - top0, y + bot0, true);
+            g.setStroke(old);
+          }
+        };
+        b.w = ow + ib.w + cw;
+        b.a = top0;
+        b.d = bot0;
+        return b;
+      }
+
+      static double width(String dl, double h, float size) {
+        if (dl.equals(".")) return 0;
+        if (dl.equals("|")) return size * 0.3;
+        if (dl.equals("(") || dl.equals(")")) return size * 0.32 + h * 0.06;
+        return size * 0.38;
+      }
+
+      static void shape(java.awt.Graphics2D g, String dl, double x, double w, double top, double bot, boolean right) {
+        double l = right ? x + w * 0.85 : x + w * 0.15, r = right ? x + w * 0.15 : x + w * 0.85, mid = (top + bot) / 2, h = bot - top;
+        java.awt.geom.Path2D.Double p = new java.awt.geom.Path2D.Double();
+        switch (dl) {
+          case "(": case ")":
+            p.moveTo(r, top);
+            p.curveTo(l, top + h * 0.2, l, bot - h * 0.2, r, bot);
+            break;
+          case "[": case "]":
+            p.moveTo(r, top); p.lineTo(l, top); p.lineTo(l, bot); p.lineTo(r, bot);
+            break;
+          case "\u2308": case "\u2309":
+            p.moveTo(r, top); p.lineTo(l, top); p.lineTo(l, bot);
+            break;
+          case "{": case "}":
+            double m = (l + r) / 2;
+            p.moveTo(r, top);
+            p.quadTo(m, top, m, top + h * 0.12);
+            p.lineTo(m, mid - h * 0.1);
+            p.quadTo(m, mid, l, mid);
+            p.quadTo(m, mid, m, mid + h * 0.1);
+            p.lineTo(m, bot - h * 0.12);
+            p.quadTo(m, bot, r, bot);
+            break;
+          case "|":
+            p.moveTo(x + w / 2, top); p.lineTo(x + w / 2, bot);
+            break;
+          default:
+            return;
+        }
+        g.draw(p);
+      }
+
+      @Override String plain() { return plainOf(open) + in.plain().trim() + plainOf(close); }
+    }
+
+    static final class Dot extends Node {
+      final Node base;
+
+      Dot(Node base) { this.base = base; }
+
+      @Override Box box(float size, int level) {
+        final Box bb = base.box(size, level);
+        final double r = Math.max(1.1, size * 0.065);
+        Box b = new Box() {
+          @Override void draw(java.awt.Graphics2D g, double x, double y) {
+            bb.draw(g, x, y);
+            g.fill(new java.awt.geom.Ellipse2D.Double(x + bb.w * 0.58 - r, y - bb.a - size * 0.16 - r, 2 * r, 2 * r));
+          }
+        };
+        b.w = bb.w;
+        b.a = bb.a + size * 0.2;
+        b.d = bb.d;
+        return b;
+      }
+
+      @Override String plain() { return base.plain().trim() + "dot"; }
+    }
+
+    static final class Txt extends Node {
+      final String t;
+
+      Txt(String t) { this.t = t; }
+
+      @Override Box box(float size, int level) { return text(t, size, false); }
+
+      @Override String plain() { return t; }
+    }
+
+    /** The reader of the formula text. */
+    static final class P {
+      final String s;
+      int k;
+
+      P(String s) { this.s = s; }
+
+      Group list(boolean brace, boolean left) {
+        List<Node> out = new ArrayList<>();
+        while (k < s.length()) {
+          char c = s.charAt(k);
+          if (c == '}' && brace) { k++; break; }
+          if (left && s.startsWith("\\right", k)) break;
+          if (c == '^' || c == '_') {
+            k++;
+            Node arg = arg();
+            Node last = out.isEmpty() ? new Txt("") : out.remove(out.size() - 1);
+            Scr sc = last instanceof Scr && (c == '^' ? ((Scr) last).sup : ((Scr) last).sub) == null ? (Scr) last : new Scr(last);
+            if (c == '^') sc.sup = arg; else sc.sub = arg;
+            out.add(sc);
+            continue;
+          }
+          out.add(atom(false));
+        }
+        return new Group(out);
+      }
+
+      Node arg() {
+        while (k < s.length() && s.charAt(k) == ' ') k++;
+        if (k < s.length() && s.charAt(k) == '{') {
+          k++;
+          return list(true, false);
+        }
+        return atom(true);
+      }
+
+      Node atom(boolean single) {
+        char c = s.charAt(k);
+        if (c == ' ') {
+          while (k < s.length() && s.charAt(k) == ' ') k++;
+          Gap g = new Gap(0);
+          g.kind = "soft";
+          return g;
+        }
+        if (c == '{') {
+          k++;
+          return list(true, false);
+        }
+        if (c == '\\') return command();
+        if (Character.isLetter(c)) {
+          int e = k + 1;
+          if (!single) while (e < s.length() && Character.isLetter(s.charAt(e))) e++;
+          String w = s.substring(k, e);
+          k = e;
+          return new Sym(w, w, w.length() == 1, w.length() == 1 ? "var" : "ord");
+        }
+        if (Character.isDigit(c) || c == '.' && k + 1 < s.length() && Character.isDigit(s.charAt(k + 1))) {
+          int e = k + 1;
+          if (!single) while (e < s.length() && (Character.isDigit(s.charAt(e)) || s.charAt(e) == '.')) e++;
+          String w = s.substring(k, e);
+          k = e;
+          return new Sym(w, w, false, "ord");
+        }
+        k++;
+        switch (c) {
+          case '+': return new Sym("+", "+", false, "bin");
+          case '-': return new Sym("\u2212", "-", false, "bin");
+          case '=': case '<': case '>': return new Sym(String.valueOf(c), String.valueOf(c), false, "rel");
+          case ',': case ';': case ':': return new Sym(String.valueOf(c), String.valueOf(c), false, "punct");
+          case '(': case '[': return new Sym(String.valueOf(c), String.valueOf(c), false, "open");
+          case ')': case ']': return new Sym(String.valueOf(c), String.valueOf(c), false, "close");
+          default: return new Sym(String.valueOf(c), String.valueOf(c), false, "ord");
+        }
+      }
+
+      String name() {
+        k++;   // the backslash
+        int e = k;
+        while (e < s.length() && Character.isLetter(s.charAt(e))) e++;
+        if (e == k) e = Math.min(s.length(), k + 1);
+        String n = s.substring(k, e);
+        k = e;
+        return n;
+      }
+
+      String raw() {   // {text} as it is
+        while (k < s.length() && s.charAt(k) == ' ') k++;
+        if (k >= s.length() || s.charAt(k) != '{') return "";
+        int e = s.indexOf('}', k);
+        String t = s.substring(k + 1, e);
+        k = e + 1;
+        return t;
+      }
+
+      String delim() {
+        while (k < s.length() && s.charAt(k) == ' ') k++;
+        if (s.charAt(k) == '\\') {
+          String n = name();
+          return n.equals("lceil") ? "\u2308" : n.equals("rceil") ? "\u2309" : n;
+        }
+        return String.valueOf(s.charAt(k++));
+      }
+
+      Node command() {
+        String n = name();
+        switch (n) {
+          case "frac": { Node a = arg(); return new Frac(a, arg()); }
+          case "sqrt": return new Sqrt(arg());
+          case "dot": return new Dot(arg());
+          case "text": case "mathrm": return new Txt(raw());
+          case "left": {
+            String o = delim();
+            Node in = list(false, true);
+            if (s.startsWith("\\right", k)) k += 6;
+            return new Delim(o, delim(), in);
+          }
+          case ",": return new Gap(0.17);
+          case ";": return new Gap(0.28);
+          case " ": return new Gap(0.25);
+          case "quad": return new Gap(1.0);
+          default:
+            String[] c = CMD.get(n);
+            if (c == null) return new Txt(n);
+            return new Sym(c[0], c[1], c[2].equals("var"), c[2]);
+        }
+      }
+    }
+
+    static Node parse(String tex) { return new P(tex).list(false, false); }
+
+    /** The formula as plain text (a / b, sqrt(x), x^2, rho, eps ...). */
+    static String plain(String tex) {
+      List<String> eqs = new ArrayList<>();
+      for (String e : tex.split(" ; ")) eqs.add(parse(e).plain().replaceAll(" +", " ").replace("( ", "(").replace(" )", ")").trim());
+      return String.join(" ; ", eqs);
+    }
+
+    /** One equation drawn, as an icon (for a styled text). */
+    static javax.swing.Icon icon(String tex, final float size) {
+      final Box b = parse(tex).box(size, 0);
+      final int pad = 3;
+      return new javax.swing.Icon() {
+        @Override public int getIconWidth() { return (int) Math.ceil(b.w) + 2 * pad; }
+        @Override public int getIconHeight() { return (int) Math.ceil(b.a + b.d) + 2 * pad; }
+        @Override public void paintIcon(java.awt.Component c, java.awt.Graphics g0, int x, int y) {
+          java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+          g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+          g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+          g.setRenderingHint(java.awt.RenderingHints.KEY_FRACTIONALMETRICS, java.awt.RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+          g.setColor(INK);
+          b.draw(g, x + pad, y + pad + b.a);
+          g.dispose();
+        }
+      };
+    }
+  }
+
   static final class Styled {
     static final java.awt.Color GREY = new java.awt.Color(0x77, 0x77, 0x77), AMBER = new java.awt.Color(0xFF, 0xF4, 0xD6),
         HEAD = new java.awt.Color(0xE8, 0xED, 0xF3), ZEBRA = new java.awt.Color(0xF6, 0xF8, 0xFA);
@@ -3616,12 +4212,35 @@ public class SimKitCalc extends StarMacro {
         java.awt.Color bg = i++ % 2 == 1 ? ZEBRA : null;
         add(d, it.key + "\t", style(12, false, java.awt.Color.BLACK, bg));
         add(d, Core.g(it.v), style(12, true, java.awt.Color.BLACK, bg));
-        add(d, "\t" + (it.unit.equals("-") ? "" : it.unit) + "\t", style(12, false, java.awt.Color.BLACK, bg));
+        add(d, "\t" + showUnit(it.unit) + "\t", style(12, false, java.awt.Color.BLACK, bg));
         add(d, it.desc + "\n", style(12, false, new java.awt.Color(0x44, 0x44, 0x44), bg));
       }
       tabs(d, start, null);
       add(d, "\n", style(6, false, null, null));
+      if (!r.tex.isEmpty()) {
+        add(d, "Formula\n", style(11, true, GREY, null));
+        int f0 = d.getLength();
+        for (String t : r.tex) {
+          for (String eq : t.split(" ; ")) {
+            javax.swing.text.SimpleAttributeSet ic = new javax.swing.text.SimpleAttributeSet();
+            try {
+              javax.swing.text.StyleConstants.setIcon(ic, TeX.icon(eq, 17f));
+              add(d, " ", ic);
+            } catch (Throwable x) {   // never lose the result for a drawing problem
+              add(d, TeX.plain(eq), style(12, false, java.awt.Color.DARK_GRAY, null));
+            }
+            add(d, "        ", style(12, false, null, null));   // equations side by side, wrapped like words
+          }
+        }
+        add(d, "\n", style(12, false, null, null));
+        javax.swing.text.SimpleAttributeSet ind = new javax.swing.text.SimpleAttributeSet();
+        javax.swing.text.StyleConstants.setLeftIndent(ind, 14);
+        javax.swing.text.StyleConstants.setSpaceBelow(ind, 3);
+        d.setParagraphAttributes(f0, d.getLength() - f0, ind, false);
+        add(d, "\n", style(4, false, null, null));
+      }
       for (String l : r.lines) {
+        if (!r.tex.isEmpty() && l.startsWith("Formula:")) continue;   // drawn above
         int c = l.indexOf(':');
         if (!l.isEmpty() && c > 0 && c < 10) {
           add(d, l.substring(0, c + 1), style(11, true, GREY, null));

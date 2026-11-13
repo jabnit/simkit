@@ -7,7 +7,7 @@
 //                     The normal STAR-CCM+ Save (Ctrl+S) keeps saving the current version file as usual.
 //   * Check         : a short list of things that would spoil a run (PASS / WARN / FAIL); changes nothing
 //   * Export results: monitor plots to CSV, scenes to PNG, report values to CSV in the case results folder
-//   Other: Calculators (lib/generic/SimKitCalc.java), Compare versions, Case tracker, Guideline, About, ...
+//   Other: Calculators (lib/generic/SimKitCalc.java), Case tracker, Guideline, About, ...
 //   Nothing in the sim is renamed, re-organised or parameterised by SimKit. The label in the file name is free
 //   text chosen by the user (e.g. cold, react, mesh2) and is optional.
 //
@@ -102,7 +102,6 @@ public class SimKit extends StarMacro {
   static final String[] AUDIT_HEADER = {"section", "object_path", "property", "value"};
   static final String[] AUDIT_SECTIONS = {"VERSION", "PARAMETERS", "CONTINUA", "REGIONS", "BOUNDARIES",
       "INTERFACES", "MESH", "SOLVERS", "STOPPING", "REPORTS"};
-  static final String[] DIFF_HEADER = {"change", "section", "object_path", "property", "old_value", "new_value"};
   static final String[] CHECK_HEADER = {"level", "check", "detail"};
   static final String[] CASE_LIST_COLS = {"case_id", "description", "configuration", "parent_case", "latest_file",
       "last_saved", "created", "created_by"};
@@ -127,7 +126,7 @@ public class SimKit extends StarMacro {
   static final String[][] DEFAULT_PROJECTS = {{"ISO", "ISO 2685 burner", ""}};
 
   static final String[] TOOL_NAMES = {"", "New case", "Save new version", "Check", "Export results",
-      "Calculators", "Compare versions", "Case tracker", "Guideline", "About", "Standard reports", "",
+      "Calculators", "", "Case tracker", "Guideline", "About", "Standard reports", "",
       "Mesh study", "Standard scenes", "Case report"};
   static final String[] TOOL_HELP = {"",
       "Creates the case folder and saves this sim as <CASEID>_v01.sim (from a case: a new case with this one as parent)",
@@ -136,7 +135,7 @@ public class SimKit extends StarMacro {
       "Lists what would spoil a run (mesh, continua, stopping criteria, names); changes nothing",
       "Writes monitor plots (CSV), scenes (PNG) and report values (CSV) to the case results folder",
       "y+ and prism layers, Reynolds, time step, properties, ... (values ready to paste in STAR-CCM+)",
-      "Differences between this version and the previous one, the parent case or any record",
+      "",
       "Every version of every case in the folder: ID, comment, status, based on, description; set a status "
           + "and write comments (saved in the case folders); export to CSV for Google Sheets",
       "Opens the team guideline", "SimKit version, share and STAR-CCM+ release",
@@ -301,7 +300,6 @@ public class SimKit extends StarMacro {
         case 3: toolCheck(); break;
         case 4: toolExport(); break;
         case 5: toolCalc(); break;
-        case 6: toolCompare(); break;
         case 7: toolTracker(); break;
         case 8: toolLinks(); break;
         case 9: toolAbout(); break;
@@ -364,20 +362,20 @@ public class SimKit extends StarMacro {
    *  A window left open by an earlier play is closed first (it may belong to another simulation). */
   /** Main window layout: one column per stage of the work; each button with a one-line explanation under it. */
   static final Object[][] SECTIONS = {
-      {"Case", new int[] {2, 7, 6}},
+      {"Case", new int[] {2, 7}},
       {"Set-up", new int[] {3, 10, 13, 12}},
       {"Results", new int[] {4, 14}},
       {"Tools", new int[] {5, 8, 9}}};
   static final String[] TOOL_SHORT = {"",
       "Start a case folder (v01)", "Next version, or a new case", "Check before running", "Plots, images, values, averages",
-      "y+, Re, time step, properties, GCI", "What changed in the set-up", "All versions, comments, status",
+      "y+, Re, time step, properties, GCI", "", "All versions, comments, status",
       "Team guideline", "Version and kit location", "Mass balance, p, T, y+ ...", "",
       "Parametrize, or mesh levels", "Same views for every case", "One page for reviews"};
 
   JLabel headTitle, headSub, headPath, statusLine;
   JButton detailsButton;
   /** Tools that need the open sim to be a SimKit case (greyed otherwise). */
-  static final Set<Integer> NEEDS_CASE = new HashSet<>(Arrays.asList(4, 6, 14));
+  static final Set<Integer> NEEDS_CASE = new HashSet<>(Arrays.asList(4, 14));
   final Map<Integer, JButton> buttonById = new HashMap<>();
 
   void openWindow() {
@@ -960,7 +958,6 @@ public class SimKit extends StarMacro {
   void saveNextVersion(CaseInfo c, String label) throws IOException {
     int v = nextVersion(c);
     CaseInfo n = c.withVersion(label, v);
-    Path prevAudit = c.auditFile();
     sim.saveState(Fs.guard(n.simFile).toString());
     log.line("new version " + versionId(n) + " = " + n.simFile.getFileName() + " (based on " + versionId(c) + ", which stays as it is)."
         + "\nYou now work in " + n.simFile.getFileName() + "; Ctrl+S saves it as usual.");
@@ -968,13 +965,7 @@ public class SimKit extends StarMacro {
     putLast(id, n);
     id.put("forked_v" + Fmt.two(n.version), versionId(c));
     writeIdentity(n, id);
-    Audit a = writeAudit(n);
-    if (Files.isRegularFile(prevAudit)) {
-      Path diff = n.sub("record").resolve("changes_" + c.simBase() + "_to_" + n.simBase() + ".csv");
-      log.line("set-up changes since " + c.simBase() + ": " + diffAudits(prevAudit, a.file, diff));
-    } else {
-      log.line("no record of " + c.simBase() + " to compare with (list of changes skipped)");
-    }
+    writeAudit(n);
     updateCaseList(n.casesDir);
     result("saved " + n.simFile.getFileName() + "  (the previous file is unchanged)");
   }
@@ -1320,6 +1311,55 @@ public class SimKit extends StarMacro {
     };
   }
 
+  /** The standard template of a comment: four headings, each with an empty bullet. */
+  static final String COMMENT_TEMPLATE = "**Goal:**\n- \n**Changes:**\n- \n**Result:**\n- \n**Next:**\n- ";
+
+  /** Formatting bar: 0 bold, 1 italic, 2 underline, 3 colour (with a menu), 4 list (with a menu), 5 template. */
+  static javax.swing.Icon fmtIcon(final int kind) {
+    return new javax.swing.Icon() {
+      @Override public int getIconWidth() { return kind >= 3 ? 26 : 18; }
+      @Override public int getIconHeight() { return 18; }
+      @Override public void paintIcon(java.awt.Component c, java.awt.Graphics g0, int x, int y) {
+        java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+        g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.translate(x, y);
+        boolean on = c == null || c.isEnabled();
+        java.awt.Color ink = on ? new java.awt.Color(0x33, 0x3B, 0x45) : new java.awt.Color(0xC4, 0xCA, 0xD2);
+        g.setColor(ink);
+        g.setStroke(new java.awt.BasicStroke(1.4f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND));
+        String letter = kind == 0 ? "B" : kind == 1 ? "I" : kind == 2 ? "U" : kind == 3 ? "A" : null;
+        if (letter != null) {
+          Font f = kind == 1 ? new Font(Font.SERIF, Font.ITALIC | Font.BOLD, 15) : new Font(Font.SANS_SERIF, Font.BOLD, kind == 0 ? 14 : 13);
+          if (kind == 2) f = new Font(Font.SANS_SERIF, Font.PLAIN, 13);
+          g.setFont(f);
+          java.awt.FontMetrics fm = g.getFontMetrics();
+          g.drawString(letter, (18 - fm.stringWidth(letter)) / 2, kind == 3 ? 12 : 14);
+          if (kind == 2) g.drawLine(5, 16, 13, 16);
+          if (kind == 3) {   // the colour bar under the A
+            g.setColor(on ? new java.awt.Color(0xC0, 0x39, 0x2B) : ink);
+            g.fillRect(3, 14, 12, 3);
+          }
+        } else if (kind == 4) {   // three items: dot and line
+          for (int k = 0; k < 3; k++) {
+            g.fillOval(2, 3 + 5 * k, 3, 3);
+            g.drawLine(8, 4 + 5 * k, 16, 4 + 5 * k);
+          }
+        } else {   // template: a page with lines
+          g.drawPolyline(new int[] {11, 4, 4, 14, 14, 11, 11, 14}, new int[] {2, 2, 16, 16, 5, 2, 5, 5}, 8);
+          g.drawLine(7, 8, 11, 8);
+          g.drawLine(7, 11, 11, 11);
+          g.drawLine(7, 14, 9, 14);
+        }
+        if (kind >= 3) {   // a small arrow: opens a menu
+          g.setColor(ink);
+          g.fillPolygon(new int[] {20, 25, 22}, new int[] {8, 8, 11}, 3);
+        }
+        g.dispose();
+      }
+    };
+  }
+
   /** Case row: fold arrow, then the pin star (filled amber = pinned to the top, pale outline = not pinned). */
   static javax.swing.Icon caseIcon(final boolean open, final boolean pinned) {
     final javax.swing.Icon arrow = trackerIcon(open ? 1 : 0);
@@ -1406,24 +1446,30 @@ public class SimKit extends StarMacro {
     final javax.swing.JCheckBox showHidden = new javax.swing.JCheckBox("Show hidden");
     final JLabel summary = new JLabel(), message = new JLabel(" "), folderName = new JLabel(), headline = new JLabel(" "),
         areaLabel = new JLabel("Comment");
-    final JTextArea area = new JTextArea(5, 40);         // the box in the "view, then edit" way of writing
-    final javax.swing.JTextPane live = new javax.swing.JTextPane();   // the box when formatted while typing (trial)
-    boolean liveMode = !"off".equals(Env.pref("trackerLiveFormat"));
-    final javax.swing.JCheckBox liveBox = new javax.swing.JCheckBox("Format while typing (trial)");
-    boolean restyling = false;
-    boolean detailsRight = !"below".equals(Env.pref("trackerDetails"));
+    /** The comment box: shows the formatting itself, no marks (the file keeps the marks: **bold** ...). */
+    final javax.swing.JTextPane live = new javax.swing.JTextPane() {
+      private static final long serialVersionUID = 1L;
+      @Override protected void paintComponent(java.awt.Graphics g) {
+        super.paintComponent(g);
+        if (getDocument().getLength() == 0 && !isFocusOwner() && !hint.isEmpty()) {   // what the empty box is for
+          g.setColor(new java.awt.Color(0xB8, 0xBE, 0xC6));
+          g.setFont(getFont().deriveFont(Font.ITALIC));
+          g.drawString(hint, getInsets().left, getInsets().top + g.getFontMetrics().getAscent());
+        }
+      }
+    };
+    String hint = "";
+    static final String COLOUR = "simkitColour";   // the colour name of a piece of text in the box
+    String liveLoaded = "", liveNorm = "";   // the text put in the box, and the box read back just after
+    final javax.swing.undo.UndoManager undo = new javax.swing.undo.UndoManager();
     javax.swing.JSplitPane split;
     JPanel details;
     JScrollPane tableScroll;
     int hoverRow = -1;
     final JPanel chips = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
-    final java.awt.Color hoverBg = new java.awt.Color(0xF2, 0xF6, 0xFC), markGrey = new java.awt.Color(0xB0, 0xB6, 0xBE);
-    final javax.swing.JEditorPane viewer = new javax.swing.JEditorPane();   // the comment, formatted
-    final java.awt.CardLayout cardLayout = new java.awt.CardLayout();
-    final JPanel cards = new JPanel(cardLayout), editPanel = new JPanel(new BorderLayout(0, 2));
+    final java.awt.Color hoverBg = new java.awt.Color(0xF2, 0xF6, 0xFC);
     boolean editing = false;
     final List<JButton> fmtButtons = new ArrayList<>();   // B, I, U, colour, lists: enabled when a single row is selected
-    JButton doneBtn;
     JPanel fmtBar;
     final JButton folderBtn = new JButton(actionIcon(1)), hideBtn = new JButton(actionIcon(4)),
         simBtn = new JButton("Open in STAR-CCM+..."), resultsBtn = new JButton(actionIcon(0)), copyBtn = new JButton(actionIcon(2));
@@ -1562,116 +1608,93 @@ public class SimKit extends StarMacro {
       showHidden.setToolTipText("Hidden cases and versions (their files are kept) are shown in grey");
       showHidden.addActionListener(e -> rebuild());
 
-      area.setLineWrap(true);
-      area.setWrapStyleWord(true);
-      area.setFont(table.getFont());
-      area.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
-      area.addFocusListener(new java.awt.event.FocusAdapter() {
-        @Override public void focusLost(java.awt.event.FocusEvent e) {
-          java.awt.Component to = e.getOppositeComponent();
-          if (e.isTemporary() || to != null && (javax.swing.SwingUtilities.isDescendingFrom(to, editPanel)
-              || fmtBar != null && javax.swing.SwingUtilities.isDescendingFrom(to, fmtBar))) flushArea();
-          else endEdit();
-        }
-      });
       live.setFont(table.getFont());
       live.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
-      live.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-        @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { javax.swing.SwingUtilities.invokeLater(() -> restyle()); }
-        @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { javax.swing.SwingUtilities.invokeLater(() -> restyle()); }
-        @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { }
-      });
+      live.getDocument().addUndoableEditListener(undo);
       live.addFocusListener(new java.awt.event.FocusAdapter() {
-        @Override public void focusGained(java.awt.event.FocusEvent e) { if (liveMode && areaKey != null) editing = true; }
+        @Override public void focusGained(java.awt.event.FocusEvent e) { if (areaKey != null) editing = true; live.repaint(); }
         @Override public void focusLost(java.awt.event.FocusEvent e) {
           flushArea();
           if (!e.isTemporary()) editing = false;
         }
       });
-      for (javax.swing.text.JTextComponent ed : new javax.swing.text.JTextComponent[] {area, live}) {
-        bind(ed, "ctrl B", () -> wrap("**"));
-        bind(ed, "ctrl I", () -> wrap("*"));
-        bind(ed, "ctrl U", () -> wrap("__", "__"));
-        bind(ed, "ESCAPE", this::endEdit);
-        bind(ed, "ENTER", this::newLine);
-      }
-      viewer.setContentType("text/html");
-      viewer.setEditable(false);
-      viewer.putClientProperty(javax.swing.JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
-      viewer.setFont(table.getFont());
-      viewer.setBorder(BorderFactory.createEmptyBorder(2, 6, 2, 6));
-      viewer.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.TEXT_CURSOR));
-      viewer.setToolTipText("Click to edit");
-      viewer.addMouseListener(new java.awt.event.MouseAdapter() {
-        @Override public void mouseClicked(java.awt.event.MouseEvent e) { startEdit(); }
-      });
+      bind(live, "ctrl B", () -> style(javax.swing.text.StyleConstants.Bold));
+      bind(live, "ctrl I", () -> style(javax.swing.text.StyleConstants.Italic));
+      bind(live, "ctrl U", () -> style(javax.swing.text.StyleConstants.Underline));
+      bind(live, "ESCAPE", this::endEdit);
+      bind(live, "ENTER", this::newLine);
+      bind(live, "SPACE", this::space);
+      bind(live, "ctrl Z", () -> { if (undo.canUndo()) undo.undo(); });
+      bind(live, "ctrl Y", () -> { if (undo.canRedo()) undo.redo(); });
       // the formatting bar is always shown; used on the formatted text, it first opens the box for writing
       JPanel bar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));
       final javax.swing.JPopupMenu colours = new javax.swing.JPopupMenu();
       for (Map.Entry<String, String> c : Md.COLORS.entrySet()) {
         javax.swing.JMenuItem mi = new javax.swing.JMenuItem("<html><font color='" + c.getValue() + "'>&#9632;&nbsp;"
             + c.getKey().substring(0, 1).toUpperCase(Locale.ROOT) + c.getKey().substring(1) + "</font></html>");
-        mi.addActionListener(e -> fmt(() -> wrap("[" + c.getKey() + "]", "[/]")));
+        mi.addActionListener(e -> fmt(() -> colour(c.getKey())));
         colours.add(mi);
       }
-      Object[][] tools = {{"B", "Bold: **text** (Ctrl+B)", (Runnable) () -> fmt(() -> wrap("**", "**"))},
-          {"I", "Italic: *text* (Ctrl+I)", (Runnable) () -> fmt(() -> wrap("*", "*"))},
-          {"U", "Underline: __text__ (Ctrl+U)", (Runnable) () -> fmt(() -> wrap("__", "__"))},
-          {"|", null, null},
-          {"A \u25BE", "Text colour: [red]text[/]  (red, orange, green, blue, purple, grey)", null},
-          {"|", null, null},
-          {"\u2022 List", "Bullet list: lines starting with - ", (Runnable) () -> fmt(() -> list(false))},
-          {"1. List", "Numbered list: lines starting with 1. 2. 3.", (Runnable) () -> fmt(() -> list(true))},
-          {"|", null, null},
-          {"Template", "Insert Goal / Changes / Result / Next", (Runnable) () -> fmt(this::template)},
-          {"Done", "Save and show the formatted text (Esc)", (Runnable) this::endEdit}};
+      javax.swing.JMenuItem noColour = new javax.swing.JMenuItem("No colour");
+      noColour.addActionListener(e -> fmt(() -> colour(null)));
+      colours.addSeparator();
+      colours.add(noColour);
+      final javax.swing.JPopupMenu lists = new javax.swing.JPopupMenu();
+      Object[][] listItems = {{"\u2022  Bullets", Boolean.FALSE}, {"1.  Numbered", Boolean.TRUE}, {"No list", null}};
+      for (Object[] li : listItems) {
+        javax.swing.JMenuItem mi = new javax.swing.JMenuItem((String) li[0]);
+        final Boolean numbered = (Boolean) li[1];
+        mi.addActionListener(e -> fmt(() -> list(numbered)));
+        if (numbered == null) lists.addSeparator();
+        lists.add(mi);
+      }
+      final javax.swing.JPopupMenu templates = new javax.swing.JPopupMenu();
+      javax.swing.JMenuItem tIns = new javax.swing.JMenuItem("Insert template");
+      tIns.addActionListener(e -> fmt(this::template));
+      javax.swing.JMenuItem tMine = new javax.swing.JMenuItem("Use this comment as my template");
+      tMine.setToolTipText("Write the template in the box (headings, bullets, colours), then choose this. For you only.");
+      tMine.addActionListener(e -> fmt(this::saveTemplate));
+      javax.swing.JMenuItem tBack = new javax.swing.JMenuItem("Back to the standard template");
+      tBack.addActionListener(e -> {
+        Env.setPref("trackerTemplate", "");
+        say("Template: the standard one again", grey);
+      });
+      templates.add(tIns);
+      templates.addSeparator();
+      templates.add(tMine);
+      templates.add(tBack);
+      // icon buttons in groups, as in a word processor: B I U A | list | template
+      Object[][] tools = {{0, "Bold (Ctrl+B)", (Runnable) () -> fmt(() -> style(javax.swing.text.StyleConstants.Bold))},
+          {1, "Italic (Ctrl+I)", (Runnable) () -> fmt(() -> style(javax.swing.text.StyleConstants.Italic))},
+          {2, "Underline (Ctrl+U)", (Runnable) () -> fmt(() -> style(javax.swing.text.StyleConstants.Underline))},
+          {3, "Text colour", colours},
+          {-1, null, null},
+          {4, "List: bullets or numbered (or type - and a space at the start of a line)", lists},
+          {-1, null, null},
+          {5, "Template: insert it, or make this comment your own template", templates}};
       for (Object[] t : tools) {
-        if (t[0].equals("|")) {   // a thin line between groups
+        if ((Integer) t[0] < 0) {   // a thin line between groups
           javax.swing.JSeparator sep = new javax.swing.JSeparator(javax.swing.SwingConstants.VERTICAL);
-          sep.setPreferredSize(new java.awt.Dimension(7, 18));
+          sep.setPreferredSize(new java.awt.Dimension(9, 18));
           bar.add(sep);
           continue;
         }
-        final JButton b = new JButton((String) t[0]);
-        b.setFocusable(false);
+        final JButton b = new JButton(fmtIcon((Integer) t[0]));
         b.setToolTipText((String) t[1]);
-        b.setMargin(new java.awt.Insets(1, 7, 1, 7));
+        b.setMargin(new java.awt.Insets(2, 3, 2, 3));
         flat(b);
-        if (t[0].equals("B")) b.setFont(b.getFont().deriveFont(Font.BOLD));
-        if (t[0].equals("I")) b.setFont(b.getFont().deriveFont(Font.ITALIC));
-        if (t[0].equals("U")) {
-          Map<java.awt.font.TextAttribute, Object> ul = new HashMap<>();
-          ul.put(java.awt.font.TextAttribute.UNDERLINE, java.awt.font.TextAttribute.UNDERLINE_ON);
-          b.setFont(b.getFont().deriveFont(ul));
-        }
-        if (t[2] == null) {   // colour: a small menu of colours
-          b.setForeground(new java.awt.Color(0xB0, 0x20, 0x20));
-          b.addActionListener(e -> colours.show(b, 0, b.getHeight()));
+        if (t[2] instanceof javax.swing.JPopupMenu) {
+          final javax.swing.JPopupMenu menu = (javax.swing.JPopupMenu) t[2];
+          b.addActionListener(e -> menu.show(b, 0, b.getHeight()));
         } else {
           final Runnable run = (Runnable) t[2];
           b.addActionListener(e -> run.run());
         }
-        if (t[0].equals("Done")) {
-          bar.add(javax.swing.Box.createHorizontalStrut(12));
-          doneBtn = b;
-        } else {
-          fmtButtons.add(b);
-        }
+        fmtButtons.add(b);
         bar.add(b);
       }
-      liveBox.setSelected(liveMode);
-      liveBox.setFocusable(false);
-      liveBox.setForeground(grey);
-      liveBox.setToolTipText("On: one box, formatted as you type (marks in grey). Off: the formatted text, click it to write.");
-      liveBox.addActionListener(e -> setLiveMode(liveBox.isSelected()));
       areaLabel.setToolTipText("Saved when you leave the box");
-      editPanel.add(new JScrollPane(area), BorderLayout.CENTER);
       fmtBar = bar;
-      JScrollPane viewScroll = new JScrollPane(viewer);
-      viewScroll.getViewport().setBackground(java.awt.Color.WHITE);
-      cards.add(viewScroll, "view");
-      cards.add(editPanel, "edit");
-      cards.add(new JScrollPane(live), "live");
       folderBtn.addActionListener(e -> openFolder());
       simBtn.addActionListener(e -> openSelected());
       resultsBtn.addActionListener(e -> openResults());
@@ -1724,18 +1747,8 @@ public class SimKit extends StarMacro {
       topLeft.add(statusFilter);
       topLeft.add(showHidden);
       summary.setForeground(grey);
-      final javax.swing.JCheckBox rightBox = new javax.swing.JCheckBox("Details on the right (trial)", detailsRight);
-      rightBox.setFocusable(false);
-      rightBox.setForeground(grey);
-      rightBox.addActionListener(e -> {
-        detailsRight = rightBox.isSelected();
-        Env.setPref("trackerDetails", detailsRight ? "right" : "below");
-        layoutDetails();
-      });
       JPanel topRight = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 10, 0));
       topRight.add(summary);
-      topRight.add(liveBox);
-      topRight.add(rightBox);
       JPanel top = new JPanel(new BorderLayout());
       top.add(topLeft, BorderLayout.WEST);
       top.add(topRight, BorderLayout.EAST);
@@ -1759,7 +1772,7 @@ public class SimKit extends StarMacro {
       areaHead.add(areaLabel, BorderLayout.NORTH);
       areaHead.add(fmtBar, BorderLayout.SOUTH);
       areaBox.add(areaHead, BorderLayout.NORTH);
-      areaBox.add(cards, BorderLayout.CENTER);
+      areaBox.add(new JScrollPane(live), BorderLayout.CENTER);
       details.add(areaBox, BorderLayout.CENTER);
       details.setMinimumSize(new java.awt.Dimension(360, 160));
 
@@ -1799,19 +1812,16 @@ public class SimKit extends StarMacro {
       keyOn(filter, "ESCAPE", () -> { filter.setText(""); table.requestFocusInWindow(); });
       reload();
       if (openId != null) jumpTo(openId);
-      cardLayout.show(cards, liveMode ? "live" : "view");
-      if (doneBtn != null) doneBtn.setVisible(!liveMode);
       w.pack();
       layoutDetails();
     }
 
-    /** Details on the right (table left, comment box the full height) or below the table; kept in the preferences. */
+    /** Details on the right of the table (the comment box the full height). */
     void layoutDetails() {
       if (split == null) return;
-      split.setOrientation(detailsRight ? javax.swing.JSplitPane.HORIZONTAL_SPLIT : javax.swing.JSplitPane.VERTICAL_SPLIT);
-      split.setResizeWeight(detailsRight ? 0.6 : 1.0);
-      tableScroll.setPreferredSize(detailsRight ? new java.awt.Dimension(860, 560) : new java.awt.Dimension(1250, 400));
-      details.setPreferredSize(detailsRight ? new java.awt.Dimension(500, 560) : new java.awt.Dimension(1250, 250));
+      split.setResizeWeight(0.6);
+      tableScroll.setPreferredSize(new java.awt.Dimension(860, 560));
+      details.setPreferredSize(new java.awt.Dimension(500, 560));
       split.resetToPreferredSizes();
       split.revalidate();
     }
@@ -1957,10 +1967,7 @@ public class SimKit extends StarMacro {
       try {
         setIdentityKey(dir, caseOf(r[COL_ID]), key + "_v" + verOf(r[COL_ID]), value);
         r[col] = value;
-        if (col == COL_COMMENT && r[COL_ID].equals(areaKey)) {   // else the details box would put the old text back
-          if (!area.getText().equals(value)) area.setText(value);
-          if (!txt(live).equals(value)) live.setText(value);
-        }
+        if (col == COL_COMMENT && r[COL_ID].equals(areaKey) && !value.equals(liveMd())) setLive(value);   // else the box would put the old text back
         afterSave("Saved: " + key + " of " + r[COL_ID]);
       } catch (Throwable t) {
         say("NOT saved (" + key + " of " + r[COL_ID] + "): " + reason(t), red);
@@ -1972,10 +1979,7 @@ public class SimKit extends StarMacro {
       try {
         setIdentityKey(dir, caseId, "description", value);
         for (String[] r : byCase.get(caseId)) r[COL_DESC] = value;
-        if (("case:" + caseId).equals(areaKey)) {
-          if (!area.getText().equals(value)) area.setText(value);
-          if (!txt(live).equals(value)) live.setText(value);
-        }
+        if (("case:" + caseId).equals(areaKey) && !value.equals(liveMd())) setLive(value);
         afterSave("Saved: description of " + caseId);
         updateCaseList(dir);
       } catch (Throwable t) {
@@ -2019,11 +2023,11 @@ public class SimKit extends StarMacro {
       String key = null, text = "";
       if (sel.isEmpty()) {
         headline.setText("Select a case or a version to see its details");
-        areaLabel.setText("Comment");
+        areaLabel.setText("Comments");
       } else if (sel.size() > 1) {
         headline.setText("<html>" + sel.size() + " rows selected&nbsp;&nbsp;<font color='#6B7580'>right-click: set their status, "
             + "copy their references</font></html>");
-        areaLabel.setText("Comment");
+        areaLabel.setText("Comments");
       } else if (sel.get(0).isCase()) {
         Item it = sel.get(0);
         Map<String, String> id = ids.getOrDefault(it.caseId, new HashMap<>());
@@ -2035,7 +2039,7 @@ public class SimKit extends StarMacro {
         if (caseHidden(it.caseId)) bits.add("hidden");
         headline.setText("<html>" + html(it.caseId) + "<br><font color='#6B7580'>" + html(String.join("  ·  ", bits))
             + "</font></html>");
-        areaLabel.setText("Description of the case (the same for all its versions)");
+        areaLabel.setText("Description");
         key = it.key();
         text = description(it.caseId);
       } else {
@@ -2051,30 +2055,20 @@ public class SimKit extends StarMacro {
         if (hidden(r) || caseHidden(sel.get(0).caseId)) bits.add("hidden");
         headline.setText("<html>" + html(r[COL_ID]) + "<br><font color='#6B7580'>" + html(String.join("  ·  ", bits))
             + "</font></html>");
-        areaLabel.setText("Comment  (what you are doing with this version)");
+        areaLabel.setText("Comments");
         key = r[COL_ID];
         text = r[COL_COMMENT];
       }
       if (key == null || !key.equals(areaKey) || !editing) {   // never overwrite what is being typed
-        if (editing && (key == null || !key.equals(areaKey))) {
-          editing = false;
-          if (!liveMode) cardLayout.show(cards, "view");
-        }
+        if (editing && (key == null || !key.equals(areaKey))) editing = false;
         areaKey = key;
-        if (!area.getText().equals(text)) area.setText(text);
-        area.setEditable(key != null);
-        if (!txt(live).equals(text)) { live.setText(text); restyle(); }
+        if (!text.equals(liveMd())) setLive(text);
         live.setEditable(key != null);
         live.setBackground(key != null ? java.awt.Color.WHITE : new java.awt.Color(0xF4, 0xF5, 0xF7));
-        String empty = key == null ? "" : key.startsWith("case:") ? "Click here to describe the case" : "Click here to write a comment";
-        viewer.setText("<html><head><style>" + viewerCss() + "</style></head><body>"
-            + (text.trim().isEmpty() ? "<p class='empty'>" + empty + "</p>" : Md.toHtml(text)) + "</body></html>");
-        viewer.setCaretPosition(0);
-        viewer.setBackground(key != null ? java.awt.Color.WHITE : new java.awt.Color(0xF4, 0xF5, 0xF7));
-        viewer.setCursor(java.awt.Cursor.getPredefinedCursor(key != null ? java.awt.Cursor.TEXT_CURSOR : java.awt.Cursor.DEFAULT_CURSOR));
+        hint = key == null ? "" : key.startsWith("case:") ? "Click here to describe the case" : "Click here to write a comment";
+        live.repaint();
       }
       for (JButton b : fmtButtons) b.setEnabled(key != null);
-      if (doneBtn != null) doneBtn.setEnabled(editing);
     }
 
     /** Status labels under the headline: click one to give it to the selection (a case row: all its versions). */
@@ -2121,115 +2115,193 @@ public class SimKit extends StarMacro {
           + ".empty{color:#B8BEC6;font-style:italic}";   // margin-left-ltr: Swing's own name for the list indent
     }
 
-    // ----- writing in the box: click the formatted text to edit; leaving the box (or Done, Esc) saves -----
+    // ----- writing in the box: formatted as in a word processor; leaving the box (or Esc) saves -----
 
     void startEdit() {
       if (areaKey == null || selected().size() != 1) return;
       editing = true;
-      if (liveMode) {
-        if (!live.isFocusOwner()) {
-          live.requestFocusInWindow();
-          live.setCaretPosition(live.getDocument().getLength());
-        }
-        return;
+      if (!live.isFocusOwner()) {
+        live.requestFocusInWindow();
+        live.setCaretPosition(live.getDocument().getLength());
       }
-      cardLayout.show(cards, "edit");
-      area.requestFocusInWindow();
-      area.setCaretPosition(area.getText().length());
-      if (doneBtn != null) doneBtn.setEnabled(true);
     }
 
     void endEdit() {
       if (!editing) return;
       flushArea();
       editing = false;
-      if (liveMode) {
-        table.requestFocusInWindow();
+      table.requestFocusInWindow();
+    }
+
+    /** Formatting of one piece of text in the box (all keys set, so nothing is taken from the text around it). */
+    javax.swing.text.SimpleAttributeSet attrs(boolean b, boolean i, boolean u, String colour) {
+      javax.swing.text.SimpleAttributeSet a = new javax.swing.text.SimpleAttributeSet();
+      javax.swing.text.StyleConstants.setBold(a, b);
+      javax.swing.text.StyleConstants.setItalic(a, i);
+      javax.swing.text.StyleConstants.setUnderline(a, u);
+      javax.swing.text.StyleConstants.setForeground(a, colour == null ? java.awt.Color.BLACK : java.awt.Color.decode(Md.COLORS.get(colour)));
+      a.addAttribute(COLOUR, colour == null ? "" : colour);
+      return a;
+    }
+
+    /** Puts text with marks (**bold** ...) in the box at a place, formatted, without the marks. Returns its length. */
+    int insertMd(int at, String md) throws javax.swing.text.BadLocationException {
+      javax.swing.text.StyledDocument d = live.getStyledDocument();
+      javax.swing.text.SimpleAttributeSet none = attrs(false, false, false, null);
+      int p = at;
+      String[] ls = md.split("\n", -1);
+      for (int j = 0; j < ls.length; j++) {
+        String l = ls[j];
+        if (j > 0) { d.insertString(p, "\n", none); p++; }
+        Matcher b = Md.BULLET.matcher(l), n = Md.NUMBER.matcher(l);
+        String body = b.matches() ? b.group(1) : n.matches() ? n.group(2) : l;
+        String pre = b.matches() ? l.substring(0, l.length() - l.replaceAll("^\\s+", "").length()) + "\u2022 "
+            : l.substring(0, l.length() - body.length());
+        d.insertString(p, pre, none);
+        p += pre.length();
+        for (Md.Run r : Md.runs(body)) {
+          d.insertString(p, r.text, attrs(r.b, r.i, r.u, r.color));
+          p += r.text.length();
+        }
+      }
+      return p - at;
+    }
+
+    /** Shows a comment (text with marks) in the box. */
+    void setLive(String md) {
+      try {
+        live.getDocument().remove(0, live.getDocument().getLength());
+        insertMd(0, md);
+      } catch (javax.swing.text.BadLocationException e) {
+        live.setText(md);
+      }
+      liveLoaded = md;
+      liveNorm = readLive();
+      undo.discardAllEdits();
+      live.setCaretPosition(0);
+    }
+
+    /** The box as text with marks: "- " for a bullet, **bold**, *italic*, __underline__, [red]...[/]. */
+    String readLive() {
+      javax.swing.text.StyledDocument d = live.getStyledDocument();
+      String t = txt(live);
+      List<String> out = new ArrayList<>();
+      int at = 0;
+      for (String l : t.split("\n", -1)) {
+        Matcher b = Pattern.compile("^(\\s*)[\u2022*-]\\s+(.*)$").matcher(l), n = Md.NUMBER.matcher(l);
+        String body = b.matches() ? b.group(2) : n.matches() ? n.group(2) : l;
+        String pre = b.matches() ? b.group(1) + "- " : l.substring(0, l.length() - body.length());
+        List<Md.Run> rs = new ArrayList<>();
+        for (int k = at + l.length() - body.length(); k < at + l.length(); k++) {
+          javax.swing.text.AttributeSet a = d.getCharacterElement(k).getAttributes();
+          Object c = a.getAttribute(COLOUR);
+          rs.add(new Md.Run(String.valueOf(t.charAt(k)), javax.swing.text.StyleConstants.isBold(a),
+              javax.swing.text.StyleConstants.isItalic(a), javax.swing.text.StyleConstants.isUnderline(a),
+              c instanceof String && Md.COLORS.containsKey(c) ? (String) c : null));
+        }
+        out.add(pre + Md.line(rs));
+        at += l.length() + 1;
+      }
+      return String.join("\n", out);
+    }
+
+    /** The box as text with marks; unchanged since it was shown: exactly the text it was shown from. */
+    String liveMd() {
+      String now = readLive();
+      return now.equals(liveNorm) ? liveLoaded : now;
+    }
+
+    /** Bold, italic or underline: on the selection (off if it is all so already); without one, for what is typed next. */
+    void style(Object key) {
+      int a = live.getSelectionStart(), b = live.getSelectionEnd();
+      javax.swing.text.StyledDocument d = live.getStyledDocument();
+      if (a == b) {
+        javax.swing.text.MutableAttributeSet in = live.getInputAttributes();
+        in.addAttribute(key, !Boolean.TRUE.equals(in.getAttribute(key)));
+      } else {
+        String t = txt(live);
+        boolean all = true;
+        for (int k = a; k < b; k++) {
+          if (!Character.isWhitespace(t.charAt(k)) && !Boolean.TRUE.equals(d.getCharacterElement(k).getAttributes().getAttribute(key))) all = false;
+        }
+        javax.swing.text.SimpleAttributeSet s = new javax.swing.text.SimpleAttributeSet();
+        s.addAttribute(key, !all);
+        d.setCharacterAttributes(a, b - a, s, false);
+      }
+      live.requestFocusInWindow();
+    }
+
+    /** A text colour (null: none) on the selection, or for what is typed next. */
+    void colour(String name) {
+      javax.swing.text.SimpleAttributeSet s = new javax.swing.text.SimpleAttributeSet();
+      javax.swing.text.StyleConstants.setForeground(s, name == null ? java.awt.Color.BLACK : java.awt.Color.decode(Md.COLORS.get(name)));
+      s.addAttribute(COLOUR, name == null ? "" : name);
+      int a = live.getSelectionStart(), b = live.getSelectionEnd();
+      if (a == b) live.getInputAttributes().addAttributes(s);
+      else live.getStyledDocument().setCharacterAttributes(a, b - a, s, false);
+      live.requestFocusInWindow();
+    }
+
+    /** A space after "-" or "*" at the start of a line makes it a bullet, as in a word processor. */
+    void space() {
+      try {
+        int caret = live.getCaretPosition(), ls = lineStart(live, caret);
+        if (live.getSelectionStart() == live.getSelectionEnd() && live.getText(ls, caret - ls).matches("\\s*[-*]")) {
+          live.getDocument().remove(caret - 1, 1);
+          live.getDocument().insertString(caret - 1, "\u2022 ", attrs(false, false, false, null));
+          return;
+        }
+      } catch (javax.swing.text.BadLocationException e) { /* an ordinary space */ }
+      live.replaceSelection(" ");
+    }
+
+    /** The template: this user's own (Template > Use this comment as my template), else the team's
+     *  (config/comment_template.txt, same marks as a comment), else the standard one. */
+    String templateText() {
+      String mine = Env.pref("trackerTemplate");
+      if (mine != null && !mine.trim().isEmpty()) return mine;
+      try {
+        Path f = Fs.config("comment_template.txt");
+        if (Files.isRegularFile(f)) {
+          String t = new String(Files.readAllBytes(f), StandardCharsets.UTF_8).replace("\r", "").replaceAll("\\s+$", "");
+          if (!t.trim().isEmpty()) return t;
+        }
+      } catch (Throwable x) { /* the standard one */ }
+      return COMMENT_TEMPLATE;
+    }
+
+    /** Inserts the template; the caret goes to the first empty bullet (or the end of its first line). */
+    void template() {
+      String t = templateText();
+      String cur = txt(live);
+      try {
+        int at = 0;
+        if (cur.trim().isEmpty()) {
+          live.getDocument().remove(0, live.getDocument().getLength());
+        } else {
+          at = live.getDocument().getLength();
+          String gap = cur.endsWith("\n") ? "\n" : "\n\n";
+          live.getDocument().insertString(at, gap, attrs(false, false, false, null));
+          at += gap.length();
+        }
+        int n = insertMd(at, t);
+        String ins = txt(live).substring(at, at + n);
+        Matcher m = Pattern.compile("(?m)^\\s*(?:\u2022|\\d+\\.)\\s*$").matcher(ins);
+        int first = ins.indexOf('\n');
+        live.setCaretPosition(at + (m.find() ? m.end() : first < 0 ? ins.length() : first));
+      } catch (javax.swing.text.BadLocationException e) { /* the box changed meanwhile */ }
+      live.requestFocusInWindow();
+    }
+
+    /** Keeps the text of the box as this user's template (with its formatting). */
+    void saveTemplate() {
+      String t = readLive().replaceAll("\\s+$", "");
+      if (t.trim().isEmpty()) {
+        say("Template: write it in the box first (headings, bullets...), then choose this again", red);
         return;
       }
-      showDetails();   // the formatted text, as saved
-      cardLayout.show(cards, "view");
-      if (doneBtn != null) doneBtn.setEnabled(false);
-    }
-
-    /** The box being written in: the formatted-while-typing one, or the plain one. */
-    javax.swing.text.JTextComponent ed() { return liveMode ? live : area; }
-
-    /** Switches between the two ways of writing (a trial: compare them, then keep one). */
-    void setLiveMode(boolean on) {
-      flushArea();
-      editing = false;
-      liveMode = on;
-      liveBox.setSelected(on);
-      Env.setPref("trackerLiveFormat", on ? "on" : "off");
-      areaKey = null;   // reloads the text in both boxes
-      showDetails();
-      cardLayout.show(cards, on ? "live" : "view");
-      if (doneBtn != null) doneBtn.setVisible(!on);
-      fmtBar.revalidate();
-    }
-
-    /** Shows the marks in the box as you type: **bold**, *italic*, __underline__, [colour]text[/], list markers (marks in grey). */
-    void restyle() {
-      if (restyling) return;
-      restyling = true;
-      try {
-        javax.swing.text.StyledDocument d = live.getStyledDocument();
-        String t = d.getText(0, d.getLength());
-        Font f = table.getFont();
-        javax.swing.text.SimpleAttributeSet base = new javax.swing.text.SimpleAttributeSet();
-        javax.swing.text.StyleConstants.setFontFamily(base, f.getFamily());
-        javax.swing.text.StyleConstants.setFontSize(base, f.getSize());
-        javax.swing.text.StyleConstants.setForeground(base, java.awt.Color.BLACK);
-        d.setCharacterAttributes(0, t.length(), base, true);
-        javax.swing.text.SimpleAttributeSet mark = new javax.swing.text.SimpleAttributeSet();
-        javax.swing.text.StyleConstants.setForeground(mark, markGrey);
-        Matcher lm = Pattern.compile("(?m)^\\s*(?:[-*\u2022]|\\d+[.)])\\s").matcher(t);
-        while (lm.find()) d.setCharacterAttributes(lm.start(), lm.end() - lm.start(), mark, false);
-        javax.swing.text.SimpleAttributeSet b = new javax.swing.text.SimpleAttributeSet(), i = new javax.swing.text.SimpleAttributeSet(),
-            u = new javax.swing.text.SimpleAttributeSet();
-        javax.swing.text.StyleConstants.setBold(b, true);
-        javax.swing.text.StyleConstants.setItalic(i, true);
-        javax.swing.text.StyleConstants.setUnderline(u, true);
-        styleSpans(d, t, "\\*\\*(\\S(?:.*?\\S)?)\\*\\*", 1, b, mark);
-        styleSpans(d, t, "__(\\S(?:.*?\\S)?)__", 1, u, mark);
-        styleSpans(d, t, "(?<![*\\w])\\*([^*\\s](?:.*?[^*\\s])?)\\*(?![*\\w])", 1, i, mark);
-        Matcher cm = Md.COLOR.matcher(t);
-        while (cm.find()) {
-          javax.swing.text.SimpleAttributeSet c = new javax.swing.text.SimpleAttributeSet();
-          javax.swing.text.StyleConstants.setForeground(c, java.awt.Color.decode(Md.COLORS.get(cm.group(1))));
-          d.setCharacterAttributes(cm.start(2), cm.end(2) - cm.start(2), c, false);
-          d.setCharacterAttributes(cm.start(), cm.start(2) - cm.start(), mark, false);
-          d.setCharacterAttributes(cm.end(2), cm.end() - cm.end(2), mark, false);
-        }
-      } catch (javax.swing.text.BadLocationException e) {
-        /* text changed meanwhile: the next change restyles */
-      } finally {
-        restyling = false;
-      }
-    }
-
-    void styleSpans(javax.swing.text.StyledDocument d, String t, String re, int g, javax.swing.text.AttributeSet a,
-        javax.swing.text.AttributeSet mark) {
-      Matcher m = Pattern.compile(re).matcher(t);
-      while (m.find()) {
-        d.setCharacterAttributes(m.start(g), m.end(g) - m.start(g), a, false);
-        d.setCharacterAttributes(m.start(), m.start(g) - m.start(), mark, false);
-        d.setCharacterAttributes(m.end(g), m.end() - m.end(g), mark, false);
-      }
-    }
-
-    /** Inserts a short structure to fill in: Goal / Changes / Result / Next. */
-    void template() {
-      javax.swing.text.JTextComponent e = ed();
-      String t = "**Goal:** \n**Changes:**\n- \n**Result:** \n**Next:** ";
-      String cur = txt(e);
-      int at = cur.trim().isEmpty() ? 0 : cur.length();
-      String ins = cur.trim().isEmpty() ? t : (cur.endsWith("\n") ? "\n" : "\n\n") + t;
-      if (cur.trim().isEmpty()) e.setText(""); else e.setCaretPosition(at);
-      e.replaceSelection(ins);
-      e.setCaretPosition((cur.trim().isEmpty() ? 0 : at + ins.indexOf("**Goal:**")) + "**Goal:** ".length());
-      e.requestFocusInWindow();
+      Env.setPref("trackerTemplate", t);
+      say("Template saved: Template > Insert template now gives this text (for you only)", green);
     }
 
     /** The text as the document holds it ("\n" line ends; JTextPane.getText() gives "\r\n" on Windows). */
@@ -2270,26 +2342,9 @@ public class SimKit extends StarMacro {
       });
     }
 
-    /** Puts the selection between marks (or takes them off); without a selection, places the caret between two marks. */
-    void wrap(String m) { wrap(m, m); }
-
-    void wrap(String open, String close) {
-      javax.swing.text.JTextComponent area = ed();
-      int a = area.getSelectionStart(), b = area.getSelectionEnd(), n = open.length() + close.length();
-      String s = area.getSelectedText() == null ? "" : area.getSelectedText();
-      if (s.length() >= n && s.startsWith(open) && s.endsWith(close) && !(open.equals("*") && s.startsWith("**"))) {
-        area.replaceSelection(s.substring(open.length(), s.length() - close.length()));
-        area.select(a, b - n);
-      } else {
-        area.replaceSelection(open + s + close);
-        if (s.isEmpty()) area.setCaretPosition(a + open.length()); else area.select(a, b + n);
-      }
-      area.requestFocusInWindow();
-    }
-
     /** Makes the selected lines (or the current one) a bullet or numbered list; again on a list: back to plain lines. */
-    void list(boolean numbered) {
-      javax.swing.text.JTextComponent area = ed();
+    void list(Boolean numbered) {
+      javax.swing.text.JTextComponent area = live;
       try {
         int s0 = area.getSelectionStart(), s1 = area.getSelectionEnd();
         if (s1 > s0 && lineStart(area, s1) == s1) s1--;
@@ -2297,26 +2352,29 @@ public class SimKit extends StarMacro {
         if (end > start && txt(area).charAt(end - 1) == '\n') end--;
         String[] ls = txt(area).substring(start, end).split("\n", -1);
         boolean all = true;
-        for (String l : ls) if (!l.trim().isEmpty()) all &= (numbered ? Md.NUMBER : Md.BULLET).matcher(l).matches();
-        StringBuilder sb = new StringBuilder();
-        int n = 1;
-        for (int i = 0; i < ls.length; i++) {
+        if (numbered != null) for (String l : ls) if (!l.trim().isEmpty()) all &= (numbered ? Md.NUMBER : Md.BULLET).matcher(l).matches();
+        int[] at = new int[ls.length];
+        for (int i = 0, p = start; i < ls.length; p += ls[i].length() + 1, i++) at[i] = p;
+        int n = 0;
+        for (String l : ls) if (!l.trim().isEmpty() || ls.length == 1) n++;
+        for (int i = ls.length - 1; i >= 0; i--) {   // from the last line up: the places above stay right
           String l = ls[i];
+          if (l.trim().isEmpty() && ls.length > 1) continue;
           Matcher b = Md.BULLET.matcher(l), k = Md.NUMBER.matcher(l);
-          String body = b.matches() ? b.group(1) : k.matches() ? k.group(2) : l.trim();
-          if (i > 0) sb.append('\n');
-          if (l.trim().isEmpty() && i == ls.length - 1 && ls.length > 1) continue;
-          sb.append(all ? body : (numbered ? (n++) + ". " : "- ") + body);
+          String body = b.matches() ? b.group(1) : k.matches() ? k.group(2) : l.replaceAll("^\\s+", "");
+          area.getDocument().remove(at[i], l.length() - body.length());
+          String pre = all ? "" : numbered ? (n--) + ". " : "\u2022 ";
+          if (!all && !numbered) n--;   // (a menu choice of the same list again takes it off)
+          area.getDocument().insertString(at[i], pre, attrs(false, false, false, null));
         }
-        replaceRange(area, sb.toString(), start, end);
-        area.setCaretPosition(Math.min(area.getDocument().getLength(), start + sb.length()));
+        area.setCaretPosition(lineEnd(area, Math.min(area.getDocument().getLength(), start)) - (lineEnd(area, start) < area.getDocument().getLength() ? 1 : 0));
       } catch (javax.swing.text.BadLocationException e) { /* nothing selected */ }
       area.requestFocusInWindow();
     }
 
     /** Enter: in a list, the next line starts with the next bullet or number; Enter on an empty item ends the list. */
     void newLine() {
-      javax.swing.text.JTextComponent area = ed();
+      javax.swing.text.JTextComponent area = live;
       try {
         int caret = area.getCaretPosition(), ls = lineStart(area, caret);
         String before = area.getText(ls, caret - ls);
@@ -2336,8 +2394,11 @@ public class SimKit extends StarMacro {
 
     /** Saves the box (comment or description) if it differs from what is stored; line breaks are kept. */
     void flushArea() {
-      if (areaKey == null || !ed().isEditable()) return;
-      String s = txt(ed()).replace("\r", "").replaceAll("[ \\t]+\n", "\n").replaceAll("^\n+|\\s+$", "");
+      if (areaKey == null || !live.isEditable()) return;
+      String now = readLive();
+      String s = now.equals(liveNorm) ? liveLoaded : now.replace("\r", "").replaceAll("[ \\t]+\n", "\n").replaceAll("^\n+|\\s+$", "");
+      liveLoaded = s;   // the box now stands for what is saved: no reload under the caret
+      liveNorm = now;
       if (areaKey.startsWith("case:")) {
         String cid = areaKey.substring(5);
         if (!byCase.containsKey(cid) || s.equals(description(cid))) return;
@@ -3455,105 +3516,6 @@ public class SimKit extends StarMacro {
     return h.append("</body></html>\n").toString();
   }
 
-  // ---------------------------------------------------------------- compare
-
-  /** Compare versions: current set-up vs previous version, parent case or any record file. */
-  void toolCompare() throws IOException {
-    CaseInfo c = requireCase();
-    Audit now = writeAudit(c);
-    String[] opts = {"Previous version", "Parent case", "Choose a record file...", "Cancel"};
-    int o = Ui.option("Compare versions", "Compare the current set-up of " + c.simBase() + " with:", opts);
-    Path other;
-    if (o == 0) other = latestAudit(c.sub("record"), c.caseId, c.version);
-    else if (o == 1) other = parentAudit(c);
-    else if (o == 2) other = Ui.chooseFile(c.sub("record"));
-    else throw new Cancel(null);
-    if (other == null || !Files.isRegularFile(other)) throw new Cancel("no record found to compare with");
-    String otherBase = other.getFileName().toString().replaceFirst("^setup_", "").replaceFirst("\\.csv$", "");
-    Path out = c.sub("record").resolve("changes_" + Fs.fileSafe(otherBase) + "_to_" + c.simBase() + ".csv");
-    String summary = diffAudits(other, now.file, out);
-    log.line("summary: " + summary);
-  }
-
-  /** Highest-version set-up record of a case below 'belowVersion' (Integer.MAX_VALUE = any). */
-  static Path latestAudit(Path auditDir, String caseId, int belowVersion) {
-    Pattern p = Pattern.compile("^setup_" + Pattern.quote(caseId) + "(_[A-Za-z][A-Za-z0-9]*)?_v([0-9]{2,3})\\.csv$");
-    Path best = null;
-    int bestV = -1;
-    for (Path f : Fs.list(auditDir, "setup_*.csv")) {
-      Matcher m = p.matcher(f.getFileName().toString());
-      if (!m.matches()) continue;
-      int v = Integer.parseInt(m.group(2));
-      if (v < belowVersion && v > bestV) { best = f; bestV = v; }
-    }
-    return best;
-  }
-
-  Path parentAudit(CaseInfo c) {
-    String parent = readIdentity(c).getOrDefault("parent_case", "");
-    if (parent.isEmpty()) throw new Cancel("no parent_case in " + c.identityFile());
-    String pf = readIdentity(c).getOrDefault("parent_file", "");
-    Path dir = c.casesDir.resolve(parent).resolve("record");
-    try {
-      Path pd = Paths.get(pf).getParent();
-      if (pd != null && pd.getParent() != null && Files.isDirectory(pd.getParent().resolve("record"))) {
-        dir = pd.getParent().resolve("record");
-      }
-    } catch (Throwable t) { /* old identity file: sibling folder */ }
-    return latestAudit(dir, parent, Integer.MAX_VALUE);
-  }
-
-  /** Differences of two set-up records (VERSION section ignored); writes the CSV; returns a summary. */
-  String diffAudits(Path oldF, Path newF, Path out) throws IOException {
-    Map<String, String[]> a = auditMap(oldF), b = auditMap(newF);
-    List<String[]> rows = new ArrayList<>();
-    Map<String, int[]> perSec = new TreeMap<>();
-    List<String> examples = new ArrayList<>();
-    for (Map.Entry<String, String[]> e : b.entrySet()) {
-      String[] o = a.get(e.getKey()), n = e.getValue();
-      if (o == null) diffRow(rows, perSec, examples, "added", n, "", n[3]);
-      else if (!o[3].equals(n[3])) diffRow(rows, perSec, examples, "changed", n, o[3], n[3]);
-    }
-    for (Map.Entry<String, String[]> e : a.entrySet()) {
-      if (!b.containsKey(e.getKey())) diffRow(rows, perSec, examples, "removed", e.getValue(), e.getValue()[3], "");
-    }
-    Csv.write(out, DIFF_HEADER, rows);
-    int[] tot = new int[3];
-    List<String> secs = new ArrayList<>();
-    for (Map.Entry<String, int[]> e : perSec.entrySet()) {
-      int[] v = e.getValue();
-      for (int i = 0; i < 3; i++) tot[i] += v[i];
-      secs.add(e.getKey() + " +" + v[0] + " -" + v[1] + " ~" + v[2]);
-    }
-    String summary = rows.isEmpty() ? "no setup changes" : "+" + tot[0] + " -" + tot[1] + " ~" + tot[2] + " ["
-        + String.join("; ", secs) + "] e.g. " + String.join("; ", examples);
-    log.line("list of changes: " + rows.size() + " line(s) -> " + out);
-    return Fmt.cut(summary, 400);
-  }
-
-  static void diffRow(List<String[]> rows, Map<String, int[]> perSec, List<String> examples, String change,
-      String[] r, String oldV, String newV) {
-    rows.add(new String[] {change, r[0], r[1], r[2], oldV, newV});
-    perSec.computeIfAbsent(r[0], k -> new int[3])["added".equals(change) ? 0 : "removed".equals(change) ? 1 : 2]++;
-    if (examples.size() < 3) examples.add(r[1] + "." + r[2] + " " + Fmt.cut(oldV, 30) + "->" + Fmt.cut(newV, 30));
-  }
-
-  /** Audit CSV as key "section|path|property[#n]" -> row; VERSION rows and p_simkit* parameters are skipped. */
-  static Map<String, String[]> auditMap(Path f) throws IOException {
-    Map<String, String[]> m = new LinkedHashMap<>();
-    List<String[]> rows = Csv.parse(Fs.read(f));
-    for (int i = 1; i < rows.size(); i++) {
-      String[] r = Arrays.copyOf(rows.get(i), 4);
-      for (int k = 0; k < 4; k++) if (r[k] == null) r[k] = "";
-      if ("VERSION".equals(r[0]) || r[1].startsWith("p_simkit")) continue;
-      String key = r[0] + "|" + r[1] + "|" + r[2];
-      String k2 = key;
-      for (int n = 2; m.containsKey(k2); n++) k2 = key + "#" + n;
-      m.put(k2, r);
-    }
-    return m;
-  }
-
   // =====================================================================================================
   // Standard reports (built from the surface prefixes)
   // =====================================================================================================
@@ -3830,7 +3792,6 @@ public class SimKit extends StarMacro {
     reportTable(h, "Check (before the run)", rec.resolve("check_" + base + ".csv"), true);
     reportTable(h, "Key results", rec.resolve(KEY_RESULTS), false);
     reportTable(h, "Averaged results", latest(c.sub("results/csv"), base + "_averages_*.csv"), false);
-    reportTable(h, "Changes since the previous version", latest(rec, "changes_*_to_" + base + ".csv"), false);
     List<Path> imgs = Fs.list(c.sub("results/img"), base + "_*.png");
     h.append("<h2>Images</h2>");
     if (imgs.isEmpty()) h.append("<p>No image yet: run Export results (scenes are saved as images).</p>");
@@ -5034,17 +4995,180 @@ public class SimKit extends StarMacro {
     }
     static final Pattern COLOR = Pattern.compile("\\[(" + String.join("|", COLORS.keySet()) + ")\\](.+?)\\[/\\]");
 
-    /** One line: HTML-escaped, then **bold**, __underline__, *italic* and [colour]text[/]. */
+    /** A piece of one line with its formatting (colour: a name of COLORS, or null). */
+    static final class Run {
+      final String text;
+      final boolean b, i, u;
+      final String color;
+
+      Run(String text, boolean b, boolean i, boolean u, String color) {
+        this.text = text;
+        this.b = b;
+        this.i = i;
+        this.u = u;
+        this.color = color == null || color.isEmpty() ? null : color;
+      }
+
+      boolean same(Run o) { return b == o.b && i == o.i && u == o.u && java.util.Objects.equals(color, o.color); }
+    }
+
+    static boolean word(String s, int k) { return k >= 0 && k < s.length() && Character.isLetterOrDigit(s.charAt(k)); }
+
+    static boolean space(String s, int k) { return k < 0 || k >= s.length() || Character.isWhitespace(s.charAt(k)); }
+
+    static int run(String s, int k) {
+      int n = 1;
+      while (k + n < s.length() && s.charAt(k + n) == s.charAt(k)) n++;
+      return n;
+    }
+
+    /** A mark later on the line that can close bold (2), italic (1) or underline ('_'). */
+    static boolean closerAfter(String s, int from, char c, int what) {
+      for (int k = from; k < s.length(); ) {
+        if (s.charAt(k) != c) { k++; continue; }
+        int n = run(s, k);
+        boolean fits = c == '_' ? n == 2 : n <= 3 && (what == 2 ? n >= 2 : n != 2);
+        if (fits && !space(s, k - 1)) return true;
+        k += n;
+      }
+      return false;
+    }
+
+    /** One line read into formatted pieces. The marks switch on and off: ** bold, * italic (*** both), __ underline,
+     *  [red] ... [/] a colour. A mark counts only where it can open (text right after it and a closing mark later) or
+     *  close (text right before it); anywhere else it is ordinary text (2*3, a ** b, [m/s]). */
+    static List<Run> runs(String s) {
+      Set<Integer> plainAt = new HashSet<>();   // opening marks that were never closed: ordinary text
+      for (int pass = 0; ; pass++) {
+        List<Run> out = new ArrayList<>();
+        boolean b = false, it = false, u = false;
+        String col = null;
+        int bAt = -1, iAt = -1, uAt = -1, cAt = -1;
+        StringBuilder t = new StringBuilder();
+        int k = 0;
+        while (k < s.length()) {
+          char c = s.charAt(k);
+          int n = c == '*' || c == '_' ? run(s, k) : 1;
+          boolean mark = false;
+          if (!plainAt.contains(k) && pass < 50) {
+            if (c == '*' && n <= 3) {
+              boolean wb = n >= 2, wi = n != 2, ok = true;
+              if (wb) ok &= b ? !space(s, k - 1) : !space(s, k + n) && closerAfter(s, k + n, '*', 2);
+              if (wi) ok &= it ? !space(s, k - 1) && (n == 3 || !word(s, k + n))
+                  : !space(s, k + n) && closerAfter(s, k + n, '*', 1) && (n == 3 || !word(s, k - 1));
+              if (ok) {
+                mark = true;
+                flush(out, t, b, it, u, col);
+                if (wb) { b = !b; bAt = k; }
+                if (wi) { it = !it; iAt = k; }
+              }
+            } else if (c == '_' && n == 2) {
+              if (u ? !space(s, k - 1) : !space(s, k + n) && closerAfter(s, k + n, '_', 0)) {
+                mark = true;
+                flush(out, t, b, it, u, col);
+                u = !u;
+                uAt = k;
+              }
+            } else if (c == '[') {
+              if (col != null && s.startsWith("[/]", k)) {
+                mark = true;
+                flush(out, t, b, it, u, col);
+                col = null;
+                n = 3;
+              } else if (col == null) {
+                int e = s.indexOf(']', k);
+                String name = e > k ? s.substring(k + 1, e) : "";
+                if (COLORS.containsKey(name) && s.indexOf("[/]", e) > e) {
+                  mark = true;
+                  flush(out, t, b, it, u, col);
+                  col = name;
+                  cAt = k;
+                  n = e + 1 - k;
+                }
+              }
+            }
+          }
+          if (!mark) t.append(s, k, k + n);
+          k += n;
+        }
+        flush(out, t, b, it, u, col);
+        if (!b && !it && !u && col == null) return out;
+        if (b) plainAt.add(bAt);   // an opening mark that is still open at the end: read it as text, then again
+        if (it) plainAt.add(iAt);
+        if (u) plainAt.add(uAt);
+        if (col != null) plainAt.add(cAt);
+      }
+    }
+
+    static void flush(List<Run> out, StringBuilder t, boolean b, boolean i, boolean u, String col) {
+      if (t.length() == 0) return;
+      out.add(new Run(t.toString(), b, i, u, col));
+      t.setLength(0);
+    }
+
+    /** Formatted pieces back into one line with marks (the reverse of runs). A space at the edge of a formatted piece
+     *  is left out of it, and italic inside a word takes the whole word, so that the marks read back the same. */
+    static String line(List<Run> rs) {
+      StringBuilder all = new StringBuilder();
+      for (Run r : rs) all.append(r.text);
+      String t = all.toString();
+      int n = t.length();
+      boolean[] B = new boolean[n], I = new boolean[n], U = new boolean[n];
+      String[] C = new String[n];
+      int k = 0;
+      for (Run r : rs) for (int j = 0; j < r.text.length(); j++, k++) { B[k] = r.b; I[k] = r.i; U[k] = r.u; C[k] = r.color; }
+      for (k = 0; k < n; k++) {
+        if (!Character.isWhitespace(t.charAt(k))) continue;
+        int p = k - 1, q = k + 1;
+        while (p >= 0 && Character.isWhitespace(t.charAt(p))) p--;
+        while (q < n && Character.isWhitespace(t.charAt(q))) q++;
+        boolean in = p >= 0 && q < n;
+        B[k] = in && B[p] && B[q];
+        I[k] = in && I[p] && I[q];
+        U[k] = in && U[p] && U[q];
+        C[k] = in && C[p] != null && C[p].equals(C[q]) ? C[p] : null;
+      }
+      for (k = 0; k < n; k++) {   // italic: whole words
+        if (!I[k]) continue;
+        int a = k, e = k;
+        while (e < n && I[e]) e++;
+        while (a > 0 && Character.isLetterOrDigit(t.charAt(a - 1))) I[--a] = true;
+        while (e < n && Character.isLetterOrDigit(t.charAt(e))) I[e++] = true;
+        k = e;
+      }
+      StringBuilder o = new StringBuilder();
+      for (k = 0; k <= n; k++) {
+        boolean pb = k > 0 && B[k - 1], pi = k > 0 && I[k - 1], pu = k > 0 && U[k - 1];
+        boolean cb = k < n && B[k], ci = k < n && I[k], cu = k < n && U[k];
+        String pc = k > 0 ? C[k - 1] : null, cc = k < n ? C[k] : null;
+        if (pc != null && !pc.equals(cc)) o.append("[/]");
+        if (pu != cu) o.append("__");
+        if (pb != cb) o.append("**");
+        if (pi != ci) o.append('*');
+        if (cc != null && !cc.equals(pc)) o.append('[').append(cc).append(']');
+        if (k < n) o.append(t.charAt(k));
+      }
+      return o.toString();
+    }
+
+    /** One line: HTML-escaped, with **bold**, __underline__, *italic* and [colour]text[/]. */
     static String inline(String s) {
-      String h = Html.esc(s);
-      h = h.replaceAll("\\*\\*(\\S(?:.*?\\S)?)\\*\\*", "<b>$1</b>");
-      h = h.replaceAll("__(\\S(?:.*?\\S)?)__", "<u>$1</u>");
-      h = h.replaceAll("(?<![*\\w])\\*([^*\\s](?:.*?[^*\\s])?)\\*(?![*\\w])", "<i>$1</i>");
-      Matcher m = COLOR.matcher(h);
-      StringBuffer sb = new StringBuffer();
-      while (m.find()) m.appendReplacement(sb, Matcher.quoteReplacement("<font color='" + COLORS.get(m.group(1)) + "'>" + m.group(2) + "</font>"));
-      m.appendTail(sb);
-      return sb.toString();
+      StringBuilder h = new StringBuilder();
+      for (Run r : runs(s)) {
+        String x = Html.esc(r.text);
+        if (r.i) x = "<i>" + x + "</i>";
+        if (r.b) x = "<b>" + x + "</b>";
+        if (r.u) x = "<u>" + x + "</u>";
+        if (r.color != null) x = "<font color='" + COLORS.get(r.color) + "'>" + x + "</font>";
+        h.append(x);
+      }
+      return h.toString();
+    }
+
+    static String unmark(String s) {
+      StringBuilder t = new StringBuilder();
+      for (Run r : runs(s)) t.append(r.text);
+      return t.toString();
     }
 
     /** The whole text as HTML: paragraphs (blank line between), line breaks, bullet and numbered lists. */
@@ -5101,8 +5225,7 @@ public class SimKit extends StarMacro {
       for (String l : lines(text)) {
         Matcher b = BULLET.matcher(l);
         String t = b.matches() ? "• " + b.group(1) : l.trim();
-        parts.add(COLOR.matcher(t.replaceAll("\\*\\*(\\S(?:.*?\\S)?)\\*\\*", "$1").replaceAll("__(\\S(?:.*?\\S)?)__", "$1")
-            .replaceAll("(?<![*\\w])\\*([^*\\s](?:.*?[^*\\s])?)\\*(?![*\\w])", "$1")).replaceAll("$2"));
+        parts.add(unmark(t));
       }
       return String.join(" / ", parts);
     }

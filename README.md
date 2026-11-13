@@ -57,7 +57,7 @@ The GUI test and the expected results are in `_SIMKIT/TESTING.txt`.
 | Tag | Content |
 |---|---|
 | `v0.2.1` | Full kit (20 tools, tags, groups, parameter sync, project workbook, register Apps Script). |
-| `v0.3` | Simplified kit: New case, Save version, Check, Export results, Calculators, Compare versions, Case list, Guideline, About. |
+| `v0.3` | Simplified kit: New case, Save version, Check, Export results, Calculators, Case list (Compare versions removed later), Guideline, About. |
 
 `_SIMKIT/VERSION.txt` holds the current version line. Tag each release `v<version>`.
 
