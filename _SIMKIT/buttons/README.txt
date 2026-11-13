@@ -4,7 +4,7 @@ One small macro per button. Each one finds the SimKit root from its own location
 and runs the current version of the tool, so the buttons never need updating when the kit changes.
 
   SimKit_Menu.java             the SimKit window (all tools)
-  SimKit_SaveNewVersion.java   Save new version (next version, or a new case; creates the case the first time)
+  SimKit_SaveNewVersion.java   Save as new (next version, or a new case; creates the case the first time)
   SimKit_Check.java            Check
   SimKit_ExportResults.java    Export results
   SimKit_StandardReports.java  Standard reports
@@ -30,4 +30,4 @@ SimKit toolbar itself: <same config folder>/Toolbars/SimKit/, one link file per 
 is dragged onto a toolbar. In the STAR-CCM+ window both are set through STAR-CCM+ itself, so the toolbar appears at once.
 The buttons point at THESE files on the share (<SimKit root>/buttons/...). Do not copy them elsewhere: each button
 finds the root from its own location and always runs the current kit. No environment variable and no path to set.
-Cases are not stored in the SimKit root: the first Save new version of a sim asks the user for the folder.
+Cases are not stored in the SimKit root: the first Save as new of a sim asks the user for the folder.

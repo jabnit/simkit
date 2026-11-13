@@ -2,7 +2,7 @@ SimKit 0.3 (2026-11-11) -- TESTING (toolkit owner only; users never need this fi
 =====================================================================================
 
 What is in the kit
-  SimKit.java                 the macro users play (Save new version, Check, Export results + small tools)
+  SimKit.java                 the macro users play (Save as new, Check, Export results + small tools)
   lib/generic/SimKitCalc.java calculators (opened by the Calculators button); data in lib/generic/data/*.csv
   config/projects.csv         projects and their configuration codes (offered when a case is created)
   config/naming_rules.csv     the two checked name patterns (parts, part surfaces)
@@ -12,7 +12,7 @@ What is in the kit
                               Calculators); see buttons/README.txt
   templates/ISO/tools/        template-owner macros for the ISO template (not part of the user workflow)
   tests/                      validation runners (this file)
-The kit lives in ONE shared folder (Windows and Linux mounts of the same share). Cases do not: the first Save new version asks
+The kit lives in ONE shared folder (Windows and Linux mounts of the same share). Cases do not: the first Save as new asks
 the user for the folder that will hold the case folder (any local or network folder).
 The full 0.2.1 kit (tags, groups, parameter sync, register script, batch-script writer) is kept outside the kit
 in SimKit_deliverables/_archive/SimKit_0.2.1_full for a later update.
@@ -31,9 +31,9 @@ Path map
     ISO tools          templates/ISO/tools/parameters_ISO.csv, templates/ISO/tools/template_objects_ISO.csv
   Nothing of the kit is addressed in any other way, and nothing is ever written inside the root.
   User side (never under the root): the sim file the user opened, and for a SimKit case
-    <folder chosen at the first Save new version>/case_list.csv
-    <folder chosen at the first Save new version>/<CASEID>/sim/<CASEID>[_label]_v<nn>.sim, case_identity.txt
-    <folder chosen at the first Save new version>/<CASEID>/record/  results/csv/  results/img/
+    <folder chosen at the first Save as new>/case_list.csv
+    <folder chosen at the first Save as new>/<CASEID>/sim/<CASEID>[_label]_v<nn>.sim, case_identity.txt
+    <folder chosen at the first Save as new>/<CASEID>/record/  results/csv/  results/img/
   case_identity.txt keeps the full path of the parent case's sim.
 
 Site set-up (once)
@@ -65,13 +65,13 @@ A. BATCH VALIDATION (no GUI; about 10 min)
 B. GUI TEST (on the release and OS the team uses; about 15 min)
   Open a COPY of a real sim (or <TestRoot>/scratch/SimKit_testcase.sim) and play SimKit.java.
    1. The window shows a header (case ID, version, name, description and file; or "Not a SimKit case yet"
-      in amber with what to do) and 4 columns: CASE (Save new version, Case tracker), SET-UP
+      in amber with what to do) and 4 columns: CASE (Save as new, Case tracker), SET-UP
       (Check, Standard reports, Standard scenes, Mesh study), RESULTS (Export results, Case
       report), TOOLS (Calculators, Guideline, About), each button with a grey
       line under it. On a sim that is not a case, Export results and Case
-      report are greyed. The bottom line shows Running: / Done: and the header updates after Save new version.
+      report are greyed. The bottom line shows Running: / Done: and the header updates after Save as new.
       RESULT WINDOWS: only Check and About open a text window (and any tool
-      that stops on an error). Save new version, Export results, Standard reports / scenes, Parametrize
+      that stops on an error). Save as new, Export results, Standard reports / scenes, Parametrize
       mesh, Case report, Case tracker, Guideline: no extra window; the status line says what was done (green),
       cancelled or skipped (amber) and Details shows the full text. Creating a case with an empty description: the
       form comes back with the inputs kept and a red hint.
@@ -84,16 +84,16 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       Keep in front of other apps: tick it -> the SimKit, result, tracker and calculator windows stay above other applications
       (e.g. a browser); untick -> they stay above STAR-CCM+ only. Close and replay SimKit: the choice is kept.
       Watch for: a STAR "macro is running" lock, a freeze while a tool runs, or an error when you edit the model
-      while Save new version or Export runs -> note it (the fallback is to wait for the tool to finish).
-   2. Save new version (sim not a case yet): choose a folder (Browse...), pick ISO (or type a new code, e.g. TEST1), type a description and a
+      while Save as new or Export runs -> note it (the fallback is to wait for the tool to finish).
+   2. Save as new (sim not a case yet): choose a folder (Browse...), pick ISO (or type a new code, e.g. TEST1), type a description and a
       configuration in your own words (optional), leave the label empty
       -> <folder>/ISO-00n/sim/ISO-00n_v01.sim; record/setup_*_v01.csv and case_card_*.html written;
       <folder>/case_list.csv lists the case. Choosing a folder inside the kit must be refused. The next case created
       proposes the same folder.
-   3. Change something (e.g. the base size), click Save new version: "Next version of ISO-00n (v02)" is selected, the name pre-filled; Enter ->
+   3. Change something (e.g. the base size), click Save as new: "Next version of ISO-00n (v02)" is selected, the name pre-filled; Enter ->
       ISO-00n_v02.sim (same name); type mesh2 -> ISO-00n_mesh2_v0x.sim; "v3" or "my name" is refused;
       record/changes_*_v01_to_*_v02.csv lists the change; the tracker shows ISO-00n.v02 "based on ISO-00n.v01".
-      Open v01 again and click Save new version, Enter -> ISO-00n.v03 "based on ISO-00n.v01". Ctrl+S keeps saving the open file.
+      Open v01 again and click Save as new, Enter -> ISO-00n.v03 "based on ISO-00n.v01". Ctrl+S keeps saving the open file.
    4. Check: PASS / WARN / FAIL table + names to improve; record/check_*.csv written. Nothing in the sim changes.
       Boundary types: set a surface named IN_... to Wall -> Check gives FAIL "boundary types: ... is Wall, expected
       an inlet"; set it back -> PASS.
@@ -162,7 +162,7 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       Ma 0.062; choose "total pressure, gauge" with 275.83 -> 0.05 kg/s back. Orifice / nozzle flow: air 3 bar ->
       1 atm, 2 mm, Cd 0.61 -> 1.341e-3 kg/s, choked = 1. Then on any page: Compute; "Copy value for STAR-CCM+..." -> paste in a STAR field: the number pastes as
       typed (e.g. 1.23457E-5) and the unit to select is shown (e.g. m). To parameter... creates p_<name>.
-   7. Save new version > "New case from this one" (step 3 sim): the new case shows the parent; the parent file is untouched.
+   7. Save as new > "New case from this one" (step 3 sim): the new case shows the parent; the parent file is untouched.
    8. Case list; Guideline (opens the links.csv URL); About (shows the kit
       root = the folder of SimKit.java on the share).
    9. Toolbar buttons: play buttons/SimKit_InstallButtons.java: 10 ticked buttons with their icons; Install ->
@@ -266,7 +266,7 @@ C. RESULTS SO FAR
   for Check, Compare versions, Ready to report?, About and on errors; other tools report on the status line
   (green done / amber cancelled or items skipped / red error) with a Details button; New case re-opens its form
   when the description or folder is missing. STAR regression SKT29: all exit codes 0.
-  New case and New version merged into one button, Save new version (user: unclear which to use): not a case
+  New case and New version merged into one button, Save as new (user: unclear which to use): not a case
   yet -> creates the case (v01); a case -> one dialog, "Next version" selected (Enter, name pre-filled, file name
   shown) or "New case from this one", with a one-line hint for each. Toolbar: SimKit_SaveNewVersion.java
   replaces SimKit_NewCase / SimKit_NewVersion. Batch action newversion unchanged. STAR regression SKT30: all
@@ -358,6 +358,16 @@ C. RESULTS SO FAR
   Template: standard = Goal / Changes / Result / Next, each with an empty bullet, caret on the first bullet; Template
   menu: Insert, Use this comment as my template (Java preference trackerTemplate, for this user), Back to the standard
   template; team template config/comment_template.txt if present. Compare versions removed (button, tool, the list of
-  changes written by Save new version, its table in the case report); the set-up record is still written.
+  changes written by Save as new, its table in the case report); the set-up record is still written.
   Offline RichShot passed.
-  Not yet run: section B (GUI: Save new version, Case tracker, Calculators copy), release 2402, Linux.
+  Save as new (was Save as new): one window. A case: two cards, Next version (default, Enter; optional name in
+  the file) and New case (description only; project and folder on one line with Change); the file to be created
+  shown at the bottom. Not a case: "Start a case", description only. Errors in red in the window, nothing typed is
+  lost. Configuration and label fields removed from a new case (configuration inherited from the case it is based on).
+  Mesh study: one window, no first popup: levels table (factor, base size), sizes that follow the factor (checkboxes;
+  prism switch), mesh now, files to be created; "Only link the sizes to the factor"; a sim that is not a case is
+  offered Start a case first. Per-level size editing dropped.
+  Standard reports: one window, rows grouped by purpose with the surfaces (double-click to choose others) or the
+  reason in grey; list in config/standard_reports.csv (types by plain name); new: r_mdot_imbalance_pct, r_p0_in_avg,
+  r_dp_static (expression reports), r_T_wall_max. Offline window pictures (DialogShot) checked.
+  Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.

@@ -1,4 +1,4 @@
-// SimKit: Save new version (next _v<nn+1> with Enter, or a new case; not a case yet: creates it as v01)
+// SimKit: Save as new (next version or a new case, in one window; not a case yet: starts it as v01)
 //
 // SimKit 0.3 toolbar button. Play it from the buttons/ folder of the SimKit root on the team share (do not copy
 // it elsewhere): it finds the root from its own location (STAR-CCM+ resolvePath("..")) and plays SimKit.java

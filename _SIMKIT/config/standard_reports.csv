@@ -1,0 +1,19 @@
+name,group,type,field,surfaces,condition,meaning
+# Standard reports of the team. One line per report; Standard reports proposes those that fit the simulation.
+# type: mass flow | area average | mass-flow average | maximum | minimum | heat flow | expression (field = the expression)
+# surfaces: name prefixes joined by + (IN, OUT, OPEN, WALL, ...) or REGIONS; condition: energy | unsteady | needs <report> <report>
+r_mdot_in,massBalance,mass flow,,IN,,mass flow entering (IN_ surfaces)
+r_mdot_out,massBalance,mass flow,,OUT+OPEN,,mass flow leaving (OUT_ and OPEN_)
+r_mdot_net,massBalance,mass flow,,IN+OUT+OPEN,,net mass flow: tends to 0 when mass is conserved
+r_mdot_imbalance_pct,convergence,expression,abs(${r_mdot_net}) / abs(${r_mdot_in}) * 100,,needs r_mdot_net r_mdot_in,mass imbalance in % of the inflow (converged: below 0.1)
+r_p_in_avg,pressure,area average,Pressure,IN,,inlet static pressure (area average)
+r_p_out_avg,pressure,area average,Pressure,OUT,,outlet static pressure (area average)
+r_p0_in_avg,pressure,area average,TotalPressure,IN,,inlet total pressure (area average)
+r_dp_static,pressure,expression,${r_p_in_avg} - ${r_p_out_avg},,needs r_p_in_avg r_p_out_avg,"static pressure drop, inlet - outlet"
+r_T_in_mfavg,temperature,mass-flow average,Temperature,IN,energy,inlet temperature (mass-flow average)
+r_T_out_mfavg,temperature,mass-flow average,Temperature,OUT+OPEN,energy,outlet temperature (mass-flow average)
+r_T_wall_max,temperature,maximum,Temperature,WALL,energy,hottest wall temperature
+r_Q_wall,heat,heat flow,,WALL,energy,heat flow through the walls
+r_yplus_wall_max,yplus,maximum,WallYplus,WALL,,maximum wall y+
+r_yplus_wall_avg,yplus,area average,WallYplus,WALL,,average wall y+
+r_Co_max,courant,maximum,CourantNumber,REGIONS,unsteady,maximum convective Courant number

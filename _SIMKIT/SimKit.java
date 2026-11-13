@@ -1,7 +1,7 @@
 // SimKit.java -- SimKit 0.3 (2026-11-11) -- STAR-CCM+ 2402 and later, Windows 10/11 and Linux RHEL 7/9.
 //
 // Team helper for STAR-CCM+ cases. It keeps the native STAR-CCM+ workflow; it only adds:
-//   * Save new version: not a case yet -> creates the case folder and <CASEID>[_<label>]_v01.sim (number automatic);
+//   * Save as new: not a case yet -> creates the case folder and <CASEID>[_<label>]_v01.sim (number automatic);
 //                     a case -> keeps the open file as it is and continues in <CASEID>[_<label>]_v<nn+1>.sim (Enter),
 //                     or starts a new case from it; records the version it is based on, the set-up and the changes.
 //                     The normal STAR-CCM+ Save (Ctrl+S) keeps saving the current version file as usual.
@@ -125,7 +125,7 @@ public class SimKit extends StarMacro {
       {"surface", "^(IN|OUT|OPEN|WALL|SYM|IF)_[A-Za-z0-9_]+$", "WALL_vane_ps", "<BC>_<feature>"}};
   static final String[][] DEFAULT_PROJECTS = {{"ISO", "ISO 2685 burner", ""}};
 
-  static final String[] TOOL_NAMES = {"", "New case", "Save new version", "Check", "Export results",
+  static final String[] TOOL_NAMES = {"", "New case", "Save as new", "Check", "Export results",
       "Calculators", "", "Case tracker", "Guideline", "About", "Standard reports", "",
       "Mesh study", "Standard scenes", "Case report"};
   static final String[] TOOL_HELP = {"",
@@ -498,14 +498,14 @@ public class SimKit extends StarMacro {
     } else {
       headTitle.setText("Not a SimKit case yet");
       headTitle.setForeground(new java.awt.Color(0x8A, 0x5A, 0x00));
-      headSub.setText("Start with Save new version: it creates the case folder and saves this simulation as v01.");
+      headSub.setText("Start with Save as new: it creates the case folder and saves this simulation as v01.");
       headPath.setText(path.isEmpty() ? "(simulation not saved yet)" : path);
     }
     for (int id : NEEDS_CASE) {   // greyed until the sim is a case
       JButton b = buttonById.get(id);
       if (b == null) continue;
       b.setEnabled(c != null && !busy);
-      b.setToolTipText(c != null ? TOOL_HELP[id] : "Needs a SimKit case: use Save new version first. (" + TOOL_HELP[id] + ")");
+      b.setToolTipText(c != null ? TOOL_HELP[id] : "Needs a SimKit case: use Save as new first. (" + TOOL_HELP[id] + ")");
     }
   }
 
@@ -551,7 +551,7 @@ public class SimKit extends StarMacro {
       return "Case " + c.caseId + (c.label.isEmpty() ? "" : "   label " + c.label) + "   version v" + Fmt.two(c.version)
           + "\n" + path;
     } catch (IllegalStateException e) {
-      return "Not a SimKit case yet (" + e.getMessage() + "): use Save new version\n"
+      return "Not a SimKit case yet (" + e.getMessage() + "): use Save as new\n"
           + (path.isEmpty() ? "(unsaved sim)" : path);
     }
   }
@@ -626,7 +626,7 @@ public class SimKit extends StarMacro {
     try {
       return parseCase(sessionPath());
     } catch (IllegalStateException e) {
-      throw new Cancel("this needs a sim saved with Save new version (" + e.getMessage() + ")");
+      throw new Cancel("this needs a sim saved with Save as new (" + e.getMessage() + ")");
     }
   }
 
@@ -752,86 +752,24 @@ public class SimKit extends StarMacro {
   // New case / New version
   // =====================================================================================================
 
-  /** New case. If the open sim is already a case, the new case gets it as parent (branch). */
+  /** New case: the same window as Save as new (kept for the batch tool number). */
   void toolNewCase() throws IOException {
-    CaseInfo parent = caseOrNull();
+    toolSave();
+  }
+
+  /** Creates a case (v01) from the open sim: case folder, file, case_identity.txt, record, case list. */
+  void createCase(CaseInfo parent, String d, String pr, Path casesDir) throws IOException {
     String sourceFile = sessionPath();   // the file this sim was opened from (if any): recorded as "based on"
-    List<String[]> projects = projects();
-    String[] projLabels = new String[projects.size()];
-    for (int i = 0; i < projLabels.length; i++) projLabels[i] = projects.get(i)[0] + "  -  " + projects.get(i)[1];
-    JComboBox<String> proj = new JComboBox<>(projLabels);
-    proj.setEditable(true);   // a new project code can be typed
-    JComboBox<String> cfg = new JComboBox<>();
-    cfg.setEditable(true);    // free text; the list only suggests
-    JTextField label = new JTextField(parent == null ? "" : parent.label, 12);
-    JTextField desc = new JTextField(40);
-    JTextField where = new JTextField(defaultCasesDir().toString(), 40);
-    JButton browse = new JButton("Browse...");
-    browse.addActionListener(e -> {
-      JFileChooser fc = new JFileChooser(where.getText());
-      fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-      fc.setDialogTitle("Folder that will hold the case folder");
-      if (fc.showOpenDialog(where) == JFileChooser.APPROVE_OPTION) where.setText(fc.getSelectedFile().getPath());
-    });
-    JPanel wherePanel = new JPanel(new BorderLayout(4, 0));
-    wherePanel.add(where, BorderLayout.CENTER);
-    wherePanel.add(browse, BorderLayout.EAST);
-    Path suggestDir = defaultCasesDir();
-    Runnable fillCfg = () -> {
-      Object typed = cfg.getEditor().getItem();
-      cfg.removeAllItems();
-      cfg.addItem("");
-      Set<String> seen = new LinkedHashSet<>();
-      int i = proj.getSelectedIndex();
-      if (i >= 0 && i < projects.size()) for (String code : projects.get(i)[2].split(";")) if (!code.trim().isEmpty()) seen.add(code.trim());
-      seen.addAll(usedConfigurations(suggestDir));
-      for (String x : seen) cfg.addItem(x);
-      if (typed != null) cfg.getEditor().setItem(typed);
-    };
-    proj.addActionListener(e -> fillCfg.run());
-    if (parent != null) {
-      boolean found = false;
-      for (int i = 0; i < projects.size(); i++) if (projects.get(i)[0].equals(parent.proj)) { proj.setSelectedIndex(i); found = true; }
-      if (!found) proj.getEditor().setItem(parent.proj);
-    }
-    fillCfg.run();
-    if (parent != null) cfg.getEditor().setItem(readIdentity(parent).getOrDefault("configuration", parent.cfg == null ? "" : parent.cfg));
-    JPanel p = new JPanel(new GridLayout(0, 2, 6, 4));
-    if (parent != null) { p.add(new JLabel("Parent case")); p.add(new JLabel(parent.caseId + "  (this sim)")); }
-    p.add(new JLabel("Project")); p.add(proj);
-    p.add(new JLabel("Description (one line)")); p.add(desc);
-    p.add(new JLabel("Configuration (optional, free text)")); p.add(cfg);
-    p.add(new JLabel("Label in the file name (optional)")); p.add(label);
-    p.add(new JLabel("Create the case folder in")); p.add(wherePanel);
-    JLabel hint = new JLabel(" ");
-    hint.setForeground(new java.awt.Color(0xB0, 0x20, 0x20));
-    String d;
-    while (true) {   // a missing entry re-opens the form with the inputs kept (no extra window)
-      if (!Ui.form(parent == null ? "Save new version  -  start the case (v01)" : "New case from " + parent.caseId, p)) throw new Cancel(null);
-      d = Fmt.oneLine(desc.getText());
-      String missing = d.isEmpty() ? "Please type a one-line description."
-          : where.getText().trim().isEmpty() ? "Please choose the folder that will hold the case folder." : null;
-      if (missing == null) break;
-      if (hint.getParent() == null) {
-        p.add(new JLabel(""));
-        p.add(hint);
-      }
-      hint.setText(missing);
-    }
-    String lab = checkLabel(label.getText());
-    String pr = projectCode(proj, projects);
-    String conf = Fmt.oneLine(String.valueOf(cfg.getEditor().getItem() == null ? "" : cfg.getEditor().getItem()));
-    Path casesDir = Paths.get(where.getText().trim()).toAbsolutePath().normalize();
-    if (Fs.under(casesDir, Fs.kit()) || Fs.same(casesDir, Fs.kit())) throw new Cancel("cases cannot go inside the kit folder " + Fs.kit());
-    CaseInfo c = createCaseFolders(casesDir, pr, lab);
+    CaseInfo c = createCaseFolders(casesDir, pr, "");
     Env.setPref("casesDir", casesDir.toString());
+    Env.setPref("project", pr);
     sim.saveState(Fs.guard(c.simFile).toString());
     log.line("saved " + c.simFile + (parent == null ? "" : "\n(" + parent.caseId + " stays as it is on disk; you now work in "
         + c.caseId + ")"));
     Map<String, String> id = new LinkedHashMap<>();
     id.put("case_id", c.caseId);
     id.put("description", d);
-    id.put("configuration", conf);
+    id.put("configuration", parent == null ? "" : readIdentity(parent).getOrDefault("configuration", ""));
     id.put("parent_case", parent == null ? "" : parent.caseId);
     id.put("parent_file", parent == null ? "" : parent.simFile.toString());
     id.put("created", Fmt.iso());
@@ -845,96 +783,194 @@ public class SimKit extends StarMacro {
     result("saved " + c.simFile.getFileName() + "  (new case " + c.caseId + ")");
   }
 
-  /** Project code from the (editable) project box: a listed project, or a typed code (2-10 capitals/digits). */
-  static String projectCode(JComboBox<String> proj, List<String[]> projects) {
-    int i = proj.getSelectedIndex();
-    Object typed = proj.getEditor().getItem();
-    String t = typed == null ? "" : typed.toString().trim();
-    for (String[] p : projects) if (t.equals(p[0] + "  -  " + p[1])) return p[0];
-    if (i >= 0 && i < projects.size() && t.isEmpty()) return projects.get(i)[0];
-    String code = t.split("\\s")[0].toUpperCase(Locale.ROOT);
-    if (!PROJECT.matcher(code).matches()) {
-      throw new Cancel("project code '" + t + "': 2 to 10 capital letters or digits, starting with a letter (e.g. ISO, FIRE2)");
-    }
-    return code;
-  }
-
-  /** Configurations already used by the cases of a folder (suggestions for New case). */
-  static List<String> usedConfigurations(Path casesDir) {
-    Set<String> out = new TreeSet<>();
-    for (Path d : Fs.list(casesDir, "*")) {
-      if (!CASE_ID.matcher(d.getFileName().toString()).matches()) continue;
-      String c = readIdentity(d.resolve("sim").resolve("case_identity.txt")).getOrDefault("configuration", "");
-      if (!c.isEmpty()) out.add(c);
-    }
-    return new ArrayList<>(out);
-  }
-
   static void putLast(Map<String, String> id, CaseInfo c) {
     id.put("latest_file", c.simFile.getFileName().toString());
     id.put("last_saved", Fmt.iso());
   }
 
-  /** New version: keeps the open file untouched and saves the set-up as the next _v<nn> of the case (same label),
-   *  without any question. Records the version it is based on, the set-up record and the list of changes. */
-  /** Save new version (one button): not a case yet -> create the case (v01); a case -> one small question,
-   *  "next version" by default (Enter), or "new case from this one". */
+  /** Save as new (one button, one window): the next version of this case (Enter), or a new case based on it.
+   *  Not a case yet: starts the case (v01). The open file stays as it is on disk; you continue in the new one. */
   void toolSave() throws IOException {
-    CaseInfo c = caseOrNull();
-    if (c == null) {
-      toolNewCase();
-      return;
-    }
+    final CaseInfo c = caseOrNull();
     if (!gui) {
+      if (c == null) throw new Cancel("not a case yet: start it with Save as new in the STAR-CCM+ window");
       saveNextVersion(c, c.label);
       return;
     }
-    int v = nextVersion(c);
-    javax.swing.JRadioButton next = new javax.swing.JRadioButton("Next version of " + c.caseId + "   (v" + Fmt.two(v) + ")", true);
-    javax.swing.JRadioButton fresh = new javax.swing.JRadioButton("New case from this one   (asks for a description)");
-    javax.swing.ButtonGroup bg = new javax.swing.ButtonGroup();
-    bg.add(next);
-    bg.add(fresh);
-    next.setFont(next.getFont().deriveFont(Font.BOLD));
-    fresh.setFont(fresh.getFont().deriveFont(Font.BOLD));
-    JTextField name = new JTextField(c.label, 14);
-    JLabel file = new JLabel();
-    Runnable upd = () -> {
-      String t = name.getText().trim();
-      file.setText(c.caseId + (t.isEmpty() ? "" : "_" + t) + "_v" + Fmt.two(v) + ".sim");
-      name.setEnabled(next.isSelected());
-      next.setFont(next.getFont().deriveFont(next.isSelected() ? Font.BOLD : Font.PLAIN));
-      fresh.setFont(fresh.getFont().deriveFont(fresh.isSelected() ? Font.BOLD : Font.PLAIN));
+    final List<String[]> projects = projects();
+    final Path dir0 = defaultCasesDir();
+    String last = Env.pref("project");
+    final String proj0 = c != null ? c.proj : last != null && !last.isEmpty() ? last : projects.isEmpty() ? "ISO" : projects.get(0)[0];
+    Object[] r = Ui.edt(() -> saveWindow(c, projects, dir0, proj0));
+    if (r == null) throw new Cancel(null);
+    if ("version".equals(r[0])) saveNextVersion(c, (String) r[1]);
+    else createCase(c, (String) r[1], (String) r[2], (Path) r[3]);
+  }
+
+  /** A long path shortened in the middle, for one line. */
+  static String shortPath(String p) {
+    if (p.length() <= 64) return p;
+    return p.substring(0, 22) + "\u2026" + p.substring(p.length() - 40);
+  }
+
+  /** The Save as new window (on the Swing thread). Returns {"version", name} or {"case", description, project,
+   *  folder}, null if cancelled. */
+  Object[] saveWindow(final CaseInfo c, List<String[]> projects, Path dir0, String proj0) {
+    final boolean isCase = c != null;
+    final int v = isCase ? nextVersion(c) : 1;
+    final boolean[] asCase = {!isCase};
+    final JTextField name = Ui.hintField(isCase ? c.label : "", "optional", 14);
+    final JTextField desc = Ui.hintField("", "what this case is about, in one line", 34);
+    String[] codes = new String[projects.size()];
+    StringBuilder tip = new StringBuilder("<html>");
+    for (int i = 0; i < codes.length; i++) {
+      codes[i] = projects.get(i)[0];
+      tip.append(Html.esc(projects.get(i)[0] + "  " + projects.get(i)[1])).append("<br>");
+    }
+    final JComboBox<String> proj = new JComboBox<>(codes);
+    proj.setEditable(true);
+    proj.setSelectedItem(proj0);
+    proj.setToolTipText(tip.append("or type a new code</html>").toString());
+    final JTextField where = new JTextField(dir0.toString(), 26);
+    JButton browse = new JButton("Browse...");
+    browse.addActionListener(e -> {
+      JFileChooser fc = new JFileChooser(where.getText());
+      fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+      fc.setDialogTitle("Folder for the case folder");
+      if (fc.showOpenDialog(where) == JFileChooser.APPROVE_OPTION) where.setText(fc.getSelectedFile().getPath());
+    });
+    final JLabel file = new JLabel(" "), folder = Ui.muted(" ");
+    file.setFont(file.getFont().deriveFont(Font.BOLD));
+    final JButton ok = Ui.primary(isCase ? "Save version" : "Create case");
+
+    // the two choices (a case only)
+    final JPanel cardV = Ui.card("Next version", "Same question, better set-up");
+    final JPanel cardC = Ui.card("New case", isCase ? "A different question, based on " + versionId(c) : "");
+    // what each choice needs
+    JPanel vPane = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+    vPane.add(new JLabel("Name in the file"));
+    vPane.add(name);
+    JPanel more = new JPanel(new java.awt.GridBagLayout());
+    java.awt.GridBagConstraints g = new java.awt.GridBagConstraints();
+    g.insets = new java.awt.Insets(3, 0, 3, 8);
+    g.anchor = java.awt.GridBagConstraints.WEST;
+    g.gridy = 0;
+    more.add(new JLabel("Project"), g);
+    more.add(proj, g);
+    g.gridy = 1;
+    more.add(new JLabel("Folder"), g);
+    more.add(where, g);
+    more.add(browse, g);
+    more.setVisible(false);
+    final JLabel where0 = Ui.muted("");
+    final JButton change = Ui.link("Change");
+    JPanel line = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+    line.add(where0);
+    line.add(change);
+    change.addActionListener(e -> {
+      more.setVisible(true);
+      line.setVisible(false);
+      javax.swing.SwingUtilities.getWindowAncestor(more).pack();
+    });
+    JPanel cPane = new JPanel();
+    cPane.setLayout(new javax.swing.BoxLayout(cPane, javax.swing.BoxLayout.Y_AXIS));
+    JLabel dl = new JLabel("Description");
+    JPanel moreRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+    moreRow.add(more);
+    for (javax.swing.JComponent k : new javax.swing.JComponent[] {dl, desc, line, moreRow}) {
+      k.setAlignmentX(0f);
+      cPane.add(k);
+      cPane.add(javax.swing.Box.createVerticalStrut(5));
+    }
+    desc.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, desc.getPreferredSize().height));
+    final java.awt.CardLayout cl = new java.awt.CardLayout();
+    final JPanel fields = new JPanel(cl);
+    fields.add(vPane, "version");
+    fields.add(cPane, "case");
+
+    final Runnable upd = () -> {
+      if (isCase) {
+        Ui.chosen(cardV, !asCase[0]);
+        Ui.chosen(cardC, asCase[0]);
+      }
+      cl.show(fields, asCase[0] ? "case" : "version");
+      ok.setText(asCase[0] ? "Create case" : "Save version");
+      if (!asCase[0]) {
+        String t = name.getText().trim();
+        file.setText(c.caseId + (t.isEmpty() ? "" : "_" + t) + "_v" + Fmt.two(v) + ".sim");
+        folder.setText("in " + shortPath(c.sub("sim").toString()));
+      } else {
+        Object it = proj.getEditor().getItem();
+        String code = it == null ? "" : it.toString().trim().toUpperCase(Locale.ROOT);
+        String w = where.getText().trim();
+        String id = code + "-" + (w.isEmpty() || !PROJECT.matcher(code).matches() ? "NNN"
+            : String.format(Locale.ROOT, "%03d", nextCaseNo(Paths.get(w), code)));
+        file.setText(id + "_v01.sim");
+        folder.setText("in " + (w.isEmpty() ? "?" : shortPath(Paths.get(w).resolve(id).resolve("sim").toString())));
+        where0.setText("Project " + code + "  \u00B7  " + (w.isEmpty() ? "no folder" : shortPath(w)) + "   ");
+      }
     };
-    name.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+    javax.swing.event.DocumentListener dl2 = new javax.swing.event.DocumentListener() {
       @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
       @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
       @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+    };
+    name.getDocument().addDocumentListener(dl2);
+    where.getDocument().addDocumentListener(dl2);
+    ((JTextField) proj.getEditor().getEditorComponent()).getDocument().addDocumentListener(dl2);
+    proj.addActionListener(e -> upd.run());
+    cardV.addMouseListener(new java.awt.event.MouseAdapter() {
+      @Override public void mousePressed(java.awt.event.MouseEvent e) { asCase[0] = false; upd.run(); name.requestFocusInWindow(); }
     });
-    next.addActionListener(e -> upd.run());
-    fresh.addActionListener(e -> upd.run());
-    upd.run();
-    JPanel p = new JPanel();
-    p.setLayout(new javax.swing.BoxLayout(p, javax.swing.BoxLayout.Y_AXIS));
-    JPanel nameRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
-    nameRow.add(new JLabel("name (optional)"));
-    nameRow.add(name);
-    nameRow.add(new JLabel("->"));
-    nameRow.add(file);
-    p.add(left(next));
-    p.add(left(grey("Same question, better set-up: a fix, a setting, more iterations, a rerun. Only the latest version counts.")));
-    p.add(left(nameRow));
-    p.add(javax.swing.Box.createVerticalStrut(10));
-    p.add(left(fresh));
-    p.add(left(grey("A different answer to compare: another geometry, operating point, model choice or mesh level.")));
-    p.add(javax.swing.Box.createVerticalStrut(6));
-    p.add(left(grey("Either way the open file stays as it is on disk and you continue in the new one.")));
-    if (!Ui.form("Save new version  -  " + c.simBase(), p)) throw new Cancel(null);
-    if (fresh.isSelected()) {
-      toolNewCase();
-      return;
+    cardC.addMouseListener(new java.awt.event.MouseAdapter() {
+      @Override public void mousePressed(java.awt.event.MouseEvent e) { asCase[0] = true; upd.run(); desc.requestFocusInWindow(); }
+    });
+
+    JPanel body = new JPanel();
+    body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
+    if (isCase) {
+      JPanel cards = new JPanel(new GridLayout(1, 2, 10, 0));
+      cards.add(cardV);
+      cards.add(cardC);
+      cards.setAlignmentX(0f);
+      body.add(cards);
+      body.add(javax.swing.Box.createVerticalStrut(14));
     }
-    saveNextVersion(c, checkLabel(name.getText()));
+    fields.setAlignmentX(0f);
+    body.add(fields);
+    body.add(javax.swing.Box.createVerticalStrut(14));
+    javax.swing.JSeparator sep = new javax.swing.JSeparator();
+    sep.setAlignmentX(0f);
+    body.add(sep);
+    body.add(javax.swing.Box.createVerticalStrut(8));
+    for (JLabel k : new JLabel[] {file, folder, Ui.muted("The open file stays as it is; you continue in the new one.")}) {
+      k.setAlignmentX(0f);
+      body.add(k);
+      body.add(javax.swing.Box.createVerticalStrut(2));
+    }
+    upd.run();
+    String title = isCase ? "Save as new" : "Start a case";
+    String sub = isCase ? c.caseId + "  \u00B7  v" + Fmt.two(c.version) + "  \u00B7  " + Fmt.cut(readIdentity(c).getOrDefault("description", ""), 60)
+        : "Saves this simulation as version 1 of a new case.";
+    boolean go = Ui.sheet(title, sub, body, ok, () -> {
+      if (!asCase[0]) {
+        try { checkLabel(name.getText()); } catch (Cancel x) { return "Name: letters and digits, starting with a letter (e.g. cold, fine)."; }
+        return null;
+      }
+      if (Fmt.oneLine(desc.getText()).isEmpty()) return "Write a short description.";
+      Object it = proj.getEditor().getItem();
+      String code = it == null ? "" : it.toString().trim().toUpperCase(Locale.ROOT);
+      if (!PROJECT.matcher(code).matches()) return "Project: 2 to 10 capital letters or digits (e.g. ISO).";
+      if (where.getText().trim().isEmpty()) return "Choose the folder for the case.";
+      Path dir = Paths.get(where.getText().trim()).toAbsolutePath().normalize();
+      if (Fs.under(dir, Fs.kit()) || Fs.same(dir, Fs.kit())) return "Cases cannot go inside the kit folder.";
+      return null;
+    });
+    if (!go) return null;
+    if (!asCase[0]) return new Object[] {"version", checkLabel(name.getText())};
+    Object it = proj.getEditor().getItem();
+    return new Object[] {"case", Fmt.oneLine(desc.getText()), it.toString().trim().toUpperCase(Locale.ROOT),
+        Paths.get(where.getText().trim()).toAbsolutePath().normalize()};
   }
 
   static javax.swing.JComponent left(javax.swing.JComponent c) {
@@ -3164,7 +3200,7 @@ public class SimKit extends StarMacro {
     List<String[]> names = namingIssues();
     rows.add(chk(names.isEmpty() ? "PASS" : "WARN", "names", names.isEmpty() ? "parts, surfaces and default names OK"
         : names.size() + " to improve (list below)"));
-    rows.add(c == null ? chk("WARN", "case folder", "not a SimKit case: use Save new version to keep a record of it")
+    rows.add(c == null ? chk("WARN", "case folder", "not a SimKit case: use Save as new to keep a record of it")
         : chk("PASS", "case folder", c.caseDir.toString()));
     int fail = 0, warn = 0;
     StringBuilder sb = new StringBuilder();
@@ -3520,23 +3556,65 @@ public class SimKit extends StarMacro {
   // Standard reports (built from the surface prefixes)
   // =====================================================================================================
 
-  /** name, report class, field function ("" = none), targets (tokens joined by +, or REGIONS), plot group
-   *  ("" = monitor only, "-" = no monitor), condition ("" / energy / unsteady), meaning. */
+  /** The team's standard reports (config/standard_reports.csv, else these): name, group (one plot each), type,
+   *  field (or the expression of an expression report), surfaces (prefixes joined by +, or REGIONS), condition
+   *  ("", energy, unsteady, "needs <report> <report>"), meaning. */
+  static final String[] STD_COLS = {"name", "group", "type", "field", "surfaces", "condition", "meaning"};
   static final String[][] STANDARD_REPORTS = {
-      {"r_mdot_in", "star.flow.MassFlowReport", "", "IN", "massBalance", "", "mass flow entering (IN_ surfaces)"},
-      {"r_mdot_out", "star.flow.MassFlowReport", "", "OUT+OPEN", "massBalance", "", "mass flow leaving (OUT_ and OPEN_)"},
-      {"r_mdot_net", "star.flow.MassFlowReport", "", "IN+OUT+OPEN", "massBalance", "", "net mass flow: tends to 0 when mass is conserved"},
-      {"r_p_in_avg", "star.base.report.AreaAverageReport", "Pressure", "IN", "pressure", "", "inlet static pressure (area average)"},
-      {"r_p_out_avg", "star.base.report.AreaAverageReport", "Pressure", "OUT", "pressure", "", "outlet static pressure (area average)"},
-      {"r_T_in_mfavg", "star.flow.MassFlowAverageReport", "Temperature", "IN", "temperature", "energy", "inlet temperature (mass-flow average)"},
-      {"r_T_out_mfavg", "star.flow.MassFlowAverageReport", "Temperature", "OUT+OPEN", "temperature", "energy", "outlet temperature (mass-flow average)"},
-      {"r_Q_wall", "star.energy.HeatTransferReport", "", "WALL", "heat", "energy", "heat flow through the walls"},
-      {"r_yplus_wall_max", "star.base.report.MaxReport", "WallYplus", "WALL", "yplus", "", "maximum wall y+"},
-      {"r_yplus_wall_avg", "star.base.report.AreaAverageReport", "WallYplus", "WALL", "yplus", "", "average wall y+"},
-      {"r_Co_max", "star.base.report.MaxReport", "CourantNumber", "REGIONS", "courant", "unsteady", "maximum convective Courant number"}};
+      {"r_mdot_in", "massBalance", "mass flow", "", "IN", "", "mass flow entering (IN_ surfaces)"},
+      {"r_mdot_out", "massBalance", "mass flow", "", "OUT+OPEN", "", "mass flow leaving (OUT_ and OPEN_)"},
+      {"r_mdot_net", "massBalance", "mass flow", "", "IN+OUT+OPEN", "", "net mass flow: tends to 0 when mass is conserved"},
+      {"r_mdot_imbalance_pct", "convergence", "expression", "abs(${r_mdot_net}) / abs(${r_mdot_in}) * 100", "", "needs r_mdot_net r_mdot_in", "mass imbalance in % of the inflow (converged: below 0.1)"},
+      {"r_p_in_avg", "pressure", "area average", "Pressure", "IN", "", "inlet static pressure (area average)"},
+      {"r_p_out_avg", "pressure", "area average", "Pressure", "OUT", "", "outlet static pressure (area average)"},
+      {"r_p0_in_avg", "pressure", "area average", "TotalPressure", "IN", "", "inlet total pressure (area average)"},
+      {"r_dp_static", "pressure", "expression", "${r_p_in_avg} - ${r_p_out_avg}", "", "needs r_p_in_avg r_p_out_avg", "static pressure drop, inlet - outlet"},
+      {"r_T_in_mfavg", "temperature", "mass-flow average", "Temperature", "IN", "energy", "inlet temperature (mass-flow average)"},
+      {"r_T_out_mfavg", "temperature", "mass-flow average", "Temperature", "OUT+OPEN", "energy", "outlet temperature (mass-flow average)"},
+      {"r_T_wall_max", "temperature", "maximum", "Temperature", "WALL", "energy", "hottest wall temperature"},
+      {"r_Q_wall", "heat", "heat flow", "", "WALL", "energy", "heat flow through the walls"},
+      {"r_yplus_wall_max", "yplus", "maximum", "WallYplus", "WALL", "", "maximum wall y+"},
+      {"r_yplus_wall_avg", "yplus", "area average", "WallYplus", "WALL", "", "average wall y+"},
+      {"r_Co_max", "courant", "maximum", "CourantNumber", "REGIONS", "unsteady", "maximum convective Courant number"}};
 
-  /** Standard reports: proposes the reports that fit this sim (surface prefixes, models), the user picks, SimKit
-   *  creates the reports, their monitors and one plot per group. Existing objects are never changed or replaced. */
+  /** Report types by their plain name (a full class name works too). */
+  static String reportClass(String type) {
+    switch (type.trim().toLowerCase(Locale.ROOT)) {
+      case "mass flow": return "star.flow.MassFlowReport";
+      case "area average": return "star.base.report.AreaAverageReport";
+      case "mass-flow average": return "star.flow.MassFlowAverageReport";
+      case "maximum": return "star.base.report.MaxReport";
+      case "minimum": return "star.base.report.MinReport";
+      case "heat flow": return "star.energy.HeatTransferReport";
+      case "expression": return "star.base.report.ExpressionReport";
+      default: return type.trim();
+    }
+  }
+
+  static String groupTitle(String g) {
+    switch (g) {
+      case "massBalance": return "Mass balance";
+      case "convergence": return "Convergence";
+      case "pressure": return "Pressure";
+      case "temperature": return "Temperature";
+      case "heat": return "Walls: heat";
+      case "yplus": return "Walls: y+";
+      case "courant": return "Unsteady";
+      default: return g;
+    }
+  }
+
+  /** One proposed report: its definition, the objects it is computed on, and why not (null: it can be made). */
+  static final class StdReport {
+    String[] def;
+    List<Object> target = new ArrayList<>();
+    String why;
+    boolean on;
+  }
+
+  /** Standard reports (one window): the team's list grouped by purpose; each row shows the surfaces it is computed on
+   *  (double-click to choose others) or why it cannot be made here. Creates the reports, a monitor each and one
+   *  plot per group. Existing objects are never changed or replaced. */
   void toolStandardReports() {
     Map<String, List<Boundary>> bc = boundariesByToken();
     List<Object> regions = new ArrayList<>(sim.getRegionManager().getRegions());
@@ -3544,65 +3622,197 @@ public class SimKit extends StarMacro {
     for (Object r : sim.getReportManager().getObjects()) existing.add(nm(r));
     boolean unsteady = unsteadySolver() != null;
     boolean energy = fieldFunction("Temperature") != null;
-    List<String[]> plan = new ArrayList<>();
-    List<List<Object>> parts = new ArrayList<>();
-    StringBuilder skipped = new StringBuilder();
-    for (String[] r : STANDARD_REPORTS) {
-      String why = null;
-      List<Object> target = new ArrayList<>();
-      if (r[3].equals("REGIONS")) target.addAll(regions);
-      else for (String t : r[3].split("\\+")) target.addAll(bc.getOrDefault(t, Collections.emptyList()));
-      if (existing.contains(r[0])) why = "already exists";
-      else if (target.isEmpty()) why = "no " + r[3].replace("+", "_/") + "_ surfaces";
-      else if (r[5].equals("energy") && !energy) why = "no energy model (no Temperature)";
-      else if (r[5].equals("unsteady") && !unsteady) why = "steady simulation";
-      else if (!r[2].isEmpty() && fieldFunction(r[2]) == null) why = "field " + r[2] + " not available";
-      else if (Reflect.cls(r[1]) == null) why = "report type not available in this release";
-      if (r[0].equals("r_mdot_net") && (bc.getOrDefault("IN", Collections.emptyList()).isEmpty()
+    List<StdReport> all = new ArrayList<>();
+    Set<String> possible = new HashSet<>(existing);
+    for (String[] r : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) {
+      if (r[0] == null || r[0].trim().isEmpty()) continue;
+      for (int k = 0; k < r.length; k++) r[k] = r[k] == null ? "" : r[k].trim();
+      StdReport x = new StdReport();
+      x.def = r;
+      boolean expr = r[2].equalsIgnoreCase("expression");
+      if (r[4].equals("REGIONS")) x.target.addAll(regions);
+      else if (!r[4].isEmpty()) for (String t : r[4].split("\\+")) x.target.addAll(bc.getOrDefault(t, Collections.emptyList()));
+      if (existing.contains(r[0])) x.why = "already in the simulation";
+      else if (!expr && x.target.isEmpty()) x.why = "no " + r[4].replace("+", "_ or ") + "_ surface";
+      else if (r[5].equals("energy") && !energy) x.why = "no energy model";
+      else if (r[5].equals("unsteady") && !unsteady) x.why = "steady simulation";
+      else if (!expr && !r[3].isEmpty() && fieldFunction(r[3]) == null) x.why = r[3] + " not available";
+      else if (Reflect.cls(reportClass(r[2])) == null) x.why = "report type not available";
+      if (x.why == null && r[0].equals("r_mdot_net") && (bc.getOrDefault("IN", Collections.emptyList()).isEmpty()
           || (bc.getOrDefault("OUT", Collections.emptyList()).isEmpty() && bc.getOrDefault("OPEN", Collections.emptyList()).isEmpty()))) {
-        why = why == null ? "needs both IN_ and OUT_/OPEN_ surfaces" : why;
+        x.why = "needs IN_ and OUT_ or OPEN_ surfaces";
       }
-      if (why != null) {
-        skipped.append(String.format("  %-18s %s%n", r[0], why));
-        continue;
+      if (x.why == null && r[5].startsWith("needs ")) {
+        for (String n : r[5].substring(6).trim().split("\\s+")) if (!possible.contains(n)) x.why = "needs " + n;
       }
-      plan.add(r);
-      parts.add(target);
+      x.on = x.why == null;
+      if (x.why == null) possible.add(r[0]);
+      all.add(x);
     }
-    if (plan.isEmpty()) {
-      log.line("nothing to add.\n" + skipped + "\nName the surfaces IN_..., OUT_..., OPEN_..., WALL_... to get these reports.");
+    boolean any = false;
+    for (StdReport x : all) any |= x.why == null;
+    if (!any) {
+      if (gui) Ui.sheet("Standard reports", "Nothing to add to this simulation.", Ui.muted("<html>Every standard report is already there, or "
+          + "the surfaces are not named yet: IN_..., OUT_..., OPEN_..., WALL_... (Check lists the names to fix).</html>"),
+          Ui.primary("OK"), null);
+      log.line("nothing to add.");
+      for (StdReport x : all) log.line(String.format("  %-22s %s", x.def[0], x.why));
       return;
     }
-    String[] labels = new String[plan.size()];
-    for (int i = 0; i < labels.length; i++) {
-      String[] r = plan.get(i);
-      labels[i] = String.format("%-18s %-44s on %d object(s)", r[0], r[6], parts.get(i).size());
+    if (gui) {
+      List<Object> every = new ArrayList<>();
+      for (Region r : sim.getRegionManager().getRegions()) every.addAll(r.getBoundaryManager().getBoundaries());
+      if (!Ui.edt(() -> reportsWindow(all, every))) throw new Cancel(null);
     }
-    int[] pick = gui ? Ui.pick("Standard reports", "Reports to create (with their monitors and one plot per group):",
-        labels, true) : allIndices(labels.length);
     Map<String, List<Object>> groups = new LinkedHashMap<>();
-    List<Object> monitorOnly = new ArrayList<>();
-    int made = 0;
-    for (int i : pick) {
-      String[] r = plan.get(i);
+    Set<String> made = new LinkedHashSet<>(existing);
+    int n = 0;
+    for (StdReport x : all) {
+      if (!x.on || x.why != null) continue;
+      String[] r = x.def;
+      if (r[5].startsWith("needs ")) {
+        boolean ok = true;
+        for (String q : r[5].substring(6).trim().split("\\s+")) ok &= made.contains(q);
+        if (!ok) { log.line("  " + r[0] + ": skipped (the reports it uses were not created)"); continue; }
+      }
       try {
-        Object report = Reflect.invoke(sim.getReportManager(), "createReport", Reflect.cls(r[1]));
+        Object report = Reflect.invoke(sim.getReportManager(), "createReport", Reflect.cls(reportClass(r[2])));
         ((NamedObject) report).setPresentationName(r[0]);
-        if (!r[2].isEmpty()) Reflect.invoke(report, "setFieldFunction", fieldFunction(r[2]));
-        Reflect.invoke(Reflect.invoke(report, "getParts"), "setObjects", new NeoObjectVector(parts.get(i).toArray()));
-        made++;
-        log.line(String.format("  created %-18s %s", r[0], r[6]));
-        if (r[4].equals("-")) continue;
-        if (r[4].isEmpty()) monitorOnly.add(report);
-        else groups.computeIfAbsent(r[4], k -> new ArrayList<>()).add(report);
+        if (r[2].equalsIgnoreCase("expression")) {
+          Reflect.invoke(report, "setDefinition", r[3]);
+        } else {
+          if (!r[3].isEmpty()) Reflect.invoke(report, "setFieldFunction", fieldFunction(r[3]));
+          Reflect.invoke(Reflect.invoke(report, "getParts"), "setObjects", new NeoObjectVector(x.target.toArray()));
+        }
+        made.add(r[0]);
+        n++;
+        log.line(String.format("  created %-22s %s", r[0], r[6]));
+        if (!r[1].isEmpty()) groups.computeIfAbsent(r[1], k -> new ArrayList<>()).add(report);
       } catch (Throwable t) {
         log.na("report " + r[0], t);
       }
     }
     for (Map.Entry<String, List<Object>> g : groups.entrySet()) monitorsAndPlot(g.getValue(), "pl_" + g.getKey());
-    if (!monitorOnly.isEmpty()) monitorsAndPlot(monitorOnly, null);
-    log.line(made + " report(s) created" + (skipped.length() == 0 ? "" : "; not proposed:\n" + skipped));
-    result(made + " report(s) with monitors and plots created");
+    result(n + " report(s) with monitors and " + groups.size() + " plot(s) created");
+  }
+
+  /** The Standard reports window (Swing thread): rows grouped, tick to create, double-click the surfaces to change
+   *  them; rows that cannot be made are grey with the reason. True on Create. */
+  boolean reportsWindow(final List<StdReport> all, final List<Object> every) {
+    final List<Object> rows = new ArrayList<>();   // a String = a group title, else a StdReport
+    String last = null;
+    for (StdReport x : all) {
+      if (!x.def[1].equals(last)) { rows.add(groupTitle(x.def[1])); last = x.def[1]; }
+      rows.add(x);
+    }
+    final JButton ok = Ui.primary("Create");
+    final Runnable count = () -> {
+      int k = 0;
+      for (StdReport x : all) if (x.on && x.why == null) k++;
+      ok.setText(k == 1 ? "Create 1 report" : "Create " + k + " reports");
+      ok.setEnabled(k > 0);
+    };
+    final javax.swing.table.AbstractTableModel model = new javax.swing.table.AbstractTableModel() {
+      private static final long serialVersionUID = 1L;
+      @Override public int getRowCount() { return rows.size(); }
+      @Override public int getColumnCount() { return 4; }
+      @Override public String getColumnName(int c) { return new String[] {"", "report", "gives", "computed on"}[c]; }
+      @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
+      @Override public boolean isCellEditable(int r, int c) { return c == 0 && rows.get(r) instanceof StdReport && ((StdReport) rows.get(r)).why == null; }
+      @Override public Object getValueAt(int r, int c) {
+        Object o = rows.get(r);
+        if (o instanceof String) return c == 1 ? o : c == 0 ? null : "";
+        StdReport x = (StdReport) o;
+        switch (c) {
+          case 0: return x.why == null && x.on;
+          case 1: return x.def[0];
+          case 2: return x.def[6];
+          default:
+            if (x.why != null) return x.why;
+            if (x.def[2].equalsIgnoreCase("expression")) return x.def[3];
+            List<String> ns = new ArrayList<>();
+            for (Object t : x.target) ns.add(nm(t));
+            return ns.size() <= 3 ? String.join(", ", ns) : ns.get(0) + ", " + ns.get(1) + " and " + (ns.size() - 2) + " more";
+        }
+      }
+      @Override public void setValueAt(Object v, int r, int c) {
+        ((StdReport) rows.get(r)).on = Boolean.TRUE.equals(v);
+        count.run();
+      }
+    };
+    final javax.swing.JTable table = new javax.swing.JTable(model) {
+      private static final long serialVersionUID = 1L;
+      @Override public java.awt.Component prepareRenderer(javax.swing.table.TableCellRenderer rr, int r, int c) {
+        java.awt.Component k = super.prepareRenderer(rr, r, c);
+        Object o = rows.get(r);
+        boolean head = o instanceof String, off = !head && ((StdReport) o).why != null;
+        k.setBackground(head ? new java.awt.Color(0xF2, 0xF4, 0xF7) : isRowSelected(r) && !off ? Ui.PALE : java.awt.Color.WHITE);
+        k.setForeground(off ? new java.awt.Color(0xA8, 0xB0, 0xBA) : head ? Ui.MUTED : c == 3 ? Ui.MUTED : java.awt.Color.BLACK);
+        k.setFont(k.getFont().deriveFont(head ? Font.BOLD : Font.PLAIN));
+        if (k instanceof javax.swing.JCheckBox) k.setEnabled(!off && !head);
+        if (k instanceof javax.swing.JComponent && c == 3 && !head && !off) {
+          ((javax.swing.JComponent) k).setToolTipText(((StdReport) o).def[2].equalsIgnoreCase("expression") ? null : "Double-click to choose the surfaces");
+        }
+        return k;
+      }
+    };
+    javax.swing.table.TableCellRenderer boxes = table.getDefaultRenderer(Boolean.class);
+    table.setDefaultRenderer(Boolean.class, (t, v, sel, foc, r, c) -> {
+      if (rows.get(r) instanceof String) {
+        JLabel l = new JLabel();
+        l.setOpaque(true);
+        return l;
+      }
+      return boxes.getTableCellRendererComponent(t, v, sel, foc, r, c);
+    });
+    table.setRowHeight(24);
+    table.setShowVerticalLines(false);
+    table.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
+    table.getColumnModel().getColumn(0).setMaxWidth(30);
+    table.getColumnModel().getColumn(1).setPreferredWidth(150);
+    table.getColumnModel().getColumn(2).setPreferredWidth(300);
+    table.getColumnModel().getColumn(3).setPreferredWidth(230);
+    table.addMouseListener(new java.awt.event.MouseAdapter() {
+      @Override public void mouseClicked(java.awt.event.MouseEvent e) {
+        int r = table.rowAtPoint(e.getPoint());
+        if (e.getClickCount() != 2 || r < 0 || !(rows.get(r) instanceof StdReport)) return;
+        StdReport x = (StdReport) rows.get(r);
+        if (x.why != null || x.def[2].equalsIgnoreCase("expression") || x.def[4].equals("REGIONS") || every.isEmpty()) return;
+        String[] labels = new String[every.size()];
+        List<Integer> pre = new ArrayList<>();
+        for (int i = 0; i < labels.length; i++) {
+          Object b = every.get(i);
+          String reg = "";
+          try { reg = nm(((Boundary) b).getRegion()) + ": "; } catch (Throwable t) { /* no region name */ }
+          labels[i] = reg + nm(b);
+          if (x.target.contains(b)) pre.add(i);
+        }
+        javax.swing.JList<String> list = new javax.swing.JList<>(labels);
+        int[] sel = new int[pre.size()];
+        for (int i = 0; i < sel.length; i++) sel[i] = pre.get(i);
+        list.setSelectedIndices(sel);
+        JScrollPane sp = new JScrollPane(list);
+        sp.setPreferredSize(new java.awt.Dimension(420, 280));
+        JPanel p = new JPanel(new BorderLayout(0, 6));
+        p.add(Ui.muted("Surfaces for " + x.def[0] + " (Ctrl+click to add or remove):"), BorderLayout.NORTH);
+        p.add(sp, BorderLayout.CENTER);
+        if (JOptionPane.showConfirmDialog(table, p, x.def[0], JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
+        if (list.getSelectedIndices().length == 0) return;
+        x.target.clear();
+        for (int i : list.getSelectedIndices()) x.target.add(every.get(i));
+        model.fireTableRowsUpdated(r, r);
+      }
+    });
+    count.run();
+    JScrollPane sp = new JScrollPane(table);
+    sp.setPreferredSize(new java.awt.Dimension(740, Math.min(24 * rows.size() + 28, 560)));
+    sp.getViewport().setBackground(java.awt.Color.WHITE);
+    JPanel body = new JPanel(new BorderLayout(0, 8));
+    body.add(sp, BorderLayout.CENTER);
+    body.add(Ui.muted("<html>Each report gets a monitor; each group one plot (pl_...). Nothing already in the simulation is changed. "
+        + "Grey rows cannot be made here; the reason is on the right. The list is the team's: config/standard_reports.csv.</html>"),
+        BorderLayout.SOUTH);
+    return Ui.sheet("Standard reports", "The same reports, monitors and plots in every case, so results compare directly.", body, ok, null);
   }
 
   static int[] allIndices(int n) {
@@ -3870,6 +4080,26 @@ public class SimKit extends StarMacro {
   void toolParametrizeMesh() {
     List<MeshSetting> found = new ArrayList<>();
     List<String> relative = new ArrayList<>(), already = new ArrayList<>();
+    scanMesh(found, relative, already);
+    StringBuilder info = new StringBuilder();
+    if (!relative.isEmpty()) info.append("Relative to the base size (follow it automatically, nothing to do):\n  ")
+        .append(String.join("\n  ", relative)).append('\n');
+    if (!already.isEmpty()) info.append("Already driven by a parameter or expression (left as they are):\n  ")
+        .append(String.join("\n  ", already)).append('\n');
+    List<MeshSetting> todo = new ArrayList<>();
+    for (MeshSetting m : found) if (m.kind.equals("size")) todo.add(m);   // batch: prism layers keep their thickness
+    if (todo.isEmpty()) {
+      log.line("no absolute mesh size to parametrize.\n" + info);
+      return;
+    }
+    int done = linkSizes(todo);
+    result(done + " mesh size(s) now follow " + MESH_SCALE + "  (Details: the list)");
+    log.line(done + " mesh size(s) now follow " + MESH_SCALE + ".\n" + info);
+  }
+
+  /** Every absolute mesh length of the automated mesh operations (default values, custom controls, custom prism
+   *  values); relative ones and those already set by a parameter or expression go to the two lists. */
+  void scanMesh(List<MeshSetting> found, List<String> relative, List<String> already) {
     for (Object op : sim.get(MeshOperationManager.class).getObjects()) {
       if (!(op instanceof AutoMeshOperation)) continue;
       String opName = nm(op);
@@ -3887,46 +4117,18 @@ public class SimKit extends StarMacro {
         }
       } catch (Throwable t) { log.na("custom controls of " + opName, t); }
     }
-    StringBuilder info = new StringBuilder();
-    if (!relative.isEmpty()) info.append("Relative to the base size (follow it automatically, nothing to do):\n  ")
-        .append(String.join("\n  ", relative)).append('\n');
-    if (!already.isEmpty()) info.append("Already driven by a parameter or expression (left as they are):\n  ")
-        .append(String.join("\n  ", already)).append('\n');
-    if (found.isEmpty()) {
-      log.line("no absolute mesh size to parametrize.\n" + info);
-      return;
-    }
-    boolean prism = false;
-    boolean anyPrism = false;
-    for (MeshSetting m : found) anyPrism |= m.kind.equals("prism");
-    if (gui && anyPrism) {
-      prism = Ui.option("Mesh study  -  parametrize", "Prism layer thicknesses are absolute too. Scale them with the mesh?\n"
-          + "No (usual): keeps the first-cell height, so y+ stays the same between the meshes.\n"
-          + "Yes: refines the prism layers together with the cells.", new String[] {"No, keep prism layers", "Yes, scale them"}) == 1;
-    }
-    List<MeshSetting> todo = new ArrayList<>();
-    for (MeshSetting m : found) if (prism || m.kind.equals("size")) todo.add(m);
-    if (todo.isEmpty()) {
-      log.line("only prism thicknesses are absolute and you chose to keep them: nothing to do.\n" + info);
-      return;
-    }
-    String[] labels = new String[todo.size()];
-    for (int i = 0; i < labels.length; i++) {
-      MeshSetting m = todo.get(i);
-      labels[i] = String.format("%-26s %-14s %10s %-4s -> %s", Fmt.cut(m.op + (m.control.isEmpty() ? "" : "/" + m.control), 26),
-          m.what, Fmt.num(m.raw), nm(m.units), "${" + m.pName + "} * ${" + MESH_SCALE + "}");
-    }
-    int[] pick = gui ? Ui.pick("Mesh study  -  parametrize", "Absolute mesh sizes to drive with " + MESH_SCALE
-        + " (each keeps its value in its own parameter; the mesh is unchanged while " + MESH_SCALE + " = 1):", labels, true)
-        : allIndices(labels.length);
+  }
+
+  /** Each setting gets its own parameter p_mesh_... (today's value) and the definition ${p_mesh_...} * ${p_meshScale};
+   *  p_meshScale = 1 keeps today's mesh. Returns how many were linked. */
+  int linkSizes(List<MeshSetting> todo) {
     ScalarGlobalParameter scale = findParam(MESH_SCALE);
     if (scale == null) {
       scale = newParam(MESH_SCALE, null, 1.0, null);
       log.line("  created " + MESH_SCALE + " = 1 (dimensionless)");
     }
     int done = 0;
-    for (int i : pick) {
-      MeshSetting m = todo.get(i);
+    for (MeshSetting m : todo) {
       try {
         ScalarGlobalParameter p = findParam(m.pName);
         if (p == null) p = newParam(m.pName, "length", m.raw, m.units);
@@ -3938,10 +4140,7 @@ public class SimKit extends StarMacro {
         log.na(m.op + " " + m.what, t);
       }
     }
-    result(done + " mesh size(s) now follow " + MESH_SCALE + "  (Details: the list)");
-    log.line(done + " mesh size(s) now follow " + MESH_SCALE + ".\n" + info
-        + "\nMesh sensitivity: Mesh study > Create mesh levels makes one case per mesh level; or set " + MESH_SCALE
-        + " yourself (Tools > Parameters) and regenerate the mesh.");
+    return done;
   }
 
   // ----- Mesh study: parametrize only, or one case per mesh level -----------------------------------------
@@ -3972,221 +4171,228 @@ public class SimKit extends StarMacro {
     return t.contains("e") || !t.contains(".") ? t : t.replaceAll("0+$", "").replaceAll("\\.$", "");
   }
 
-  /** Mesh study: "Parametrize only" (one factor p_meshScale drives the absolute sizes you tick) or "Create mesh
-   *  levels" (one case per level, each meshed with its p_meshScale and the sizes you edit). */
+  /** Mesh study (one window): the levels (coarse, medium, fine ...) as a table of mesh factors, the mesh sizes that
+   *  follow the factor, then one case per level next to this one, meshed and saved. */
   void toolMeshStudy() throws IOException {
-    boolean ready = !meshParams().isEmpty() && findParam(MESH_SCALE) != null;
-    int mode = 1;
-    if (gui) {
-      mode = Ui.option("Mesh study", (ready ? "This mesh already follows " + MESH_SCALE + " (" + meshParams().size()
-          + " size parameter(s)).\n\n" : "")
-          + "Parametrize only: the absolute mesh sizes you tick follow one factor " + MESH_SCALE
-          + " (1 = today's mesh).\n    Nothing else changes; you can then vary the mesh yourself.\n"
-          + "Create mesh levels: one case per mesh you define (coarse, medium, fine, ...), each meshed and saved,\n"
-          + "    ready to run; GCI From cases finds them. The open file stays as it is on disk.",
-          new String[] {ready ? "Parametrize more sizes" : "Parametrize only", "Create mesh levels"});
-    }
-    if (mode == 0) {
-      toolParametrizeMesh();
+    CaseInfo c = caseOrNull();
+    if (!gui) {
+      if (c == null) throw new Cancel("mesh levels are saved as cases next to this one: start a case first");
+      if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) toolParametrizeMesh();
+      if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) throw new Cancel("no mesh size follows " + MESH_SCALE + ": nothing to vary");
+      createMeshLevels(c, meshParams(), new ArrayList<>(Arrays.asList(new MeshLevel("coarse", 2.0), new MeshLevel("medium", 1.0))), true);
       return;
     }
-    CaseInfo c = caseOrNull();
-    if (c == null) throw new Cancel("mesh levels are saved as cases next to this one: use Save new version first");
-    if (!ready) {
-      log.line("first, parametrize the mesh:");
-      toolParametrizeMesh();
-      if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) throw new Cancel("no mesh size follows " + MESH_SCALE + ": nothing to vary");
+    if (c == null) {
+      boolean go = Ui.sheet("Mesh study", "Coarser and finer copies of this simulation, to check that the results do not depend on the mesh.",
+          Ui.muted("The levels are saved as cases next to this one, so this simulation has to be a case first."),
+          Ui.primary("Start a case..."), null);
+      if (!go) throw new Cancel(null);
+      toolSave();
+      c = caseOrNull();
+      if (c == null) throw new Cancel(null);
     }
-    Map<String, ScalarGlobalParameter> params = meshParams();
-    List<MeshLevel> levels;
-    boolean mesh = true;
-    if (gui) {
-      Object[] r = meshLevelDialog(c, params);
-      @SuppressWarnings("unchecked") List<MeshLevel> l = (List<MeshLevel>) r[0];
-      levels = l;
-      mesh = (Boolean) r[1];
-    } else {
-      levels = new ArrayList<>(Arrays.asList(new MeshLevel("coarse", 2.0), new MeshLevel("medium", 1.0)));
+    final List<MeshSetting> found = new ArrayList<>();
+    List<String> relative = new ArrayList<>(), already = new ArrayList<>();
+    scanMesh(found, relative, already);
+    final Map<String, ScalarGlobalParameter> linked = meshParams();
+    if (found.isEmpty() && linked.isEmpty()) {
+      throw new Cancel("no absolute mesh size in the automated mesh operations (sizes relative to the base size only, or none): nothing to vary");
     }
-    createMeshLevels(c, params, levels, mesh);
+    final CaseInfo cc = c;
+    Object[] r = Ui.edt(() -> meshWindow(cc, found, linked));
+    if (r == null) throw new Cancel(null);
+    @SuppressWarnings("unchecked") List<MeshSetting> link = (List<MeshSetting>) r[0];
+    @SuppressWarnings("unchecked") List<MeshLevel> levels = (List<MeshLevel>) r[1];
+    if (!link.isEmpty()) log.line(linkSizes(link) + " mesh size(s) now follow " + MESH_SCALE);
+    if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) throw new Cancel("no mesh size follows " + MESH_SCALE + ": nothing to vary");
+    if ((Boolean) r[3]) {
+      result("mesh sizes follow " + MESH_SCALE + " (" + meshParams().size() + "); no level created");
+      return;
+    }
+    createMeshLevels(c, meshParams(), levels, (Boolean) r[2]);
   }
 
-  /** The levels table: create, name, p_meshScale, then one column per size parameter (size of that level, editable;
-   *  an edited size is kept when p_meshScale changes and shown in blue). Returns {levels, mesh now}. */
-  Object[] meshLevelDialog(CaseInfo c, Map<String, ScalarGlobalParameter> params) {
-    final List<String> names = new ArrayList<>(params.keySet());
-    final double[] base = new double[names.size()];
-    final String[] unit = new String[names.size()];
-    for (int i = 0; i < base.length; i++) {
-      base[i] = params.get(names.get(i)).getQuantity().getValue();
-      Object u = null;
-      try { u = params.get(names.get(i)).getQuantity().getUnits(); } catch (Throwable t) { /* none */ }
-      unit[i] = u == null ? "" : nm(u);
+  /** The mesh study window (Swing thread). Returns {sizes to link, levels, mesh now, sizes only} or null. */
+  Object[] meshWindow(final CaseInfo c, final List<MeshSetting> found, final Map<String, ScalarGlobalParameter> linked) {
+    // the base size (for the "cell size" column): a linked one, else a found one
+    double b0 = Double.NaN;
+    String bu = "";
+    for (Map.Entry<String, ScalarGlobalParameter> e : linked.entrySet()) {
+      if (Double.isNaN(b0) && e.getKey().endsWith("baseSize")) {
+        b0 = e.getValue().getQuantity().getValue();
+        try { bu = nm(e.getValue().getQuantity().getUnits()); } catch (Throwable t) { /* none */ }
+      }
     }
-    final int fixed = 3;
-    final String[] cols = new String[fixed + names.size()];
-    cols[0] = "create";
-    cols[1] = "level (file name)";
-    cols[2] = MESH_SCALE;
-    for (int i = 0; i < names.size(); i++) {
-      cols[fixed + i] = names.get(i).substring("p_mesh_".length()) + (unit[i].isEmpty() ? "" : " [" + unit[i] + "]");
-    }
-    final List<Set<Integer>> edited = new ArrayList<>();
-    final boolean[] filling = {false};
-    final javax.swing.table.DefaultTableModel model = new javax.swing.table.DefaultTableModel(cols, 0) {
+    for (MeshSetting m : found) if (Double.isNaN(b0) && m.what.equals("baseSize")) { b0 = m.raw; bu = nm(m.units); }
+    final double base = b0;
+    final String unit = bu;
+    // levels
+    final javax.swing.table.DefaultTableModel model = new javax.swing.table.DefaultTableModel(new String[] {"", "level", "mesh factor",
+        "base size" + (unit.isEmpty() ? "" : " [" + unit + "]")}, 0) {
+      private static final long serialVersionUID = 1L;
       @Override public Class<?> getColumnClass(int col) { return col == 0 ? Boolean.class : String.class; }
-
+      @Override public boolean isCellEditable(int row, int col) { return col < 3; }
       @Override public void setValueAt(Object v, int row, int col) {
         super.setValueAt(v, row, col);
-        if (filling[0]) return;
-        if (col >= fixed) edited.get(row).add(col);
-        if (col == 2) refill(row);
-      }
-
-      void refill(int row) {
-        double k = Fmt.parse(String.valueOf(getValueAt(row, 2)));
-        filling[0] = true;
-        try {
-          for (int i = 0; i < base.length; i++) {
-            if (!edited.get(row).contains(fixed + i)) super.setValueAt(Double.isNaN(k) ? "" : shortNum(base[i] * k), row, fixed + i);
-          }
-        } finally {
-          filling[0] = false;
+        if (col == 2) {
+          double k = Fmt.parse(String.valueOf(v));
+          super.setValueAt(Double.isNaN(base) || Double.isNaN(k) ? "" : shortNum(base * k), row, 3);
         }
       }
     };
     final java.util.function.BiConsumer<String, Double> addRow = (n, k) -> {
-      Object[] r = new Object[cols.length];
-      r[0] = Boolean.TRUE;
-      r[1] = n;
-      r[2] = shortNum(k);
-      for (int i = 0; i < base.length; i++) r[fixed + i] = shortNum(base[i] * k);
-      edited.add(new HashSet<>());
-      filling[0] = true;
-      try { model.addRow(r); } finally { filling[0] = false; }
+      model.addRow(new Object[] {Boolean.TRUE, n, "", ""});
+      model.setValueAt(shortNum(k), model.getRowCount() - 1, 2);
     };
-    final javax.swing.JRadioButton now = new javax.swing.JRadioButton("Mesh each level now (shows the cell counts; takes the meshing time)", true);
-    final javax.swing.JRadioButton later = new javax.swing.JRadioButton("Save without a mesh (it is built when the run starts, e.g. on the cluster)");
-    final javax.swing.JTable[] tableBox = new javax.swing.JTable[1];
-    JPanel p = Ui.edt(() -> {
-      addRow.accept("coarse", 1.41);
-      addRow.accept("medium", 1.0);
-      addRow.accept("fine", 0.71);
-      javax.swing.JTable table = new javax.swing.JTable(model);
-      tableBox[0] = table;
-      table.setRowHeight(22);
-      table.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
-      table.getColumnModel().getColumn(0).setPreferredWidth(50);
-      table.getColumnModel().getColumn(1).setPreferredWidth(130);
-      table.getColumnModel().getColumn(2).setPreferredWidth(90);
-      javax.swing.table.DefaultTableCellRenderer r = new javax.swing.table.DefaultTableCellRenderer() {
-        @Override
-        public java.awt.Component getTableCellRendererComponent(javax.swing.JTable t, Object v, boolean sel, boolean foc, int row, int col) {
-          java.awt.Component k = super.getTableCellRendererComponent(t, v, sel, foc, row, col);
-          boolean mine = row < edited.size() && edited.get(row).contains(col);
-          k.setFont(k.getFont().deriveFont(mine ? Font.BOLD : Font.PLAIN));
-          if (!sel) k.setForeground(mine ? new java.awt.Color(0x1F, 0x4E, 0x9A) : col >= fixed ? java.awt.Color.DARK_GRAY : java.awt.Color.BLACK);
-          setHorizontalAlignment(col >= 2 ? javax.swing.SwingConstants.RIGHT : javax.swing.SwingConstants.LEFT);
-          return k;
-        }
-      };
-      for (int i = 1; i < cols.length; i++) table.getColumnModel().getColumn(i).setCellRenderer(r);
-      JScrollPane sp = new JScrollPane(table);
-      sp.setPreferredSize(new java.awt.Dimension(Math.max(560, 110 * cols.length), 160));
-      JComboBox<String> ratio = new JComboBox<>(new String[] {"1.41", "1.5", "2", "1.3", "1.2"});
-      ratio.setEditable(true);
-      JButton fill = new JButton("Apply ratio");
-      fill.setToolTipText("p_meshScale of the rows: ratio^k around the row closest to 1 (today's mesh); edited sizes are kept");
-      fill.addActionListener(e -> {
-        if (table.isEditing()) table.getCellEditor().stopCellEditing();
-        double rr = Fmt.parse(String.valueOf(ratio.getEditor().getItem()));
-        if (!(rr > 1)) return;
-        int ref = 0;
-        double best = Double.MAX_VALUE;
-        for (int i = 0; i < model.getRowCount(); i++) {
-          double k = Fmt.parse(String.valueOf(model.getValueAt(i, 2)));
-          if (!Double.isNaN(k) && Math.abs(Math.log(k)) < best) { best = Math.abs(Math.log(k)); ref = i; }
-        }
-        for (int i = 0; i < model.getRowCount(); i++) model.setValueAt(shortNum(Math.pow(rr, ref - i)), i, 2);
-      });
-      JButton add = new JButton("Add level");
-      add.addActionListener(e -> {
-        if (table.isEditing()) table.getCellEditor().stopCellEditing();
-        double last = model.getRowCount() == 0 ? 1 : Fmt.parse(String.valueOf(model.getValueAt(model.getRowCount() - 1, 2)));
-        addRow.accept("level" + (model.getRowCount() + 1), Double.isNaN(last) ? 1 : last / 1.41);
-      });
-      JButton del = new JButton("Remove level");
-      del.addActionListener(e -> {
-        int i = table.getSelectedRow();
-        if (i < 0) return;
-        if (table.isEditing()) table.getCellEditor().cancelCellEditing();
-        model.removeRow(i);
-        edited.remove(i);
-      });
-      JPanel tools = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
-      tools.add(add);
-      tools.add(del);
-      tools.add(javax.swing.Box.createHorizontalStrut(14));
-      tools.add(new JLabel("refinement ratio"));
-      tools.add(ratio);
-      tools.add(fill);
-      javax.swing.ButtonGroup bg = new javax.swing.ButtonGroup();
-      bg.add(now);
-      bg.add(later);
-      JPanel opts = new JPanel(new GridLayout(0, 1, 0, 2));
-      opts.add(now);
-      opts.add(later);
-      JLabel head = new JLabel("<html>One case per ticked level, next to " + Html.esc(c.caseId) + " (its parent), named "
-          + Html.esc(c.proj) + "-NNN_&lt;level&gt;_v01.sim.<br>A size is " + MESH_SCALE + " x today's value; type a size to set it "
-          + "for that level only (shown in blue; it is kept when " + MESH_SCALE + " changes).<br>Sizes relative to the base size "
-          + "follow the base size. The open file stays as it is on disk; at the end you work in the last level.</html>");
-      JPanel all = new JPanel(new BorderLayout(0, 8));
-      all.add(head, BorderLayout.NORTH);
-      JPanel mid = new JPanel(new BorderLayout(0, 4));
-      mid.add(sp, BorderLayout.CENTER);
-      mid.add(tools, BorderLayout.SOUTH);
-      all.add(mid, BorderLayout.CENTER);
-      all.add(opts, BorderLayout.SOUTH);
-      return all;
-    });
-    JLabel err = new JLabel(" ");
-    err.setForeground(new java.awt.Color(0xB0, 0x20, 0x20));
-    while (true) {
-      if (!Ui.form("Mesh study  -  levels from " + c.simBase(), p)) throw new Cancel(null);
-      String problem = Ui.edt(() -> {
-        javax.swing.JTable t = tableBox[0];
-        if (t.isEditing()) t.getCellEditor().stopCellEditing();
-        return null;
-      });
-      List<MeshLevel> out = new ArrayList<>();
-      Set<String> seen = new HashSet<>();
-      for (int i = 0; i < model.getRowCount() && problem == null; i++) {
-        if (!Boolean.TRUE.equals(model.getValueAt(i, 0))) continue;
-        String n = String.valueOf(model.getValueAt(i, 1)).trim();
+    addRow.accept("coarse", 1.41);
+    addRow.accept("medium", 1.0);
+    addRow.accept("fine", 0.71);
+    final javax.swing.JTable table = new javax.swing.JTable(model);
+    table.setRowHeight(24);
+    table.setShowVerticalLines(false);
+    table.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
+    table.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
+    table.getColumnModel().getColumn(0).setMaxWidth(30);
+    javax.swing.table.DefaultTableCellRenderer right = new javax.swing.table.DefaultTableCellRenderer();
+    right.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
+    table.getColumnModel().getColumn(2).setCellRenderer(right);
+    javax.swing.table.DefaultTableCellRenderer greyR = new javax.swing.table.DefaultTableCellRenderer();
+    greyR.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
+    greyR.setForeground(Ui.MUTED);
+    table.getColumnModel().getColumn(3).setCellRenderer(greyR);
+    JScrollPane sp = new JScrollPane(table);
+    sp.setPreferredSize(new java.awt.Dimension(440, 24 * 4 + 28));
+    sp.getViewport().setBackground(java.awt.Color.WHITE);
+    final JComboBox<String> ratio = new JComboBox<>(new String[] {"1.41", "1.5", "2", "1.3", "1.2"});
+    ratio.setEditable(true);
+    final Runnable applyRatio = () -> {
+      if (table.isEditing()) table.getCellEditor().stopCellEditing();
+      double rr = Fmt.parse(String.valueOf(ratio.getEditor().getItem()));
+      if (!(rr > 1)) return;
+      int ref = 0;
+      double best = Double.MAX_VALUE;
+      for (int i = 0; i < model.getRowCount(); i++) {
         double k = Fmt.parse(String.valueOf(model.getValueAt(i, 2)));
-        try { n = checkLabel(n); } catch (Cancel x) { problem = "level '" + n + "': " + x.getMessage(); break; }
-        if (n.isEmpty()) problem = "row " + (i + 1) + ": a level name is needed (it goes in the file name)";
-        else if (!seen.add(n)) problem = "two levels are called '" + n + "'";
-        else if (!(k > 0)) problem = "level '" + n + "': " + MESH_SCALE + " must be a number > 0";
-        if (problem != null) break;
-        MeshLevel L = new MeshLevel(n, k);
-        for (int j = 0; j < names.size(); j++) {
-          if (!edited.get(i).contains(fixed + j)) continue;
-          double v = Fmt.parse(String.valueOf(model.getValueAt(i, fixed + j)));
-          if (!(v > 0)) { problem = "level '" + n + "', " + cols[fixed + j] + ": a size > 0 is needed"; break; }
-          L.sizes.put(names.get(j), v);
-        }
-        out.add(L);
+        if (!Double.isNaN(k) && Math.abs(Math.log(k)) < best) { best = Math.abs(Math.log(k)); ref = i; }
       }
-      if (problem == null && out.isEmpty()) problem = "tick at least one level";
-      if (problem == null) return new Object[] {out, now.isSelected()};
-      final String msg = problem;
-      Ui.edt(() -> {
-        if (err.getParent() == null) p.add(err, BorderLayout.EAST);
-        err.setText("<html><div style='width:180px'>" + Html.esc(msg) + "</div></html>");
-        return null;
-      });
+      for (int i = 0; i < model.getRowCount(); i++) model.setValueAt(shortNum(Math.pow(rr, ref - i)), i, 2);
+    };
+    ratio.addActionListener(e -> applyRatio.run());
+    JButton add = Ui.link("+ Add level");
+    add.addActionListener(e -> {
+      if (table.isEditing()) table.getCellEditor().stopCellEditing();
+      double last = model.getRowCount() == 0 ? 1 : Fmt.parse(String.valueOf(model.getValueAt(model.getRowCount() - 1, 2)));
+      double rr = Fmt.parse(String.valueOf(ratio.getEditor().getItem()));
+      addRow.accept("level" + (model.getRowCount() + 1), (Double.isNaN(last) ? 1 : last) / (rr > 1 ? rr : 1.41));
+    });
+    JButton del = Ui.link("Remove");
+    del.addActionListener(e -> {
+      int i = table.getSelectedRow();
+      if (i < 0) return;
+      if (table.isEditing()) table.getCellEditor().cancelCellEditing();
+      model.removeRow(i);
+    });
+    JPanel tools = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+    tools.add(add);
+    tools.add(del);
+    tools.add(javax.swing.Box.createHorizontalStrut(16));
+    tools.add(Ui.muted("refinement ratio"));
+    tools.add(ratio);
+    // sizes that follow the factor
+    final List<javax.swing.JCheckBox> boxes = new ArrayList<>();
+    final javax.swing.JCheckBox prism = new javax.swing.JCheckBox("Scale the prism layers too  (off: same first-cell height, so y+ stays the same)");
+    JPanel sizes = new JPanel(new GridLayout(0, 1, 0, 1));
+    for (String n : linked.keySet()) {
+      javax.swing.JCheckBox b = new javax.swing.JCheckBox(n.substring("p_mesh_".length()) + "   (already follows the factor)", true);
+      b.setEnabled(false);
+      sizes.add(b);
     }
+    for (MeshSetting m : found) {
+      javax.swing.JCheckBox b = new javax.swing.JCheckBox(m.op + (m.control.isEmpty() ? "" : " / " + m.control) + "   " + m.what
+          + "   " + shortNum(m.raw) + " " + nm(m.units), m.kind.equals("size"));
+      b.putClientProperty("prism", m.kind.equals("prism"));
+      b.setEnabled(m.kind.equals("size"));
+      boxes.add(b);
+      sizes.add(b);
+    }
+    boolean anyPrism = false;
+    for (MeshSetting m : found) anyPrism |= m.kind.equals("prism");
+    prism.addActionListener(e -> {
+      for (javax.swing.JCheckBox b : boxes) {
+        if (!Boolean.TRUE.equals(b.getClientProperty("prism"))) continue;
+        b.setEnabled(prism.isSelected());
+        b.setSelected(prism.isSelected());
+      }
+    });
+    final javax.swing.JCheckBox meshNow = new javax.swing.JCheckBox("Mesh each level now (shows the cell counts; takes the meshing time)", true);
+    final JLabel files = new JLabel(" ");
+    final JButton ok = Ui.primary("Create levels");
+    final boolean[] only = {false};
+    final Runnable upd = () -> {
+      int n = 0;
+      List<String> names = new ArrayList<>();
+      for (int i = 0; i < model.getRowCount(); i++) {
+        if (Boolean.TRUE.equals(model.getValueAt(i, 0))) { n++; names.add(String.valueOf(model.getValueAt(i, 1)).trim()); }
+      }
+      ok.setText(n == 1 ? "Create 1 level" : "Create " + n + " levels");
+      int no = nextCaseNo(c.casesDir, c.proj);
+      List<String> fs = new ArrayList<>();
+      for (int i = 0; i < names.size() && i < 4; i++) fs.add(String.format(Locale.ROOT, "%s-%03d_%s_v01.sim", c.proj, no + i, names.get(i)));
+      files.setText(String.join(",  ", fs) + (names.size() > 4 ? ", ..." : ""));
+    };
+    model.addTableModelListener(e -> upd.run());
+    upd.run();
+    JButton onlyLink = Ui.link("Only link the sizes to the factor (no levels)");
+    onlyLink.setToolTipText("The sizes ticked below follow one parameter, " + MESH_SCALE + " (1 = today's mesh); vary it yourself later");
+    onlyLink.addActionListener(e -> {
+      only[0] = true;
+      ok.doClick();
+    });
+
+    JPanel body = new JPanel();
+    body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
+    JLabel h1 = new JLabel("Levels");
+    h1.setFont(h1.getFont().deriveFont(Font.BOLD));
+    JLabel n1 = Ui.muted("Mesh factor 1 = today's mesh; 1.41 = cells 1.41 times larger. Type a factor, or pick a refinement ratio.");
+    JLabel h2 = new JLabel("Sizes that follow the factor");
+    h2.setFont(h2.getFont().deriveFont(Font.BOLD));
+    JLabel n2 = Ui.muted("Sizes relative to the base size follow it anyway.");
+    List<javax.swing.JComponent> parts = new ArrayList<>(Arrays.asList(h1, n1, sp, tools, h2, n2, sizes));
+    if (anyPrism) parts.add(prism);
+    javax.swing.JSeparator sep = new javax.swing.JSeparator();
+    parts.addAll(Arrays.asList(meshNow, sep, files, Ui.muted("Saved next to " + c.caseId + "; the open file stays as it is; you continue in the last level."), onlyLink));
+    for (javax.swing.JComponent k : parts) {
+      k.setAlignmentX(0f);
+      if (k == h2 || k == meshNow || k == sep || k == onlyLink) body.add(javax.swing.Box.createVerticalStrut(12));
+      body.add(k);
+      body.add(javax.swing.Box.createVerticalStrut(4));
+    }
+    final List<MeshLevel> out = new ArrayList<>();
+    boolean go = Ui.sheet("Mesh study", "Coarser and finer copies of " + c.caseId + ", to check that the results do not depend on the mesh.",
+        body, ok, () -> {
+          if (table.isEditing()) table.getCellEditor().stopCellEditing();
+          boolean any = !linked.isEmpty();
+          for (javax.swing.JCheckBox b : boxes) any |= b.isSelected();
+          if (!any) { only[0] = false; return "Tick at least one size that follows the factor."; }
+          if (only[0]) return null;
+          out.clear();
+          Set<String> seen = new HashSet<>();
+          for (int i = 0; i < model.getRowCount(); i++) {
+            if (!Boolean.TRUE.equals(model.getValueAt(i, 0))) continue;
+            String n = String.valueOf(model.getValueAt(i, 1)).trim();
+            double k = Fmt.parse(String.valueOf(model.getValueAt(i, 2)));
+            try { n = checkLabel(n); } catch (Cancel x) { return "Level '" + n + "': letters and digits, starting with a letter."; }
+            if (n.isEmpty()) return "Row " + (i + 1) + ": give the level a name (it goes in the file name).";
+            if (!seen.add(n)) return "Two levels are called '" + n + "'.";
+            if (!(k > 0)) return "Level '" + n + "': the mesh factor must be a number above 0.";
+            out.add(new MeshLevel(n, k));
+          }
+          return out.isEmpty() ? "Tick at least one level." : null;
+        });
+    if (!go) return null;
+    List<MeshSetting> link = new ArrayList<>();
+    for (int i = 0; i < found.size(); i++) if (boxes.get(i).isSelected()) link.add(found.get(i));
+    return new Object[] {link, out, meshNow.isSelected(), only[0]};
   }
 
   /** Saves one case per level: p_meshScale and the edited sizes set, solution cleared, mesh generated (or cleared),
@@ -5297,6 +5503,141 @@ public class SimKit extends StarMacro {
         w.setVisible(true);
         return null;
       });
+    }
+
+    static final java.awt.Color BLUE = new java.awt.Color(0x1F, 0x5F, 0xAF), MUTED = new java.awt.Color(0x6B, 0x75, 0x80),
+        RED = new java.awt.Color(0xB0, 0x20, 0x20), LINE = new java.awt.Color(0xD5, 0xD9, 0xDE), PALE = new java.awt.Color(0xF0, 0xF6, 0xFD);
+
+    /** The one main button of a window: blue, white bold text. */
+    static JButton primary(String text) {
+      JButton b = new JButton(text);
+      b.setFont(b.getFont().deriveFont(Font.BOLD));
+      b.setForeground(java.awt.Color.WHITE);
+      b.setBackground(BLUE);
+      b.setOpaque(true);
+      b.setBorderPainted(false);
+      b.setFocusPainted(false);
+      b.setMargin(new java.awt.Insets(5, 16, 5, 16));
+      return b;
+    }
+
+    /** A button that looks like a link. */
+    static JButton link(String text) {
+      JButton b = new JButton(text);
+      b.setForeground(BLUE);
+      b.setContentAreaFilled(false);
+      b.setBorderPainted(false);
+      b.setFocusPainted(false);
+      b.setMargin(new java.awt.Insets(0, 2, 0, 2));
+      b.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+      return b;
+    }
+
+    static JLabel muted(String text) {
+      JLabel l = new JLabel(text);
+      l.setForeground(MUTED);
+      return l;
+    }
+
+    /** A text field with a grey hint while it is empty. */
+    static JTextField hintField(String text, final String hint, int cols) {
+      return new JTextField(text, cols) {
+        private static final long serialVersionUID = 1L;
+        @Override protected void paintComponent(java.awt.Graphics g) {
+          super.paintComponent(g);
+          if (getText().isEmpty() && !isFocusOwner()) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            g2.setColor(new java.awt.Color(0xA8, 0xB0, 0xBA));
+            g2.setFont(getFont().deriveFont(Font.ITALIC));
+            java.awt.FontMetrics fm = g2.getFontMetrics();
+            g2.drawString(hint, getInsets().left + 2, (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
+            g2.dispose();
+          }
+        }
+      };
+    }
+
+    /** White panels everywhere (a component with the client property "simkit.bg" keeps its own colour). */
+    static void white(java.awt.Component c) {
+      if (c instanceof javax.swing.JComponent && ((javax.swing.JComponent) c).getClientProperty("simkit.bg") != null) return;
+      if (c instanceof JPanel || c instanceof javax.swing.JCheckBox || c instanceof javax.swing.JRadioButton) c.setBackground(java.awt.Color.WHITE);
+      if (c instanceof java.awt.Container) for (java.awt.Component k : ((java.awt.Container) c).getComponents()) white(k);
+    }
+
+    /** A clean window: title, grey line, the body, a red line for problems, Cancel and one blue button (Enter).
+     *  'check' runs on the button: a message keeps the window open (nothing typed is lost), null closes it. */
+    static boolean sheet(String title, String sub, javax.swing.JComponent body, final JButton ok, final java.util.function.Supplier<String> check) {
+      return edt(() -> {
+        final JDialog d = new JDialog(owner(), title, java.awt.Dialog.ModalityType.APPLICATION_MODAL);
+        d.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+        final boolean[] done = {false};
+        JPanel root = new JPanel(new BorderLayout(0, 14));
+        root.setBorder(BorderFactory.createEmptyBorder(16, 20, 14, 20));
+        JPanel head = new JPanel();
+        head.setLayout(new javax.swing.BoxLayout(head, javax.swing.BoxLayout.Y_AXIS));
+        JLabel t = new JLabel(title);
+        t.setFont(t.getFont().deriveFont(Font.BOLD, 17f));
+        head.add(t);
+        if (sub != null && !sub.isEmpty()) {
+          head.add(javax.swing.Box.createVerticalStrut(3));
+          head.add(muted(sub));
+        }
+        root.add(head, BorderLayout.NORTH);
+        root.add(body, BorderLayout.CENTER);
+        final JLabel msg = new JLabel(" ");
+        msg.setForeground(RED);
+        JButton cancel = new JButton("Cancel");
+        cancel.addActionListener(e -> d.dispose());
+        ok.addActionListener(e -> {
+          String m = check == null ? null : check.get();
+          if (m != null) {
+            msg.setText(m);
+            return;
+          }
+          done[0] = true;
+          d.dispose();
+        });
+        JPanel btns = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
+        btns.add(cancel);
+        btns.add(ok);
+        JPanel bottom = new JPanel(new BorderLayout(10, 0));
+        bottom.add(msg, BorderLayout.CENTER);
+        bottom.add(btns, BorderLayout.EAST);
+        root.add(bottom, BorderLayout.SOUTH);
+        white(root);
+        root.setBackground(java.awt.Color.WHITE);
+        d.setContentPane(root);
+        d.getRootPane().setDefaultButton(ok);
+        d.getRootPane().registerKeyboardAction(e -> d.dispose(), javax.swing.KeyStroke.getKeyStroke("ESCAPE"),
+            javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW);
+        d.pack();
+        d.setLocationRelativeTo(owner());
+        Env.track(d);
+        d.setVisible(true);
+        return done[0];
+      });
+    }
+
+    /** A choice drawn as a card: title and one grey line; the chosen one has a blue frame. */
+    static JPanel card(String title, String line) {
+      JPanel p = new JPanel();
+      p.setLayout(new javax.swing.BoxLayout(p, javax.swing.BoxLayout.Y_AXIS));
+      p.putClientProperty("simkit.bg", Boolean.TRUE);
+      JLabel t = new JLabel(title);
+      t.setFont(t.getFont().deriveFont(Font.BOLD, 14f));
+      p.add(t);
+      p.add(javax.swing.Box.createVerticalStrut(3));
+      JLabel l = muted(line);
+      p.add(l);
+      p.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+      chosen(p, false);
+      return p;
+    }
+
+    static void chosen(JPanel card, boolean on) {
+      card.setBackground(on ? PALE : java.awt.Color.WHITE);
+      card.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(on ? BLUE : LINE, on ? 2 : 1),
+          BorderFactory.createEmptyBorder(on ? 9 : 10, on ? 13 : 14, on ? 9 : 10, on ? 13 : 14)));
     }
 
     /** OK / Cancel form around a panel; true on OK. */
