@@ -125,15 +125,18 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       (ID + grey file name, coloured status, comment, based on, saved). The open case is unfolded, its version has
       a green dot and is selected. Click the arrow of another case: it unfolds; again: it folds. Right-click > Fold
       all / Unfold all. Click a status, pick "running": saved at once (bottom line "Saved: status of ..."); "dropped"
-      strikes the comment through. Double-click a comment: the box below opens for writing. Type several lines
-      with B / I / "- List" / "1. List" (Ctrl+B, Ctrl+I; Enter in a list adds the next bullet or number, Enter on an
+      strikes the comment through. The formatting bar (B, I, U, A colour, lists, Done) is always shown above the
+      box; pressing one while the formatted text is shown opens the box for writing. Double-click a comment: the box
+      below opens for writing. Type several lines with B / I / U / A (pick red) / "- List" / "1. List" (Ctrl+B, Ctrl+I, Ctrl+U; Enter in a list adds the next bullet or number, Enter on an
       empty item ends the list); click another row (or Done, Esc): saved, the box shows it formatted and the table
       shows the first line + "+n lines" (point at it: the whole comment). Close and reopen the tracker: the lines are
       kept; case_identity.txt holds comment_vNN=ml:...\n...; Case report shows it formatted. A case description:
       select the case row, click the box: same; case_list.csv follows.
-      Open in STAR-CCM+: select another version, click the button (or double-click its ID): bottom line "Opening
-      ...", the tracker stays usable, then a new simulation tab with that file; again on the same row: "already
-      open". On a case row: its latest version. Note how long loading took and whether the new tab was in front.
+      Open in STAR-CCM+...: select another version, click the button (or double-click its ID): STAR-CCM+'s own Load
+      Simulation dialog appears with that file filled in. Choose parallel, 4 processes (and Power Session if your
+      licence has it), OK: the file opens in a new simulation tab with those options. Next time the dialog shows
+      the same choices. Again on the same row: "already open". On a case row: its latest version. Status list:
+      no "reported" any more (an older "reported" version still shows its label).
       Pin: click the pale star of a case: it turns amber and the case moves to the top; close and reopen the
       tracker: still on top; a colleague's tracker is unchanged; click again: unpinned. Open results folder: the
       case's results folder opens (a case without results: "No results yet"). Select two versions, Ctrl+C, paste
@@ -314,4 +317,12 @@ C. RESULTS SO FAR
   Tracker: pin a case to the top (star; personal, kept in the SimKit preferences, key trackerPins = case folder
   paths), Open results folder, Copy reference (Ctrl+C / right-click: "ID  path" per selected row), Set status
   on several versions (right-click; a case row = all its versions). Offline test (MoreShot) passed.
+  Tracker: Open in STAR-CCM+... shows STAR-CCM+'s own Load Simulation dialog (star.coremodule.ui.OpenOptionsDialog,
+  as File > Load: new OpenOptionsDialog(title, true, true), setSimFile(path), show(null)) with the file filled in,
+  so processes / parallel / power session are STAR-CCM+'s own and remembered; direct load with default options
+  only if that dialog cannot be reached. Status "reported" removed from the list. Step 11b also checks that the
+  dialog and its calls are found.
+  Tracker formatting: __underline__ (U, Ctrl+U) and text colour [red]text[/] (A button: red, orange, green, blue,
+  purple, grey; only these names, so [m/s] stays as typed); the formatting bar is always shown (Done only while
+  writing). Offline test (FmtShot) passed; STAR regression SKT42 (Load dialog found) all 0.
   Not yet run: section B (GUI: Save new version, Compare, Case tracker, Calculators copy), release 2402, Linux.
