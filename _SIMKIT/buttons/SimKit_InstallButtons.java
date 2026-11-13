@@ -2,8 +2,9 @@
 //
 // STAR-CCM+ has 10 favourite-macro buttons per user (Macro toolbar). This macro puts the SimKit buttons there,
 // pointing at the macros in this buttons/ folder on the team share (so a kit update never needs the buttons redone),
-// each with its own icon from buttons/icons/. It uses STAR-CCM+'s own setting (the one behind the toolbar's
-// favourite-macro dialog), saved in the user's STAR-CCM+ folder for this STAR-CCM+ version:
+// each with its own icon from buttons/icons/. In the STAR-CCM+ window it sets the toolbar's own favourite buttons
+// (as their favourite-macro dialog does: they update at once and STAR-CCM+ saves them); in batch it writes the same
+// setting directly. STAR-CCM+ keeps it in the user's STAR-CCM+ folder for this STAR-CCM+ version:
 //   Windows  %LOCALAPPDATA%\Siemens\STAR-CCM+ <version>\config\settings.props
 //   Linux    ~/.star-<version>/config/settings.props
 // Only free slots and slots that already hold a SimKit button are used: your own favourites are kept unless you
@@ -44,7 +45,8 @@ public class SimKit_InstallButtons extends StarMacro {
       {"SimKit_MeshStudy", "SimKit: Mesh study"},
   };
   static final int SLOTS = 10;
-  static final String KEY = "MacroPlayFavoriteAction";   // + 0..9, value "tooltip ; macro file ; icon file"
+  /** + 0..9; value "macro file ; icon file ; tooltip" (the order STAR-CCM+ reads and writes, MacroPlayFavoriteAction). */
+  static final String KEY = "MacroPlayFavoriteAction";
 
   Simulation sim;
 
@@ -55,14 +57,65 @@ public class SimKit_InstallButtons extends StarMacro {
   /** The macro file of a slot value ("" if empty). */
   static String macroOf(String value) {
     if (value == null) return "";
-    String[] p = value.split(";", -1);
-    return p.length >= 2 ? p[1].trim() : "";
+    return value.split(";", -1)[0].trim();
   }
 
-  /** A SimKit button: SimKit_<Name>.java in a folder named buttons (any share, any older location). */
-  static boolean isSimKit(String value) {
-    String[] parts = macroOf(value).replace('\\', '/').split("/");
+  static boolean isSimKitFile(String m) {
+    String[] parts = m.trim().replace('\\', '/').split("/");
     return parts.length >= 2 && parts[parts.length - 1].matches("SimKit_[A-Za-z]+\\.java") && parts[parts.length - 2].equals("buttons");
+  }
+
+  /** A SimKit button: SimKit_<Name>.java in a folder named buttons (any share, any older location). Also the slots
+   *  written by the first installer (wrong order "tooltip ; macro ; icon"), so playing it again repairs them. */
+  static boolean isSimKit(String value) {
+    if (value == null) return false;
+    String[] p = value.split(";", -1);
+    return isSimKitFile(p[0]) || p.length >= 2 && isSimKitFile(p[1]);
+  }
+
+  /** Sets slot i through STAR-CCM+'s own toolbar button, as its favourite-macro dialog does: the button changes at once
+   *  and STAR-CCM+ saves the setting. false where there is no such button (batch) or the call fails. */
+  static boolean setLive(int i, String macro, String icon, String tip) {
+    try {
+      Class<?> fav;
+      try {
+        fav = Class.forName("star.coremodule.actions.MacroPlayFavoriteAction" + i, true, StarSettings.class.getClassLoader());
+      } catch (ClassNotFoundException e) {
+        fav = Class.forName("star.coremodule.actions.MacroPlayFavoriteAction" + i, true, Thread.currentThread().getContextClassLoader());
+      }
+      Class<?> sa = Class.forName("org.openide.util.actions.SystemAction", true, fav.getClassLoader());
+      final Object a = sa.getMethod("get", Class.class).invoke(null, fav);   // the toolbar's own instance
+      final Throwable[] err = new Throwable[1];
+      Runnable r = () -> {
+        try {
+          // the button is made on first use and then reloads the stored setting: make it first, so it cannot undo ours
+          for (Class<?> c = a.getClass(); c != null; c = c.getSuperclass()) {
+            try {
+              java.lang.reflect.Method gb = c.getDeclaredMethod("getButton");
+              gb.setAccessible(true);
+              gb.invoke(a);
+              break;
+            } catch (NoSuchMethodException e) { /* look in the superclass */ }
+          }
+          a.getClass().getMethod("setMacroFileName", String.class).invoke(a, macro);
+          a.getClass().getMethod("setIconFileName", String.class).invoke(a, icon);
+          a.getClass().getMethod("setToolTip", String.class).invoke(a, tip);
+        } catch (Throwable t) {
+          err[0] = t;
+        }
+      };
+      if (javax.swing.SwingUtilities.isEventDispatchThread()) r.run(); else javax.swing.SwingUtilities.invokeAndWait(r);
+      return err[0] == null;
+    } catch (Throwable t) {
+      return false;
+    }
+  }
+
+  /** Sets slot i (live in the window, else the setting itself) and checks what STAR-CCM+ now holds. */
+  boolean setSlot(StarSettings st, boolean gui, int i, String macro, String icon, String tip) {
+    if (gui && setLive(i, macro, icon, tip) && macroOf(st.getFavoriteMacro(KEY + i)).equals(macro)) return true;
+    st.setFavoriteMacro(KEY + i, macro.isEmpty() ? "" : macro + " ; " + icon + " ; " + tip);
+    return false;
   }
 
   /** File name of a slot's macro, for display. */
@@ -121,15 +174,16 @@ public class SimKit_InstallButtons extends StarMacro {
       chosen = chosen.subList(0, free.size());
     }
 
-    int cleared = 0;
+    int cleared = 0, live = 0;
     for (int i : free) {
-      if (isSimKit(slot[i]) || replaceOwn && !macroOf(slot[i]).isEmpty()) { st.setFavoriteMacro(KEY + i, ""); cleared++; }
+      if (isSimKit(slot[i]) || replaceOwn && !macroOf(slot[i]).isEmpty()) { setSlot(st, gui, i, "", "", ""); cleared++; }
     }
     for (int k = 0; k < chosen.size(); k++) {
-      String[] c = chosen.get(k);
-      st.setFavoriteMacro(KEY + free.get(k), c[0] + " ; " + c[1] + " ; " + c[2]);
-      say("button " + (free.get(k) + 1) + ": " + c[0] + " -> " + c[1]);
+      String[] c = chosen.get(k);   // tooltip, macro, icon
+      if (setSlot(st, gui, free.get(k), c[1], c[2], c[0])) live++;
+      say("button " + (free.get(k) + 1) + ": " + c[0] + " -> " + c[1] + "   (STAR-CCM+ now holds: " + st.getFavoriteMacro(KEY + free.get(k)) + ")");
     }
+    if (gui) say("toolbar buttons set " + (live == chosen.size() ? "directly on the toolbar" : live + " directly, the rest in the settings (restart needed)"));
     String done = remove ? "SimKit buttons removed (" + cleared + ")" : chosen.size() + " SimKit button(s) on the Macro toolbar"
         + (own.isEmpty() || replaceOwn ? "" : "; your own favourites kept (" + own.size() + ")");
     String restart = remove ? "If they still show, close and reopen STAR-CCM+." : "If they do not show yet, close and reopen STAR-CCM+.";

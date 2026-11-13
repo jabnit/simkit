@@ -276,8 +276,12 @@ C. RESULTS SO FAR
   filter + status filter; reload when the window gets focus (no Refresh button); Change... folder; right-click menu.
   Offline test (TrackerShot: render, table edits, details-box edit, fold, filter, hide) passed.
   Toolbar buttons: buttons/SimKit_InstallButtons.java writes the STAR-CCM+ favourite macros (StarSettings, keys
-  MacroPlayFavoriteAction0..9 = tooltip ; macro ; icon) with icons from buttons/icons (16 x 16, coloured by group);
+  MacroPlayFavoriteAction0..9 = macro ; icon ; tooltip) with icons from buttons/icons (16 x 16, coloured by group);
   only free and SimKit slots, own favourites kept; Remove. Runner steps 08b (install) / 08c (remove), the user's
   settings.props backed up and restored around them, only the favourite lines logged. SKT36: all exit codes 0
   (10 buttons written to settings.props, then removed; the user's settings put back).
+  Fix after the first GUI try (no button shown): the slots were written as tooltip ; macro ; icon, but STAR-CCM+
+  reads macro ; icon ; tooltip (MacroPlayFavoriteAction.setSettings), so it found no macro file. Now: order
+  corrected; in the window the toolbar's own favourite buttons are set (live, saved by STAR-CCM+), else the
+  setting; slots from the first installer are recognised and repaired. Runner checks the macro file comes first.
   Not yet run: section B (GUI: Save new version, Compare, Case tracker, Calculators copy), release 2402, Linux.

@@ -24,7 +24,7 @@ uses only free slots and slots already holding a SimKit button, so the user's ow
 not show at once, close and reopen STAR-CCM+. The setting is STAR-CCM+'s own, saved for that user and version in
   Windows  %LOCALAPPDATA%\Siemens\STAR-CCM+ <version>\config\settings.props
   Linux    ~/.star-<version>/config/settings.props
-(keys MacroPlayFavoriteAction0..9 = "tooltip ; macro file ; icon file").
+(keys MacroPlayFavoriteAction0..9 = "macro file ; icon file ; tooltip").
 The buttons point at THESE files on the share (<SimKit root>/buttons/...). Do not copy them elsewhere: each button
 finds the root from its own location and always runs the current kit. No environment variable and no path to set.
 Cases are not stored in the SimKit root: the first Save new version of a sim asks the user for the folder.

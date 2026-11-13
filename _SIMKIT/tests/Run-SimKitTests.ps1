@@ -180,7 +180,9 @@ function Get-StarSettingsFiles { foreach ($d in $setDirs) { if (Test-Path $d) { 
 function Log-Buttons([string]$when) {
   foreach ($f in Get-StarSettingsFiles) {
     $b = @(Get-Content $f.FullName -ErrorAction SilentlyContinue | Where-Object { $_ -match "^MacroPlayFavoriteAction[0-9]=" })
-    Log ("    {0}: {1} favourite-macro line(s) in {2}" -f $when, $b.Count, $f.FullName)
+    # STAR-CCM+ reads "macro ; icon ; tooltip": a button only shows when the first field is the macro file
+    $ok = @($b | Where-Object { ($_ -replace "^[^=]*=", "").Split(";")[0].Trim() -match "\.java$" }).Count
+    Log ("    {0}: {1} favourite-macro line(s), {2} with a macro file first (button shown), in {3}" -f $when, $b.Count, $ok, $f.FullName)
     foreach ($l in $b) { Log ("      " + $l) }
   }
 }

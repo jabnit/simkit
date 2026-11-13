@@ -152,11 +152,13 @@ invoke_star 08_button_Check "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/
 # MacroPlayFavoriteAction lines are ever logged.
 star_settings() { find "$HOME" -maxdepth 3 -path "$HOME/.star-*/config/settings.props" -type f 2>/dev/null; }
 log_buttons() {
-  local f n
+  local f n ok
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     n=$(grep -c '^MacroPlayFavoriteAction[0-9]=' "$f")
-    log "    $1: $n favourite-macro line(s) in $f"
+    # STAR-CCM+ reads "macro ; icon ; tooltip": a button only shows when the first field is the macro file
+    ok=$(grep '^MacroPlayFavoriteAction[0-9]=' "$f" | sed 's/^[^=]*=//' | awk -F';' '{gsub(/[ \t]+$/, "", $1)} $1 ~ /\.java$/' | wc -l)
+    log "    $1: $n favourite-macro line(s), $ok with a macro file first (button shown), in $f"
     grep '^MacroPlayFavoriteAction[0-9]=' "$f" | while IFS= read -r l; do log "      $l"; done
   done < <(star_settings)
 }
