@@ -160,21 +160,28 @@ log_buttons() {
     ok=$(grep '^MacroPlayFavoriteAction[0-9]=' "$f" | sed 's/^[^=]*=//' | awk -F';' '{gsub(/[ \t]+$/, "", $1)} $1 ~ /\.java$/' | wc -l)
     log "    $1: $n favourite-macro line(s), $ok with a macro file first (button shown), in $f"
     grep '^MacroPlayFavoriteAction[0-9]=' "$f" | while IFS= read -r l; do log "      $l"; done
+    tb="$(dirname "$f")/Toolbars/SimKit"
+    log "    $1: SimKit toolbar $([ -d "$tb" ] && echo present || echo absent), $(ls "$tb"/*.shadow 2>/dev/null | wc -l) button link(s)"
   done < <(star_settings)
 }
 BK="$TEST_ROOT/_settings_backup"
 mkdir -p "$BK"
 declare -A SAVED=()
+declare -A TBSAVED=()
 i=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
-  cp -p "$f" "$BK/settings_$i.props" && SAVED["$f"]="$BK/settings_$i.props"; i=$((i + 1))
+  cp -p "$f" "$BK/settings_$i.props" && SAVED["$f"]="$BK/settings_$i.props"
+  tb="$(dirname "$f")/Toolbars/SimKit"   # the SimKit toolbar the installer makes
+  if [ -d "$tb" ]; then cp -rp "$tb" "$BK/toolbar_$i" && TBSAVED["$tb"]="$BK/toolbar_$i"; else TBSAVED["$tb"]=""; fi
+  i=$((i + 1))
 done < <(star_settings)
 invoke_star 08b_buttons_install installbuttons ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_InstallButtons.java" "$CASE_SIM"; RCS[buttons]=$RC
 log_buttons "after install"
 invoke_star 08c_buttons_remove removebuttons ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_InstallButtons.java" "$CASE_SIM"; RCS[buttonsrm]=$RC
 log_buttons "after remove"
 for f in "${!SAVED[@]}"; do cp -p "${SAVED[$f]}" "$f"; done
+for tb in "${!TBSAVED[@]}"; do rm -rf "$tb"; [ -n "${TBSAVED[$tb]}" ] && cp -rp "${TBSAVED[$tb]}" "$tb"; done
 while IFS= read -r f; do
   [ -n "$f" ] && [ -z "${SAVED[$f]+x}" ] && log "    new settings file left by the test (not removed): $f"
 done < <(star_settings)

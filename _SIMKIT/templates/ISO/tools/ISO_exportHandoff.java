@@ -31,6 +31,9 @@ import javax.swing.JOptionPane;
 import star.base.neo.*;
 import star.common.*;
 
+// Some STAR-CCM+ calls used here are marked deprecated in 2606 but still work, and are kept so the kit also runs on
+// 2402: the warnings are silenced so that STAR-CCM+ does not open its Compile tab every time the macro is played.
+@SuppressWarnings({"deprecation", "unchecked", "rawtypes"})
 public class ISO_exportHandoff extends StarMacro {
 
   static final String TAG = "T_handoff";

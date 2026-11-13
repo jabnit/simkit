@@ -41,7 +41,7 @@ Site set-up (once)
      Nothing else to configure: no environment variable, no path in the macros.
   2. Edit config/projects.csv (projects, configuration codes) and config/links.csv (Google Doc / Sheet links).
   3. Each user plays buttons/SimKit_InstallButtons.java once (File > Macro > Play Macro, from the share): the SimKit
-     buttons go to the user's Macro toolbar (STAR-CCM+ favourite macros), pointing at the files on the share (do not
+     buttons go to a SimKit toolbar (STAR-CCM+ favourite macros), pointing at the files on the share (do not
      copy them: each button finds the root from its own location and always runs the current kit).
   4. Import Google/SimKit_Case_List_ISO.xlsx into Google Sheets and put the guideline docx in Google Docs.
 
@@ -150,9 +150,10 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
    8. Compare versions > Previous version; Case list; Guideline (opens the links.csv URL); About (shows the kit
       root = the folder of SimKit.java on the share).
    9. Toolbar buttons: play buttons/SimKit_InstallButtons.java: 10 ticked buttons with their icons; Install ->
-      "10 SimKit button(s) on the Macro toolbar". The buttons show on the Macro toolbar with the SimKit icons and
-      tooltips (else close and reopen STAR-CCM+: note which). Each runs its tool directly (no menu window).
-      Set one favourite of your own (Macro toolbar > right-click a favourite > edit), play the installer again:
+      "10 button(s) on the SimKit toolbar". A toolbar named SimKit appears at once with the 10 icons and tooltips
+      (else close and reopen STAR-CCM+: note which). Each runs its tool directly (no menu window). No Compile tab
+      opens when a button is used. View > Toolbars lists SimKit.
+      Set one favourite of your own (Macro > Edit favourite macros), play the installer again:
       your favourite is listed and kept; untick two buttons, Install: they disappear. Play again > Remove SimKit
       buttons: only the SimKit ones go. Restart STAR-CCM+: the state is kept.
   A failing STAR call shows "n/a (<reason>)" in the text and the tool continues. Note the [Unn] tag of the line
@@ -284,4 +285,9 @@ C. RESULTS SO FAR
   reads macro ; icon ; tooltip (MacroPlayFavoriteAction.setSettings), so it found no macro file. Now: order
   corrected; in the window the toolbar's own favourite buttons are set (live, saved by STAR-CCM+), else the
   setting; slots from the first installer are recognised and repaired. Runner checks the macro file comes first.
+  Second GUI try: still no button, because a favourite macro shows only where a toolbar links to it (Customize >
+  drag writes config/Toolbars/<toolbar>/star-coremodule-actions-MacroPlayFavoriteAction<n>.shadow). The installer
+  now makes a SimKit toolbar (live through the window's NetBeans file system, else the files) and Remove deletes it.
+  The Compile tab on playing SimKit.java (12 deprecation warnings, STAR API kept for 2402) and ISO_exportHandoff (4)
+  is gone: @SuppressWarnings on the class; javac -Xlint:deprecation,unchecked: 0 warnings in every kit macro.
   Not yet run: section B (GUI: Save new version, Compare, Case tracker, Calculators copy), release 2402, Linux.

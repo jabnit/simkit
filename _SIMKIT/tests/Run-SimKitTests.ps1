@@ -184,13 +184,22 @@ function Log-Buttons([string]$when) {
     $ok = @($b | Where-Object { ($_ -replace "^[^=]*=", "").Split(";")[0].Trim() -match "\.java$" }).Count
     Log ("    {0}: {1} favourite-macro line(s), {2} with a macro file first (button shown), in {3}" -f $when, $b.Count, $ok, $f.FullName)
     foreach ($l in $b) { Log ("      " + $l) }
+    $tb = Join-Path (Split-Path -Parent $f.FullName) "Toolbars\SimKit"
+    $links = @(Get-ChildItem $tb -Filter "*.shadow" -ErrorAction SilentlyContinue)
+    Log ("    {0}: SimKit toolbar {1}, {2} button link(s)" -f $when, $(if (Test-Path $tb) { "present" } else { "absent" }), $links.Count)
   }
 }
 $bk = Join-Path $TestRoot "_settings_backup"
 New-Item -ItemType Directory -Force $bk | Out-Null
 $saved = @{}
 $i = 0
-foreach ($f in Get-StarSettingsFiles) { $c = Join-Path $bk ("settings_{0}.props" -f $i); Copy-Item $f.FullName $c -Force; $saved[$f.FullName] = $c; $i++ }
+$tbSaved = @{}
+foreach ($f in Get-StarSettingsFiles) {
+  $c = Join-Path $bk ("settings_{0}.props" -f $i); Copy-Item $f.FullName $c -Force; $saved[$f.FullName] = $c
+  $tb = Join-Path (Split-Path -Parent $f.FullName) "Toolbars\SimKit"   # the SimKit toolbar the installer makes
+  if (Test-Path $tb) { $tc = Join-Path $bk ("toolbar_{0}" -f $i); Copy-Item $tb $tc -Recurse -Force; $tbSaved[$tb] = $tc } else { $tbSaved[$tb] = "" }
+  $i++
+}
 try {
   $rc["buttons"]  = Invoke-Star "08b_buttons_install"   ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_InstallButtons.java")), (& $q $caseSim))) "installbuttons"
   Log-Buttons "after install"
@@ -198,6 +207,10 @@ try {
   Log-Buttons "after remove"
 } finally {
   foreach ($k in $saved.Keys) { Copy-Item $saved[$k] $k -Force }
+  foreach ($k in $tbSaved.Keys) {
+    Remove-Item $k -Recurse -Force -ErrorAction SilentlyContinue
+    if ($tbSaved[$k] -ne "") { Copy-Item $tbSaved[$k] $k -Recurse -Force }
+  }
   foreach ($f in Get-StarSettingsFiles) { if (-not $saved.ContainsKey($f.FullName)) { Log ("    new settings file left by the test (not removed): " + $f.FullName) } }
   Remove-Item $bk -Recurse -Force -ErrorAction SilentlyContinue
   Log ("    user STAR-CCM+ settings restored ({0} file(s))" -f $saved.Count)

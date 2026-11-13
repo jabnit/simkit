@@ -30,7 +30,7 @@ study helper, a case tracker and engineering calculators.
 1. Copy the `_SIMKIT` folder anywhere on the share (e.g. `S:\CFD\_SIMKIT` on Windows = `/mnt/cfd/_SIMKIT` on Linux).
    No environment variable and no path in the macros need to be set.
 2. Edit `config/projects.csv` (projects, configuration codes) and `config/links.csv` (Google Doc / Sheet links).
-3. Each user plays `_SIMKIT/buttons/SimKit_InstallButtons.java` once (File > Macro > Play Macro, from the share): the SimKit buttons go to their STAR-CCM+ Macro toolbar (favourite macros), with icons, pointing at the files on the share. Own favourites are kept.
+3. Each user plays `_SIMKIT/buttons/SimKit_InstallButtons.java` once (File > Macro > Play Macro, from the share): a SimKit toolbar appears with the buttons (STAR-CCM+ favourite macros) and their icons, pointing at the files on the share. Own favourites are kept.
 4. Import `Google/SimKit_Case_List_ISO.xlsx` into Google Sheets and put the guideline `.docx` in Google Docs.
 
 Cases are never stored in the kit: the first *Save new version* of a sim asks the user for the folder that will

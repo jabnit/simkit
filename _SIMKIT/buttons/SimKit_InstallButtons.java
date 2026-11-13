@@ -111,6 +111,106 @@ public class SimKit_InstallButtons extends StarMacro {
     }
   }
 
+  // ----- the SimKit toolbar: STAR-CCM+ (NetBeans) shows a toolbar per folder of <config>/Toolbars; each button is a
+  // link file <action>.shadow whose content is the action's address (what Customize > drag and drop writes).
+
+  static final String TOOLBAR = "SimKit";
+  static final String FAV = "star-coremodule-actions-MacroPlayFavoriteAction";
+
+  static String shadowTarget(int i) {
+    return "nbfs://nbhost/SystemFileSystem/Actions/File/Macro/" + FAV + i + ".instance";
+  }
+
+  /** Puts these favourite slots, in this order, on the SimKit toolbar (none: the toolbar goes). In the window through
+   *  its own file system (the toolbar changes at once), else as files in the user's STAR-CCM+ config folder. */
+  String setToolbar(List<Integer> slots, boolean gui) {
+    if (gui) {
+      try {
+        setToolbarLive(slots);
+        return "in the window";
+      } catch (Throwable t) {
+        say("SimKit toolbar: not set in the window (" + t + "); writing the files instead");
+      }
+    }
+    try {
+      return "in " + setToolbarFiles(slots) + " (shown from the next start)";
+    } catch (Throwable t) {
+      say("SimKit toolbar NOT written: " + t);
+      return "NOT written";
+    }
+  }
+
+  void setToolbarLive(final List<Integer> slots) throws Exception {
+    ClassLoader cl = favClass(0).getClassLoader();
+    final Class<?> fu = Class.forName("org.openide.filesystems.FileUtil", true, cl);
+    final Class<?> fo = Class.forName("org.openide.filesystems.FileObject", true, cl);
+    final Object root = fu.getMethod("getConfigFile", String.class).invoke(null, "Toolbars");
+    if (root == null) throw new IllegalStateException("no Toolbars folder");
+    final Exception[] err = new Exception[1];
+    Runnable r = () -> {   // one atomic change: the toolbar is rebuilt once, never with a half-written link
+      try {
+        Object dir = fo.getMethod("getFileObject", String.class).invoke(root, TOOLBAR);
+        if (dir != null) {
+          for (Object ch : (Object[]) fo.getMethod("getChildren").invoke(dir)) fo.getMethod("delete").invoke(ch);
+        }
+        if (slots.isEmpty()) {
+          if (dir != null) fo.getMethod("delete").invoke(dir);
+          return;
+        }
+        if (dir == null) dir = fo.getMethod("createFolder", String.class).invoke(root, TOOLBAR);
+        int pos = 100;
+        for (int i : slots) {
+          Object f = fo.getMethod("createData", String.class, String.class).invoke(dir, FAV + i, "shadow");
+          try (java.io.OutputStream os = (java.io.OutputStream) fo.getMethod("getOutputStream").invoke(f)) {
+            os.write(shadowTarget(i).getBytes("UTF-8"));
+          }
+          fo.getMethod("setAttribute", String.class, Object.class).invoke(f, "position", pos);
+          pos += 100;
+        }
+      } catch (Exception e) {
+        err[0] = e;
+      }
+    };
+    fu.getMethod("runAtomicAction", Runnable.class).invoke(null, r);
+    if (err[0] != null) throw err[0];
+  }
+
+  /** The same toolbar as files (batch, or when the window's file system cannot be reached). Returns the folder. */
+  static Path setToolbarFiles(List<Integer> slots) throws Exception {
+    java.lang.reflect.Method m = star.base.neo.BaseSettings.class.getDeclaredMethod("getConfigDir");
+    m.setAccessible(true);
+    Path dir = ((java.io.File) m.invoke(null)).toPath().resolve("Toolbars").resolve(TOOLBAR);
+    if (Files.isDirectory(dir)) {
+      try (java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
+        for (Path p : ds) Files.delete(p);
+      }
+    }
+    if (slots.isEmpty()) {
+      Files.deleteIfExists(dir);
+      return dir;
+    }
+    Files.createDirectories(dir);
+    StringBuilder attrs = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE attributes PUBLIC "
+        + "\"-//NetBeans//DTD DefaultAttributes 1.0//EN\" \"http://www.netbeans.org/dtds/attributes-1_0.dtd\">\n<attributes version=\"1.0\">\n");
+    int pos = 100;
+    for (int i : slots) {
+      Files.write(dir.resolve(FAV + i + ".shadow"), shadowTarget(i).getBytes("UTF-8"));
+      attrs.append("    <fileobject name=\"").append(FAV).append(i).append(".shadow\">\n        <attr name=\"position\" intvalue=\"")
+          .append(pos).append("\"/>\n    </fileobject>\n");
+      pos += 100;
+    }
+    Files.write(dir.resolve(".nbattrs"), attrs.append("</attributes>\n").toString().getBytes("UTF-8"));
+    return dir;
+  }
+
+  static Class<?> favClass(int i) throws ClassNotFoundException {
+    try {
+      return Class.forName("star.coremodule.actions.MacroPlayFavoriteAction" + i, true, StarSettings.class.getClassLoader());
+    } catch (ClassNotFoundException e) {
+      return Class.forName("star.coremodule.actions.MacroPlayFavoriteAction" + i, true, Thread.currentThread().getContextClassLoader());
+    }
+  }
+
   /** Sets slot i (live in the window, else the setting itself) and checks what STAR-CCM+ now holds. */
   boolean setSlot(StarSettings st, boolean gui, int i, String macro, String icon, String tip) {
     if (gui && setLive(i, macro, icon, tip) && macroOf(st.getFavoriteMacro(KEY + i)).equals(macro)) return true;
@@ -183,14 +283,21 @@ public class SimKit_InstallButtons extends StarMacro {
       if (setSlot(st, gui, free.get(k), c[1], c[2], c[0])) live++;
       say("button " + (free.get(k) + 1) + ": " + c[0] + " -> " + c[1] + "   (STAR-CCM+ now holds: " + st.getFavoriteMacro(KEY + free.get(k)) + ")");
     }
-    if (gui) say("toolbar buttons set " + (live == chosen.size() ? "directly on the toolbar" : live + " directly, the rest in the settings (restart needed)"));
-    String done = remove ? "SimKit buttons removed (" + cleared + ")" : chosen.size() + " SimKit button(s) on the Macro toolbar"
+    if (gui) say("favourite macros set " + (live == chosen.size() ? "in the window" : live + " in the window, the rest in the settings"));
+
+    // a favourite macro shows only where a toolbar holds a link to it: the SimKit toolbar holds the SimKit ones
+    List<Integer> onBar = new ArrayList<>(free.subList(0, chosen.size()));
+    String how = setToolbar(onBar, gui);
+    say("SimKit toolbar: " + onBar.size() + " button(s), " + how);
+
+    String done = remove ? "SimKit buttons removed (" + cleared + ")" : chosen.size() + " button(s) on the SimKit toolbar"
         + (own.isEmpty() || replaceOwn ? "" : "; your own favourites kept (" + own.size() + ")");
-    String restart = remove ? "If they still show, close and reopen STAR-CCM+." : "If they do not show yet, close and reopen STAR-CCM+.";
+    String restart = remove ? "If they still show, close and reopen STAR-CCM+."
+        : how.startsWith("in the window") ? "" : "Close and reopen STAR-CCM+ to see them.";
     say("toolbar buttons: " + done + ". " + restart);
     if (gui) {
       JOptionPane.showMessageDialog(null, remove ? done + ".\n\n" + restart
-          : done + ".\n\nThey are on the Macro toolbar (View > Toolbars > Macro if it is hidden).\n" + restart
+          : done + ".\n\nThey are on a toolbar named SimKit (View > Toolbars > SimKit if it is hidden; drag it where you like).\n" + restart
           + "\nThey point at the kit on the share, so a kit update needs nothing.\n"
           + "After installing a new STAR-CCM+ version, play this macro again.", "SimKit toolbar buttons", JOptionPane.INFORMATION_MESSAGE);
     }
