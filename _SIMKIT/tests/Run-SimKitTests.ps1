@@ -221,6 +221,7 @@ if ($RunSolver) {
 $rc["report"]   = Invoke-Star "10_SimKit_casereport"     ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "casereport"
 $rc["newver"]   = Invoke-Star "10b_SimKit_newversion"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "newversion"
 $rc["tracker"]  = Invoke-Star "11_SimKit_tracker"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "tracker"
+$rc["opensim"]  = Invoke-Star "11b_SimKit_opensim"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "opensim"
 
 # ------------------------------------------------------------------ 6. PASTE_THIS.txt
 $paste = Join-Path $results "PASTE_THIS.txt"

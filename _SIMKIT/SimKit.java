@@ -243,6 +243,7 @@ public class SimKit extends StarMacro {
         }
         case "casereport": toolCaseReport(); break;
         case "tracker": toolTracker(); break;
+        case "opensim": testOpenSim(); break;   // test: the tracker's Open in STAR-CCM+
         case "newversion": toolSaveVersion(); break;   // New version (asks nothing, so it also runs in batch)
         case "meshstudy": toolMeshStudy(); break;   // test action: levels coarse (2) and medium (1), meshed
         case "meshparams": {   // test action: parametrize the mesh (no prism layers) and save the sim in place
@@ -1131,6 +1132,24 @@ public class SimKit extends StarMacro {
     return n;
   }
 
+  /** Batch test of the tracker's Open in STAR-CCM+: the open file is reported as already open; another version of the
+   *  case is loaded, reported and closed again. */
+  void testOpenSim() {
+    CaseInfo c = requireCase();
+    log.line("open sim: " + c.simFile.getFileName() + " -> " + (openSim(c.simFile) == null ? "already open (not loaded twice)" : "LOADED AGAIN"));
+    for (String[] r : trackerRows(c.casesDir)) {
+      Path f = c.casesDir.resolve(caseOf(r[COL_ID])).resolve("sim").resolve(r[COL_FILE]);
+      if (Fs.same(f, c.simFile)) continue;
+      Simulation s = openSim(f);
+      log.line("open sim: " + f.getFileName() + " -> " + (s == null ? "already open" : "loaded as '" + s.getPresentationName()
+          + "', simulations open: " + SimulationManager.getSingleton().simulations().size()));
+      if (s != null) s.close(star.base.neo.ServerConnection.CloseOption.Close);
+      log.line("open sim: closed again, simulations open: " + SimulationManager.getSingleton().simulations().size());
+      return;
+    }
+    log.line("open sim: no other version in " + c.casesDir + " to open");
+  }
+
   /** Case tracker: floating window of every case and version; comment, status and description are saved as you edit. */
   void toolTracker() throws IOException {
     CaseInfo c = caseOrNull();
@@ -1175,6 +1194,19 @@ public class SimKit extends StarMacro {
     Map<String, String> id = readIdentity(idf);
     id.put(key, value == null ? "" : value);
     Fs.write(idf, identityText(id));
+  }
+
+  /** Opens a .sim in this STAR-CCM+ session (another simulation, with its own tab in the window). Returns null when it
+   *  is already open here. Slow (starts a server and loads the file): never call it on the Swing thread. */
+  static Simulation openSim(Path f) {
+    Path want = f.toAbsolutePath().normalize();
+    for (Simulation s : SimulationManager.getSingleton().simulations()) {
+      try {
+        String p = s.getSessionPath();
+        if (p != null && !p.isEmpty() && Paths.get(p).toAbsolutePath().normalize().equals(want)) return null;
+      } catch (Throwable t) { /* a simulation without a file */ }
+    }
+    return new Simulation(want.toString());
   }
 
   /** Status colours in the tracker: {background, text}. */
@@ -1274,7 +1306,9 @@ public class SimKit extends StarMacro {
     final java.awt.CardLayout cardLayout = new java.awt.CardLayout();
     final JPanel cards = new JPanel(cardLayout), editPanel = new JPanel(new BorderLayout(0, 2));
     boolean editing = false;
-    final JButton folderBtn = new JButton("Open case folder"), hideBtn = new JButton("Hide...");
+    final JButton folderBtn = new JButton("Open case folder"), hideBtn = new JButton("Hide..."),
+        simBtn = new JButton("Open in STAR-CCM+");
+    boolean opening = false;
     String areaKey = null;   // what the details text area edits: version ID (comment) or "case:<id>" (description)
 
     TrackerWindow(Path dir0, String openId) {
@@ -1343,6 +1377,7 @@ public class SimKit extends StarMacro {
           if (row < 0 || !javax.swing.SwingUtilities.isLeftMouseButton(e)) return;
           Item it = view.get(row);
           if (col == T_COMMENT && e.getClickCount() == 2) startEdit();   // write in the box below
+          else if (!it.isCase() && col == T_ID && e.getClickCount() == 2) openSelected();
           else if (it.isCase() && (col == T_ID || e.getClickCount() == 2)) toggle(it.caseId);
           else if (!it.isCase() && col == T_BASED && byId(it.r[COL_BASED]) != null) jumpTo(it.r[COL_BASED]);
         }
@@ -1433,6 +1468,8 @@ public class SimKit extends StarMacro {
       cards.add(viewScroll, "view");
       cards.add(editPanel, "edit");
       folderBtn.addActionListener(e -> openFolder());
+      simBtn.addActionListener(e -> openSelected());
+      simBtn.setToolTipText("Open the selected version in this STAR-CCM+ (another simulation tab); a case row: its latest version");
       hideBtn.addActionListener(e -> hideOrShow());
       headline.setFont(headline.getFont().deriveFont(Font.BOLD));
       areaLabel.setForeground(grey);
@@ -1482,7 +1519,8 @@ public class SimKit extends StarMacro {
       details.add(areaBox, BorderLayout.CENTER);
       details.setPreferredSize(new java.awt.Dimension(1250, 210));
       details.setMinimumSize(new java.awt.Dimension(400, 120));
-      JPanel acts = new JPanel(new GridLayout(2, 1, 0, 6));
+      JPanel acts = new JPanel(new GridLayout(3, 1, 0, 6));
+      acts.add(simBtn);
       acts.add(folderBtn);
       acts.add(hideBtn);
       JPanel actsBox = new JPanel(new BorderLayout());
@@ -1675,6 +1713,7 @@ public class SimKit extends StarMacro {
           : "Take the selection out of the tracker and the case list; the files stay where they are");
       hideBtn.setEnabled(!sel.isEmpty());
       folderBtn.setEnabled(!sel.isEmpty());
+      simBtn.setEnabled(sel.size() == 1 && !opening);
       String key = null, text = "";
       if (sel.isEmpty()) {
         headline.setText("Select a case or a version to see its details");
@@ -1840,6 +1879,51 @@ public class SimKit extends StarMacro {
 
     // ----- actions -----
 
+    /** The .sim of the selected version (a case row: its latest version). */
+    Path selectedSim() {
+      List<Item> sel = selected();
+      if (sel.size() != 1) return null;
+      String[] r = sel.get(0).r;
+      if (r == null) {
+        List<String[]> v = byCase.get(sel.get(0).caseId);
+        if (v == null || v.isEmpty()) return null;
+        r = v.get(v.size() - 1);
+      }
+      return dir.resolve(caseOf(r[COL_ID])).resolve("sim").resolve(r[COL_FILE]);
+    }
+
+    /** Opens the selected version in this STAR-CCM+ session, in the background (loading takes a while). */
+    void openSelected() {
+      final Path f = selectedSim();
+      if (f == null || opening) return;
+      if (!Files.isRegularFile(f)) { say("Not found: " + f + " (deleted? the tracker reloads when you come back to it)", red); return; }
+      opening = true;
+      simBtn.setEnabled(false);
+      say("Opening " + f.getFileName() + " in STAR-CCM+ ... (the tracker stays usable)", grey);
+      Thread t = new Thread(() -> {
+        String msg;
+        java.awt.Color col;
+        try {
+          boolean was = openSim(f) == null;
+          msg = was ? f.getFileName() + " is already open in STAR-CCM+: pick its tab" : "Opened " + f.getFileName() + " in STAR-CCM+ (its own tab)";
+          col = green;
+          log.line("case tracker: " + msg);
+        } catch (Throwable x) {
+          msg = "Could not open " + f.getFileName() + ": " + reason(x) + "  (File > Load Simulation opens it too)";
+          col = red;
+        }
+        final String m2 = msg;
+        final java.awt.Color c2 = col;
+        javax.swing.SwingUtilities.invokeLater(() -> {
+          opening = false;
+          say(m2, c2);
+          showDetails();
+        });
+      }, "SimKit open sim");
+      t.setDaemon(true);
+      t.start();
+    }
+
     void openFolder() {
       List<Item> sel = selected();
       if (sel.isEmpty()) return;
@@ -1912,6 +1996,9 @@ public class SimKit extends StarMacro {
       int row = table.rowAtPoint(e.getPoint());
       if (row >= 0 && !table.isRowSelected(row)) table.setRowSelectionInterval(row, row);
       javax.swing.JPopupMenu m = new javax.swing.JPopupMenu();
+      javax.swing.JMenuItem openSim = new javax.swing.JMenuItem("Open in STAR-CCM+");
+      openSim.addActionListener(a -> openSelected());
+      openSim.setEnabled(row >= 0 && !opening);
       javax.swing.JMenuItem open = new javax.swing.JMenuItem("Open case folder");
       open.addActionListener(a -> openFolder());
       javax.swing.JMenuItem hide = new javax.swing.JMenuItem(hideBtn.getText());
@@ -1922,6 +2009,7 @@ public class SimKit extends StarMacro {
       ex.addActionListener(a -> { expanded.addAll(byCase.keySet()); rebuild(); });
       javax.swing.JMenuItem co = new javax.swing.JMenuItem("Fold all cases");
       co.addActionListener(a -> { expanded.clear(); rebuild(); });
+      m.add(openSim);
       m.add(open);
       m.add(hide);
       m.addSeparator();

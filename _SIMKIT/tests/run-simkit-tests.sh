@@ -193,6 +193,7 @@ fi
 invoke_star 10_SimKit_casereport casereport ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[report]=$RC
 invoke_star 10b_SimKit_newversion newversion ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[newver]=$RC
 invoke_star 11_SimKit_tracker tracker ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[tracker]=$RC
+invoke_star 11b_SimKit_opensim opensim ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[opensim]=$RC
 
 # ------------------------------------------------------------------ PASTE_THIS.txt (raw, redacted below)
 PASTE="$RESULTS/PASTE_THIS.txt"

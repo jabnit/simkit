@@ -130,7 +130,10 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       empty item ends the list); click another row (or Done, Esc): saved, the box shows it formatted and the table
       shows the first line + "+n lines" (point at it: the whole comment). Close and reopen the tracker: the lines are
       kept; case_identity.txt holds comment_vNN=ml:...\n...; Case report shows it formatted. A case description:
-      select the case row, click the box: same; case_list.csv follows. Click a "based on" link: jumps to that version. Filter "prism": only matching versions,
+      select the case row, click the box: same; case_list.csv follows.
+      Open in STAR-CCM+: select another version, click the button (or double-click its ID): bottom line "Opening
+      ...", the tracker stays usable, then a new simulation tab with that file; again on the same row: "already
+      open". On a case row: its latest version. Note how long loading took and whether the new tab was in front. Click a "based on" link: jumps to that version. Filter "prism": only matching versions,
       cases unfolded; status filter Active / Done / Dropped / No status. Change...: another cases folder.
       Open the tracker from another STAR-CCM+ session (another user) -> same status and comments. Export CSV ->
       case_tracker.csv imports in Google Sheets (tab Versions). Leave the tracker open and keep working on the model
@@ -300,4 +303,7 @@ C. RESULTS SO FAR
   comments with backslashes read as before). Every writer of case_identity.txt goes through identityText().
   Offline test (CommentShot: encode round trips, typing with list continuation, bold toggle, save, read back,
   CSV) passed.
+  Tracker: Open in STAR-CCM+ (button, right-click, double-click on a version's ID) = new Simulation(path) in a
+  background thread (SimulationManager: a file already open is not loaded twice). Runner step 11b (batch opensim):
+  the open file is reported as already open, another version is loaded and closed again.
   Not yet run: section B (GUI: Save new version, Compare, Case tracker, Calculators copy), release 2402, Linux.
