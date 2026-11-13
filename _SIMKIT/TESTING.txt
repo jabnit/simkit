@@ -125,9 +125,12 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       (ID + grey file name, coloured status, comment, based on, saved). The open case is unfolded, its version has
       a green dot and is selected. Click the arrow of another case: it unfolds; again: it folds. Right-click > Fold
       all / Unfold all. Click a status, pick "running": saved at once (bottom line "Saved: status of ..."); "dropped"
-      strikes the comment through. Double-click a comment, type, Enter: saved. Select a version, type a two-line
-      comment in the box underneath, click another row: saved as one line. Double-click a case description: saved,
-      case_list.csv follows. Click a "based on" link: jumps to that version. Filter "prism": only matching versions,
+      strikes the comment through. Double-click a comment: the box below opens for writing. Type several lines
+      with B / I / "- List" / "1. List" (Ctrl+B, Ctrl+I; Enter in a list adds the next bullet or number, Enter on an
+      empty item ends the list); click another row (or Done, Esc): saved, the box shows it formatted and the table
+      shows the first line + "+n lines" (point at it: the whole comment). Close and reopen the tracker: the lines are
+      kept; case_identity.txt holds comment_vNN=ml:...\n...; Case report shows it formatted. A case description:
+      select the case row, click the box: same; case_list.csv follows. Click a "based on" link: jumps to that version. Filter "prism": only matching versions,
       cases unfolded; status filter Active / Done / Dropped / No status. Change...: another cases folder.
       Open the tracker from another STAR-CCM+ session (another user) -> same status and comments. Export CSV ->
       case_tracker.csv imports in Google Sheets (tab Versions). Leave the tracker open and keep working on the model
@@ -290,4 +293,11 @@ C. RESULTS SO FAR
   now makes a SimKit toolbar (live through the window's NetBeans file system, else the files) and Remove deletes it.
   The Compile tab on playing SimKit.java (12 deprecation warnings, STAR API kept for 2402) and ISO_exportHandoff (4)
   is gone: @SuppressWarnings on the class; javac -Xlint:deprecation,unchecked: 0 warnings in every kit macro.
+  Comments and descriptions: several lines and light formatting (**bold**, *italic*, - bullets, 1. numbered),
+  edited in the box under the table (B / I / list buttons, Ctrl+B / Ctrl+I, list continuation on Enter), shown
+  formatted there, in the table (first line + "+n lines", tooltip) and in the Case report. case_identity.txt keeps
+  one line per key: multi-line values as ml:<lines joined by \n, backslash as \\>; one-line values unchanged (old
+  comments with backslashes read as before). Every writer of case_identity.txt goes through identityText().
+  Offline test (CommentShot: encode round trips, typing with list continuation, bold toggle, save, read back,
+  CSV) passed.
   Not yet run: section B (GUI: Save new version, Compare, Case tracker, Calculators copy), release 2402, Linux.

@@ -494,7 +494,7 @@ public class SimKit extends StarMacro {
       headTitle.setText(c.caseId + "  \u00B7  v" + Fmt.two(c.version) + (c.label.isEmpty() ? "" : "  \u00B7  " + c.label));
       headTitle.setForeground(java.awt.Color.BLACK);
       String desc = readIdentity(c).getOrDefault("description", "");
-      headSub.setText(desc.isEmpty() ? " " : desc);
+      headSub.setText(desc.isEmpty() ? " " : Md.plain(desc));
       headPath.setText(path);
     } else {
       headTitle.setText("Not a SimKit case yet");
@@ -643,7 +643,7 @@ public class SimKit extends StarMacro {
     try {
       for (String line : Fs.read(file).split("\\r?\\n")) {
         int i = line.indexOf('=');
-        if (i > 0 && !line.startsWith("#")) kv.put(line.substring(0, i).trim(), line.substring(i + 1).trim());
+        if (i > 0 && !line.startsWith("#")) kv.put(line.substring(0, i).trim(), idDecode(line.substring(i + 1).trim()));
       }
     } catch (IOException e) {
       // no identity file yet
@@ -651,12 +651,41 @@ public class SimKit extends StarMacro {
     return kv;
   }
 
-  static void writeIdentity(CaseInfo c, Map<String, String> kv) throws IOException {
-    StringBuilder sb = new StringBuilder("# SimKit case identity -- written by " + VERSION + "; you may edit description\n");
-    for (Map.Entry<String, String> e : kv.entrySet()) {
-      sb.append(e.getKey()).append('=').append(Fmt.oneLine(e.getValue())).append('\n');
+  /** A value for case_identity.txt (one line per key). Text over several lines (comments, descriptions) is kept as
+   *  "ml:" + the lines joined by \n (a backslash is written \\); everything else as one line, as before. */
+  static String idEncode(String v) {
+    if (v == null) return "";
+    String s = v.replace("\r\n", "\n").replace('\r', '\n');
+    if (s.indexOf('\n') < 0 && !s.startsWith("ml:")) return Fmt.oneLine(s);
+    s = s.replace('\t', ' ').replaceAll("[ ]+\n", "\n").replaceAll("^\n+|\n+$", "");
+    if (s.indexOf('\n') < 0 && !s.startsWith("ml:")) return s.trim();
+    return "ml:" + s.replace("\\", "\\\\").replace("\n", "\\n");
+  }
+
+  static String idDecode(String v) {
+    if (v == null || !v.startsWith("ml:")) return v;
+    StringBuilder sb = new StringBuilder();
+    for (int i = 3; i < v.length(); i++) {
+      char ch = v.charAt(i);
+      if (ch == '\\' && i + 1 < v.length()) {
+        char nx = v.charAt(++i);
+        sb.append(nx == 'n' ? '\n' : nx);
+      } else {
+        sb.append(ch);
+      }
     }
-    Fs.write(c.identityFile(), sb.toString());
+    return sb.toString();
+  }
+
+  /** The whole case_identity.txt for these keys and values. */
+  static String identityText(Map<String, String> kv) {
+    StringBuilder sb = new StringBuilder("# SimKit case identity -- written by " + VERSION + "; you may edit description\n");
+    for (Map.Entry<String, String> e : kv.entrySet()) sb.append(e.getKey()).append('=').append(idEncode(e.getValue())).append('\n');
+    return sb.toString();
+  }
+
+  static void writeIdentity(CaseInfo c, Map<String, String> kv) throws IOException {
+    Fs.write(c.identityFile(), identityText(kv));
   }
 
   /** Creates the case folder in 'casesDir' (next free NNN there, safe against a parallel creation). */
@@ -1010,9 +1039,7 @@ public class SimKit extends StarMacro {
     } else {
       if (hide) id.put("hidden_v" + v, "yes"); else { id.remove("hidden_v" + v); id.remove("hidden"); }
     }
-    StringBuilder sb = new StringBuilder("# SimKit case identity -- written by " + VERSION + "; you may edit description\n");
-    for (Map.Entry<String, String> kv : id.entrySet()) sb.append(kv.getKey()).append('=').append(kv.getValue()).append('\n');
-    Fs.write(idf, sb.toString());
+    Fs.write(idf, identityText(id));
   }
   static final String[] STATUSES = {"", "planned", "meshing", "running", "done", "reported", "dropped"};
   static final String TRACKER_CSV = "case_tracker.csv";
@@ -1094,14 +1121,12 @@ public class SimKit extends StarMacro {
       Map<String, String> id = byCase.computeIfAbsent(cid, k -> readIdentity(idf));
       String v = verOf(r[COL_ID]);
       id.put("status_v" + v, Fmt.oneLine(r[COL_STATUS]));
-      id.put("comment_v" + v, Fmt.oneLine(r[COL_COMMENT]));
-      if (o == null || !o[COL_DESC].equals(r[COL_DESC])) id.put("description", Fmt.oneLine(r[COL_DESC]));   // per case
+      id.put("comment_v" + v, r[COL_COMMENT]);
+      if (o == null || !o[COL_DESC].equals(r[COL_DESC])) id.put("description", r[COL_DESC]);   // per case
       n++;
     }
     for (Map.Entry<String, Map<String, String>> e : byCase.entrySet()) {
-      StringBuilder sb = new StringBuilder("# SimKit case identity -- written by " + VERSION + "; you may edit description\n");
-      for (Map.Entry<String, String> kv : e.getValue().entrySet()) sb.append(kv.getKey()).append('=').append(kv.getValue()).append('\n');
-      Fs.write(casesDir.resolve(e.getKey()).resolve("sim").resolve("case_identity.txt"), sb.toString());
+      Fs.write(casesDir.resolve(e.getKey()).resolve("sim").resolve("case_identity.txt"), identityText(e.getValue()));
     }
     return n;
   }
@@ -1148,10 +1173,8 @@ public class SimKit extends StarMacro {
   static void setIdentityKey(Path casesDir, String caseId, String key, String value) throws IOException {
     Path idf = casesDir.resolve(caseId).resolve("sim").resolve("case_identity.txt");
     Map<String, String> id = readIdentity(idf);
-    id.put(key, Fmt.oneLine(value));
-    StringBuilder sb = new StringBuilder("# SimKit case identity -- written by " + VERSION + "; you may edit description\n");
-    for (Map.Entry<String, String> kv : id.entrySet()) sb.append(kv.getKey()).append('=').append(kv.getValue()).append('\n');
-    Fs.write(idf, sb.toString());
+    id.put(key, value == null ? "" : value);
+    Fs.write(idf, identityText(id));
   }
 
   /** Status colours in the tracker: {background, text}. */
@@ -1246,7 +1269,11 @@ public class SimKit extends StarMacro {
     final javax.swing.JCheckBox showHidden = new javax.swing.JCheckBox("Show hidden");
     final JLabel summary = new JLabel(), message = new JLabel(" "), folderName = new JLabel(), headline = new JLabel(" "),
         areaLabel = new JLabel("Comment");
-    final JTextArea area = new JTextArea(3, 40);
+    final JTextArea area = new JTextArea(5, 40);
+    final javax.swing.JEditorPane viewer = new javax.swing.JEditorPane();   // the comment, formatted
+    final java.awt.CardLayout cardLayout = new java.awt.CardLayout();
+    final JPanel cards = new JPanel(cardLayout), editPanel = new JPanel(new BorderLayout(0, 2));
+    boolean editing = false;
     final JButton folderBtn = new JButton("Open case folder"), hideBtn = new JButton("Hide...");
     String areaKey = null;   // what the details text area edits: version ID (comment) or "case:<id>" (description)
 
@@ -1270,9 +1297,8 @@ public class SimKit extends StarMacro {
             default: return it.r[COL_SAVED];
           }
         }
-        @Override public boolean isCellEditable(int row, int col) {
-          Item it = view.get(row);
-          return it.isCase() ? col == T_COMMENT : col == T_STATUS || col == T_COMMENT;
+        @Override public boolean isCellEditable(int row, int col) {   // comments and descriptions: in the box below
+          return !view.get(row).isCase() && col == T_STATUS;
         }
         @Override public void setValueAt(Object v, int row, int col) {
           Item it = view.get(row);
@@ -1316,7 +1342,8 @@ public class SimKit extends StarMacro {
           int row = table.rowAtPoint(e.getPoint()), col = table.columnAtPoint(e.getPoint());
           if (row < 0 || !javax.swing.SwingUtilities.isLeftMouseButton(e)) return;
           Item it = view.get(row);
-          if (it.isCase() && (col == T_ID || e.getClickCount() == 2 && col != T_COMMENT)) toggle(it.caseId);
+          if (col == T_COMMENT && e.getClickCount() == 2) startEdit();   // write in the box below
+          else if (it.isCase() && (col == T_ID || e.getClickCount() == 2)) toggle(it.caseId);
           else if (!it.isCase() && col == T_BASED && byId(it.r[COL_BASED]) != null) jumpTo(it.r[COL_BASED]);
         }
       });
@@ -1356,9 +1383,55 @@ public class SimKit extends StarMacro {
       area.setLineWrap(true);
       area.setWrapStyleWord(true);
       area.setFont(table.getFont());
+      area.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
       area.addFocusListener(new java.awt.event.FocusAdapter() {
-        @Override public void focusLost(java.awt.event.FocusEvent e) { saveArea(); }
+        @Override public void focusLost(java.awt.event.FocusEvent e) {
+          java.awt.Component to = e.getOppositeComponent();
+          if (e.isTemporary() || to != null && javax.swing.SwingUtilities.isDescendingFrom(to, editPanel)) flushArea();
+          else endEdit();
+        }
       });
+      bind(area, "ctrl B", () -> wrap("**"));
+      bind(area, "ctrl I", () -> wrap("*"));
+      bind(area, "ESCAPE", this::endEdit);
+      bind(area, "ENTER", this::newLine);
+      viewer.setContentType("text/html");
+      viewer.setEditable(false);
+      viewer.putClientProperty(javax.swing.JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
+      viewer.setFont(table.getFont());
+      viewer.setBorder(BorderFactory.createEmptyBorder(2, 6, 2, 6));
+      viewer.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.TEXT_CURSOR));
+      viewer.setToolTipText("Click to edit");
+      viewer.addMouseListener(new java.awt.event.MouseAdapter() {
+        @Override public void mouseClicked(java.awt.event.MouseEvent e) { startEdit(); }
+      });
+      JPanel bar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+      Object[][] tools = {{"B", "Bold: **text** (Ctrl+B)", (Runnable) () -> wrap("**")},
+          {"I", "Italic: *text* (Ctrl+I)", (Runnable) () -> wrap("*")},
+          {"• List", "Bullet list: lines starting with - ", (Runnable) () -> list(false)},
+          {"1. List", "Numbered list: lines starting with 1. 2. 3.", (Runnable) () -> list(true)},
+          {"Done", "Save and show the formatted text (Esc)", (Runnable) this::endEdit}};
+      for (Object[] t : tools) {
+        JButton b = new JButton((String) t[0]);
+        b.setFocusable(false);
+        b.setToolTipText((String) t[1]);
+        b.setMargin(new java.awt.Insets(1, 8, 1, 8));
+        if (t[0].equals("B")) b.setFont(b.getFont().deriveFont(Font.BOLD));
+        if (t[0].equals("I")) b.setFont(b.getFont().deriveFont(Font.ITALIC));
+        final Runnable run = (Runnable) t[2];
+        b.addActionListener(e -> run.run());
+        if (t[0].equals("Done")) bar.add(javax.swing.Box.createHorizontalStrut(12));
+        bar.add(b);
+      }
+      JLabel marks = new JLabel("   **bold**   *italic*   - bullet   1. numbered   (saved when you leave the box)");
+      marks.setForeground(pale);
+      bar.add(marks);
+      editPanel.add(bar, BorderLayout.NORTH);
+      editPanel.add(new JScrollPane(area), BorderLayout.CENTER);
+      JScrollPane viewScroll = new JScrollPane(viewer);
+      viewScroll.getViewport().setBackground(java.awt.Color.WHITE);
+      cards.add(viewScroll, "view");
+      cards.add(editPanel, "edit");
       folderBtn.addActionListener(e -> openFolder());
       hideBtn.addActionListener(e -> hideOrShow());
       headline.setFont(headline.getFont().deriveFont(Font.BOLD));
@@ -1405,8 +1478,10 @@ public class SimKit extends StarMacro {
       details.add(headline, BorderLayout.NORTH);
       JPanel areaBox = new JPanel(new BorderLayout(0, 2));
       areaBox.add(areaLabel, BorderLayout.NORTH);
-      areaBox.add(new JScrollPane(area), BorderLayout.CENTER);
+      areaBox.add(cards, BorderLayout.CENTER);
       details.add(areaBox, BorderLayout.CENTER);
+      details.setPreferredSize(new java.awt.Dimension(1250, 210));
+      details.setMinimumSize(new java.awt.Dimension(400, 120));
       JPanel acts = new JPanel(new GridLayout(2, 1, 0, 6));
       acts.add(folderBtn);
       acts.add(hideBtn);
@@ -1421,23 +1496,25 @@ public class SimKit extends StarMacro {
       bottom.add(message, BorderLayout.CENTER);
       bottom.add(btns, BorderLayout.EAST);
 
-      JPanel south = new JPanel(new BorderLayout(0, 8));
-      south.add(details, BorderLayout.CENTER);
-      south.add(bottom, BorderLayout.SOUTH);
-
       JPanel root = new JPanel(new BorderLayout(0, 8));
       root.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
       root.add(top, BorderLayout.NORTH);
       JScrollPane sp = new JScrollPane(table);
       sp.getViewport().setBackground(java.awt.Color.WHITE);
-      sp.setPreferredSize(new java.awt.Dimension(1250, 480));
-      root.add(sp, BorderLayout.CENTER);
-      root.add(south, BorderLayout.SOUTH);
+      sp.setPreferredSize(new java.awt.Dimension(1250, 420));
+      sp.setMinimumSize(new java.awt.Dimension(400, 120));
+      javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, sp, details);
+      split.setResizeWeight(1.0);   // a bigger window gives the table the room; drag the bar for a bigger box
+      split.setBorder(null);
+      split.setDividerSize(7);
+      split.setContinuousLayout(true);
+      root.add(split, BorderLayout.CENTER);
+      root.add(bottom, BorderLayout.SOUTH);
       w.setContentPane(root);
 
       w.addWindowFocusListener(new java.awt.event.WindowAdapter() {
         @Override public void windowGainedFocus(java.awt.event.WindowEvent e) {
-          if (!table.isEditing() && !area.isFocusOwner()) reload();
+          if (!table.isEditing() && !editing) reload();
         }
       });
       reload();
@@ -1636,18 +1713,118 @@ public class SimKit extends StarMacro {
         key = r[COL_ID];
         text = r[COL_COMMENT];
       }
-      if (key == null || !key.equals(areaKey) || !area.isFocusOwner()) {
+      if (key == null || !key.equals(areaKey) || !editing) {   // never overwrite what is being typed
+        if (editing && (key == null || !key.equals(areaKey))) {
+          editing = false;
+          cardLayout.show(cards, "view");
+        }
         areaKey = key;
         if (!area.getText().equals(text)) area.setText(text);
         area.setEditable(key != null);
-        area.setBackground(key != null ? java.awt.Color.WHITE : new java.awt.Color(0xF4, 0xF5, 0xF7));
+        String empty = key == null ? "" : key.startsWith("case:") ? "Click here to describe the case" : "Click here to write a comment";
+        viewer.setText("<html><head><style>" + viewerCss() + "</style></head><body>"
+            + (text.trim().isEmpty() ? "<p class='empty'>" + empty + "</p>" : Md.toHtml(text)) + "</body></html>");
+        viewer.setCaretPosition(0);
+        viewer.setBackground(key != null ? java.awt.Color.WHITE : new java.awt.Color(0xF4, 0xF5, 0xF7));
+        viewer.setCursor(java.awt.Cursor.getPredefinedCursor(key != null ? java.awt.Cursor.TEXT_CURSOR : java.awt.Cursor.DEFAULT_CURSOR));
       }
     }
 
-    /** Saves the details text (comment or description) if it differs from what is stored; line breaks become spaces. */
+    String viewerCss() {
+      Font f = table.getFont();
+      return "body{font-family:'" + f.getFamily() + "';font-size:" + f.getSize() + "pt;margin:2px}p{margin-top:0;margin-bottom:5px}"
+          + "ul,ol{margin-top:0;margin-bottom:5px;margin-left:20px;margin-left-ltr:22px}li{margin-bottom:1px}"
+          + ".empty{color:#B8BEC6;font-style:italic}";   // margin-left-ltr: Swing's own name for the list indent
+    }
+
+    // ----- writing in the box: click the formatted text to edit; leaving the box (or Done, Esc) saves -----
+
+    void startEdit() {
+      if (areaKey == null || selected().size() != 1) return;
+      editing = true;
+      cardLayout.show(cards, "edit");
+      area.requestFocusInWindow();
+      area.setCaretPosition(area.getText().length());
+    }
+
+    void endEdit() {
+      if (!editing) return;
+      flushArea();
+      editing = false;
+      showDetails();   // the formatted text, as saved
+      cardLayout.show(cards, "view");
+    }
+
+    void bind(JTextArea a, String keyStroke, Runnable r) {
+      a.getInputMap().put(javax.swing.KeyStroke.getKeyStroke(keyStroke), keyStroke);
+      a.getActionMap().put(keyStroke, new javax.swing.AbstractAction() {
+        private static final long serialVersionUID = 1L;
+        @Override public void actionPerformed(java.awt.event.ActionEvent e) { r.run(); }
+      });
+    }
+
+    /** Puts the selection between marks (or takes them off); without a selection, places the caret between two marks. */
+    void wrap(String m) {
+      int a = area.getSelectionStart(), b = area.getSelectionEnd();
+      String s = area.getSelectedText() == null ? "" : area.getSelectedText();
+      if (s.length() >= 2 * m.length() && s.startsWith(m) && s.endsWith(m) && !(m.equals("*") && s.startsWith("**"))) {
+        area.replaceSelection(s.substring(m.length(), s.length() - m.length()));
+        area.select(a, b - 2 * m.length());
+      } else {
+        area.replaceSelection(m + s + m);
+        if (s.isEmpty()) area.setCaretPosition(a + m.length()); else area.select(a, b + 2 * m.length());
+      }
+      area.requestFocusInWindow();
+    }
+
+    /** Makes the selected lines (or the current one) a bullet or numbered list; again on a list: back to plain lines. */
+    void list(boolean numbered) {
+      try {
+        int l0 = area.getLineOfOffset(area.getSelectionStart()), l1 = area.getLineOfOffset(area.getSelectionEnd());
+        if (l1 > l0 && area.getSelectionEnd() == area.getLineStartOffset(l1)) l1--;
+        int start = area.getLineStartOffset(l0), end = area.getLineEndOffset(l1);
+        String[] ls = area.getText().substring(start, end).split("\n", -1);
+        boolean all = true;
+        for (String l : ls) if (!l.trim().isEmpty()) all &= (numbered ? Md.NUMBER : Md.BULLET).matcher(l).matches();
+        StringBuilder sb = new StringBuilder();
+        int n = 1;
+        for (int i = 0; i < ls.length; i++) {
+          String l = ls[i];
+          Matcher b = Md.BULLET.matcher(l), k = Md.NUMBER.matcher(l);
+          String body = b.matches() ? b.group(1) : k.matches() ? k.group(2) : l.trim();
+          if (i > 0) sb.append('\n');
+          if (l.trim().isEmpty() && i == ls.length - 1 && ls.length > 1) continue;
+          sb.append(all ? body : (numbered ? (n++) + ". " : "- ") + body);
+        }
+        area.replaceRange(sb.toString(), start, end);
+        area.setCaretPosition(Math.min(area.getText().length(), start + sb.length()));
+      } catch (javax.swing.text.BadLocationException e) { /* nothing selected */ }
+      area.requestFocusInWindow();
+    }
+
+    /** Enter: in a list, the next line starts with the next bullet or number; Enter on an empty item ends the list. */
+    void newLine() {
+      try {
+        int caret = area.getCaretPosition(), line = area.getLineOfOffset(caret), ls = area.getLineStartOffset(line);
+        String before = area.getText(ls, caret - ls);
+        Matcher b = Pattern.compile("^(\\s*)([-*\u2022])\\s+(.*)$").matcher(before), k = Md.NUMBER.matcher(before);
+        if (b.matches() || k.matches()) {
+          String rest = b.matches() ? b.group(3) : k.group(2);
+          if (rest.trim().isEmpty()) {   // empty item: end the list
+            area.replaceRange("", ls, caret);
+            return;
+          }
+          area.replaceSelection("\n" + (b.matches() ? b.group(1) + b.group(2) + " " : (Integer.parseInt(k.group(1)) + 1) + ". "));
+          return;
+        }
+      } catch (javax.swing.text.BadLocationException e) { /* plain new line */ }
+      area.replaceSelection("\n");
+    }
+
+    /** Saves the box (comment or description) if it differs from what is stored; line breaks are kept. */
     void flushArea() {
       if (areaKey == null || !area.isEditable()) return;
-      String s = area.getText().replaceAll("\\s*\\r?\\n\\s*", " ").trim();
+      String s = area.getText().replace("\r", "").replaceAll("[ \\t]+\n", "\n").replaceAll("^\n+|\\s+$", "");
       if (areaKey.startsWith("case:")) {
         String cid = areaKey.substring(5);
         if (!byCase.containsKey(cid) || s.equals(description(cid))) return;
@@ -1660,7 +1837,6 @@ public class SimKit extends StarMacro {
       if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);   // keeps the selection
     }
 
-    void saveArea() { flushArea(); }
 
     // ----- actions -----
 
@@ -1765,6 +1941,20 @@ public class SimKit extends StarMacro {
       return k % 2 == 0 ? java.awt.Color.WHITE : stripe;
     }
 
+    /** A comment or description in a cell: its first line formatted, "+n lines" in grey; the whole text, formatted, as
+     *  the tooltip when there is more than the cell shows. */
+    String tipHtml(String s) {
+      return Md.lines(s).size() > 1 || s.length() > 60 ? "<html><head><style>" + viewerCss() + "</style></head><body style='width:440px'>"
+          + Md.toHtml(s) + "</body></html>" : null;
+    }
+
+    String formatted(String s, boolean struck) {
+      int more = Md.lines(s).size() - 1;
+      String first = Md.firstLineHtml(s);
+      return "<html>" + (struck ? "<s>" + first + "</s>" : first)
+          + (more > 0 ? "&nbsp;&nbsp;<font color='#8A94A0'>+" + more + (more == 1 ? " line" : " lines") + "</font>" : "") + "</html>";
+    }
+
     final class Cells extends javax.swing.table.DefaultTableCellRenderer {
       private static final long serialVersionUID = 1L;
       @Override
@@ -1790,6 +1980,9 @@ public class SimKit extends StarMacro {
             setFont(f.deriveFont(Font.ITALIC));
             setForeground(pale);
             s = "no description (double-click to add)";
+          } else if (col == T_COMMENT) {
+            setToolTipText(tipHtml(s));
+            s = formatted(s, false);
           } else if (col == T_SAVED) {
             int n = byCase.get(it.caseId).size();
             setFont(f);
@@ -1816,7 +2009,7 @@ public class SimKit extends StarMacro {
           }
           case T_COMMENT:
             if (s.isEmpty()) { setForeground(pale); setText("—"); }
-            else { setText(dropped ? "<html><s>" + html(s) + "</s></html>" : s); setToolTipText(s.length() > 60 ? s : null); }
+            else { setText(formatted(s, dropped)); setToolTipText(tipHtml(s)); }
             return this;
           case T_BASED:
             if (s.isEmpty()) { setForeground(pale); setText("—"); }
@@ -2549,7 +2742,7 @@ public class SimKit extends StarMacro {
         .append("body{font-family:Segoe UI,Arial,sans-serif;font-size:12px;margin:16px;color:#222}")
         .append("h1{font-size:18px;margin:0 0 6px}h2{font-size:13px;margin:14px 0 4px;border-bottom:1px solid #999}")
         .append("table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:2px 6px;")
-        .append("text-align:left;vertical-align:top}th{background:#eee}.k{width:180px;font-weight:bold}")
+        .append("text-align:left;vertical-align:top}th{background:#eee}.k{width:180px;font-weight:bold}" + MD_CSS)
         .append("</style></head><body>\n<h1>").append(Html.esc(c.caseId)).append(" &mdash; ")
         .append(Html.esc(c.label)).append(" v").append(Fmt.two(c.version)).append("</h1>\n<table>");
     String[][] ident = {{"ID", versionId(c)}, {"Project / configuration", c.proj + " / "
@@ -2562,7 +2755,7 @@ public class SimKit extends StarMacro {
         {"Created", id.getOrDefault("created", "") + " " + id.getOrDefault("created_by", "")},
         {"Written", Fmt.iso() + " by " + Env.user() + " with " + VERSION}};
     for (String[] r : ident) {
-      h.append("<tr><td class=\"k\">").append(Html.esc(r[0])).append("</td><td>").append(Html.esc(r[1])).append("</td></tr>");
+      h.append("<tr><td class=\"k\">").append(Html.esc(r[0])).append("</td><td>").append(identCell(r)).append("</td></tr>");
     }
     h.append("</table>\n");
     for (String sec : AUDIT_SECTIONS) {
@@ -2936,7 +3129,7 @@ public class SimKit extends StarMacro {
         .append("h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:22px 0 6px;border-bottom:1px solid #999}")
         .append("table{border-collapse:collapse}td,th{border:1px solid #ccc;padding:3px 8px;text-align:left;vertical-align:top}")
         .append("th{background:#eee}.PASS{background:#e3f4e3}.WARN{background:#fdf3d8}.FAIL{background:#f9dcdc}")
-        .append("img{max-width:520px;margin:4px;border:1px solid #ccc}.k{font-weight:bold;width:170px}")
+        .append("img{max-width:520px;margin:4px;border:1px solid #ccc}.k{font-weight:bold;width:170px}" + MD_CSS)
         .append("</style></head><body>\n<h1>").append(Html.esc(c.caseId)).append(" &mdash; v").append(Fmt.two(c.version))
         .append(c.label.isEmpty() ? "" : " (" + Html.esc(c.label) + ")").append("</h1>\n<table>");
     String[][] ident = {{"Description", id.getOrDefault("description", "")},
@@ -2946,7 +3139,7 @@ public class SimKit extends StarMacro {
         {"Parent case", id.getOrDefault("parent_case", "")}, {"Sim file", c.simFile.toString()},
         {"Created", id.getOrDefault("created", "") + " by " + id.getOrDefault("created_by", "")},
         {"Report written", Fmt.iso() + " by " + Env.user() + " with " + VERSION + ", STAR-CCM+ " + starVersion()}};
-    for (String[] r : ident) h.append("<tr><td class=\"k\">").append(Html.esc(r[0])).append("</td><td>").append(Html.esc(r[1])).append("</td></tr>");
+    for (String[] r : ident) h.append("<tr><td class=\"k\">").append(Html.esc(r[0])).append("</td><td>").append(identCell(r)).append("</td></tr>");
     h.append("</table>\n");
     Path rec = c.sub("record");
     reportTable(h, "Check (before the run)", rec.resolve("check_" + base + ".csv"), true);
@@ -4128,6 +4321,88 @@ public class SimKit extends StarMacro {
   static final class Html {
     static String esc(String s) {
       return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+    }
+  }
+
+  /** A {label, value} row of a report: Description and Comment formatted (Md), the rest as text. */
+  static String identCell(String[] r) {
+    return r[0].equals("Description") || r[0].equals("Comment") ? "<div class=\"md\">" + Md.toHtml(r[1]) + "</div>" : Html.esc(r[1]);
+  }
+
+  static final String MD_CSS = ".md p{margin:0 0 4px}.md ul,.md ol{margin:0 0 4px;padding-left:20px}";
+
+  /** Light formatting of comments and descriptions, typed as plain marks so the text stays readable in
+   *  case_identity.txt, the CSV files and Google Sheets: **bold**, *italic*, a line "- text" = bullet,
+   *  a line "1. text" = numbered item. Shown formatted in the tracker and the case report. */
+  static final class Md {
+    static final Pattern BULLET = Pattern.compile("^\\s*[-*•]\\s+(.*)$");
+    static final Pattern NUMBER = Pattern.compile("^\\s*(\\d+)[.)]\\s+(.*)$");
+
+    /** One line: HTML-escaped, then **bold** and *italic*. */
+    static String inline(String s) {
+      String h = Html.esc(s);
+      h = h.replaceAll("\\*\\*(\\S(?:.*?\\S)?)\\*\\*", "<b>$1</b>");
+      h = h.replaceAll("(?<![*\\w])\\*(\\S(?:.*?\\S)?)\\*(?![*\\w])", "<i>$1</i>");
+      return h;
+    }
+
+    /** The whole text as HTML: paragraphs (blank line between), line breaks, bullet and numbered lists. */
+    static String toHtml(String text) {
+      if (text == null || text.trim().isEmpty()) return "";
+      StringBuilder out = new StringBuilder();
+      String list = null;
+      boolean para = false;
+      for (String line : text.split("\n", -1)) {
+        Matcher b = BULLET.matcher(line), n = NUMBER.matcher(line);
+        String kind = b.matches() ? "ul" : n.matches() ? "ol" : null;
+        if (kind != null) {
+          if (para) { out.append("</p>"); para = false; }
+          if (!kind.equals(list)) {
+            if (list != null) out.append("</").append(list).append('>');
+            out.append('<').append(kind).append('>');
+            list = kind;
+          }
+          out.append("<li>").append(inline(kind.equals("ul") ? b.group(1) : n.group(2))).append("</li>");
+          continue;
+        }
+        if (list != null) { out.append("</").append(list).append('>'); list = null; }
+        if (line.trim().isEmpty()) {
+          if (para) { out.append("</p>"); para = false; }
+          continue;
+        }
+        out.append(para ? "<br>" : "<p>").append(inline(line));
+        para = true;
+      }
+      if (list != null) out.append("</").append(list).append('>');
+      if (para) out.append("</p>");
+      return out.toString();
+    }
+
+    static List<String> lines(String text) {
+      List<String> out = new ArrayList<>();
+      if (text != null) for (String l : text.split("\n")) if (!l.trim().isEmpty()) out.add(l);
+      return out;
+    }
+
+    /** The first line formatted, for a table cell ("&bull; " for a bullet, "1. " kept). */
+    static String firstLineHtml(String text) {
+      List<String> ls = lines(text);
+      if (ls.isEmpty()) return "";
+      Matcher b = BULLET.matcher(ls.get(0)), n = NUMBER.matcher(ls.get(0));
+      if (b.matches()) return "&bull; " + inline(b.group(1));
+      if (n.matches()) return Html.esc(n.group(1)) + ". " + inline(n.group(2));
+      return inline(ls.get(0).trim());
+    }
+
+    /** Text without the marks on one line (lines joined by " / "), for one-line places. */
+    static String plain(String text) {
+      List<String> parts = new ArrayList<>();
+      for (String l : lines(text)) {
+        Matcher b = BULLET.matcher(l);
+        String t = b.matches() ? "• " + b.group(1) : l.trim();
+        parts.add(t.replaceAll("\\*\\*(\\S(?:.*?\\S)?)\\*\\*", "$1").replaceAll("(?<![*\\w])\\*(\\S(?:.*?\\S)?)\\*(?![*\\w])", "$1"));
+      }
+      return String.join(" / ", parts);
     }
   }
 
