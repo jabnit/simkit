@@ -40,8 +40,9 @@ Site set-up (once)
   1. Copy the _SIMKIT folder anywhere on the share (e.g. S:\CFD\_SIMKIT on Windows = /mnt/cfd/_SIMKIT on Linux).
      Nothing else to configure: no environment variable, no path in the macros.
   2. Edit config/projects.csv (projects, configuration codes) and config/links.csv (Google Doc / Sheet links).
-  3. Add the buttons/ macros to the users' STAR-CCM+ macro toolbar, pointing at the files on the share (do not copy
-     them: each button finds the root from its own location and always runs the current kit).
+  3. Each user plays buttons/SimKit_InstallButtons.java once (File > Macro > Play Macro, from the share): the SimKit
+     buttons go to the user's Macro toolbar (STAR-CCM+ favourite macros), pointing at the files on the share (do not
+     copy them: each button finds the root from its own location and always runs the current kit).
   4. Import Google/SimKit_Case_List_ISO.xlsx into Google Sheets and put the guideline docx in Google Docs.
 
 A. BATCH VALIDATION (no GUI; about 10 min)
@@ -148,7 +149,12 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
    7. Save new version > "New case from this one" (step 3 sim): the new case shows the parent; the parent file is untouched.
    8. Compare versions > Previous version; Case list; Guideline (opens the links.csv URL); About (shows the kit
       root = the folder of SimKit.java on the share).
-   9. Toolbar buttons: each buttons/SimKit_<Tool>.java runs its tool directly (no menu window).
+   9. Toolbar buttons: play buttons/SimKit_InstallButtons.java: 10 ticked buttons with their icons; Install ->
+      "10 SimKit button(s) on the Macro toolbar". The buttons show on the Macro toolbar with the SimKit icons and
+      tooltips (else close and reopen STAR-CCM+: note which). Each runs its tool directly (no menu window).
+      Set one favourite of your own (Macro toolbar > right-click a favourite > edit), play the installer again:
+      your favourite is listed and kept; untick two buttons, Install: they disappear. Play again > Remove SimKit
+      buttons: only the SimKit ones go. Restart STAR-CCM+: the state is kept.
   A failing STAR call shows "n/a (<reason>)" in the text and the tool continues. Note the [Unn] tag of the line
   and the reason: the fix is to record the one GUI action with the macro recorder and paste the generated line.
 
@@ -269,4 +275,9 @@ C. RESULTS SO FAR
   the table (file, based on, mesh level, editable comment or description, Open case folder, Hide... / Show again);
   filter + status filter; reload when the window gets focus (no Refresh button); Change... folder; right-click menu.
   Offline test (TrackerShot: render, table edits, details-box edit, fold, filter, hide) passed.
+  Toolbar buttons: buttons/SimKit_InstallButtons.java writes the STAR-CCM+ favourite macros (StarSettings, keys
+  MacroPlayFavoriteAction0..9 = tooltip ; macro ; icon) with icons from buttons/icons (16 x 16, coloured by group);
+  only free and SimKit slots, own favourites kept; Remove. Runner steps 08b (install) / 08c (remove), the user's
+  settings.props backed up and restored around them, only the favourite lines logged. SKT36: all exit codes 0
+  (10 buttons written to settings.props, then removed; the user's settings put back).
   Not yet run: section B (GUI: Save new version, Compare, Case tracker, Calculators copy), release 2402, Linux.

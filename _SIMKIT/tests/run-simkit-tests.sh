@@ -146,6 +146,38 @@ invoke_star 07c_SimKit_meshparams meshparams ${COMMON[@]+"${COMMON[@]}"} -batch 
 invoke_star 07d_SimKit_scenes scenes ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[scenes]=$RC
 invoke_star 07e_SimKit_meshstudy meshstudy ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshstudy]=$RC
 invoke_star 08_button_Check "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_Check.java" "$CASE_SIM"; RCS[button]=$RC
+
+# Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
+# keys): every settings.props under ~/.star-* is copied aside first and put back afterwards, and only the
+# MacroPlayFavoriteAction lines are ever logged.
+star_settings() { find "$HOME" -maxdepth 3 -path "$HOME/.star-*/config/settings.props" -type f 2>/dev/null; }
+log_buttons() {
+  local f n
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    n=$(grep -c '^MacroPlayFavoriteAction[0-9]=' "$f")
+    log "    $1: $n favourite-macro line(s) in $f"
+    grep '^MacroPlayFavoriteAction[0-9]=' "$f" | while IFS= read -r l; do log "      $l"; done
+  done < <(star_settings)
+}
+BK="$TEST_ROOT/_settings_backup"
+mkdir -p "$BK"
+declare -A SAVED=()
+i=0
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  cp -p "$f" "$BK/settings_$i.props" && SAVED["$f"]="$BK/settings_$i.props"; i=$((i + 1))
+done < <(star_settings)
+invoke_star 08b_buttons_install installbuttons ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_InstallButtons.java" "$CASE_SIM"; RCS[buttons]=$RC
+log_buttons "after install"
+invoke_star 08c_buttons_remove removebuttons ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_InstallButtons.java" "$CASE_SIM"; RCS[buttonsrm]=$RC
+log_buttons "after remove"
+for f in "${!SAVED[@]}"; do cp -p "${SAVED[$f]}" "$f"; done
+while IFS= read -r f; do
+  [ -n "$f" ] && [ -z "${SAVED[$f]+x}" ] && log "    new settings file left by the test (not removed): $f"
+done < <(star_settings)
+rm -rf "$BK"
+log "    user STAR-CCM+ settings restored (${#SAVED[@]} file(s))"
 if [ "$RUN_SOLVER" -eq 1 ]; then
   invoke_star 09_SimKit_run_record_export "" ${COMMON[@]+"${COMMON[@]}"} -batch "run,$KIT/SimKit.java" -batch-report "$CASE_SIM"; RCS[run]=$RC
 fi
@@ -156,7 +188,7 @@ invoke_star 11_SimKit_tracker tracker ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/S
 # ------------------------------------------------------------------ PASTE_THIS.txt (raw, redacted below)
 PASTE="$RESULTS/PASTE_THIS.txt"
 RAW="$RESULTS/.paste_raw.txt"
-PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a \(|FAIL|WARN|PASS|batch:|licen|License|Could not|cannot|Self-check|GCI|Gamma|X=|p=|written|wrote|saved|exported|set-up record|case card|list of changes|case list|plots exported|scenes exported|report values|=> |names|expected|button|kit |created|monitors|not proposed|already exists|boundary types|report\(s\)|READY|averaged|key results|solution|residuals|mass balance|monitors stable|y\+ vs|p_mesh|follow|Relative to the base|mesh size|boundary values|scene|case report|cells|case tracker|new version|forked'
+PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a \(|FAIL|WARN|PASS|batch:|licen|License|Could not|cannot|Self-check|GCI|Gamma|X=|p=|written|wrote|saved|exported|set-up record|case card|list of changes|case list|plots exported|scenes exported|report values|=> |names|expected|button|kit |created|monitors|not proposed|already exists|boundary types|report\(s\)|READY|averaged|key results|solution|residuals|mass balance|monitors stable|y\+ vs|p_mesh|follow|Relative to the base|mesh size|boundary values|scene|case report|cells|case tracker|new version|forked|toolbar buttons|favourite'
 {
   echo "===== SIMKIT BATCH VALIDATION (LINUX) - paste everything below into the chat ====="
   echo "date $STAMP | launcher $LAUNCHER | $(cat /etc/redhat-release 2>/dev/null || uname -sr)"

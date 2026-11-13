@@ -171,6 +171,35 @@ $rc["meshpar"]  = Invoke-Star "07c_SimKit_meshparams"    ($common + @("-batch", 
 $rc["scenes"]   = Invoke-Star "07d_SimKit_scenes"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "scenes"
 $rc["meshstudy"] = Invoke-Star "07e_SimKit_meshstudy"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "meshstudy"
 $rc["button"]   = Invoke-Star "08_button_Check"         ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_Check.java")), (& $q $caseSim))) ""
+
+# Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
+# keys): every settings.props of the user is copied aside first and put back afterwards, and only the
+# MacroPlayFavoriteAction lines are ever logged.
+$setDirs = @((Join-Path $env:LOCALAPPDATA "Siemens"), (Join-Path $env:LOCALAPPDATA "CD-adapco"), (Join-Path $env:APPDATA "Siemens"))
+function Get-StarSettingsFiles { foreach ($d in $setDirs) { if (Test-Path $d) { Get-ChildItem $d -Recurse -Filter "settings.props" -ErrorAction SilentlyContinue } } }
+function Log-Buttons([string]$when) {
+  foreach ($f in Get-StarSettingsFiles) {
+    $b = @(Get-Content $f.FullName -ErrorAction SilentlyContinue | Where-Object { $_ -match "^MacroPlayFavoriteAction[0-9]=" })
+    Log ("    {0}: {1} favourite-macro line(s) in {2}" -f $when, $b.Count, $f.FullName)
+    foreach ($l in $b) { Log ("      " + $l) }
+  }
+}
+$bk = Join-Path $TestRoot "_settings_backup"
+New-Item -ItemType Directory -Force $bk | Out-Null
+$saved = @{}
+$i = 0
+foreach ($f in Get-StarSettingsFiles) { $c = Join-Path $bk ("settings_{0}.props" -f $i); Copy-Item $f.FullName $c -Force; $saved[$f.FullName] = $c; $i++ }
+try {
+  $rc["buttons"]  = Invoke-Star "08b_buttons_install"   ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_InstallButtons.java")), (& $q $caseSim))) "installbuttons"
+  Log-Buttons "after install"
+  $rc["buttonsrm"] = Invoke-Star "08c_buttons_remove"   ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_InstallButtons.java")), (& $q $caseSim))) "removebuttons"
+  Log-Buttons "after remove"
+} finally {
+  foreach ($k in $saved.Keys) { Copy-Item $saved[$k] $k -Force }
+  foreach ($f in Get-StarSettingsFiles) { if (-not $saved.ContainsKey($f.FullName)) { Log ("    new settings file left by the test (not removed): " + $f.FullName) } }
+  Remove-Item $bk -Recurse -Force -ErrorAction SilentlyContinue
+  Log ("    user STAR-CCM+ settings restored ({0} file(s))" -f $saved.Count)
+}
 if ($RunSolver) {
   $rc["run"]    = Invoke-Star "09_SimKit_run_record_export" ($common + @("-batch", ("run," + (Join-Path $kit "SimKit.java")), "-batch-report", (& $q $caseSim))) ""
 }
@@ -191,7 +220,7 @@ $patterns = @(
   "\[BuildTestSim\]", "error:(?!.*deprecat)", "Exception", "Error:", "\[SimKit\]", "\[SimKitCalc\]", "n/a \(", "FAIL", "WARN", "PASS",
   "batch:", "licen", "License", "Could not", "cannot", "Self-check", "GCI", "Gamma", "X=", "p=", "parameter sync",
   "written", "wrote", "saved", "exported", "set-up record", "case card", "list of changes", "case list",
-  "plots exported", "scenes exported", "report values", "=> ", "names", "expected", "button", "kit ", "created", "monitors", "not proposed", "already exists", "boundary types", "report\(s\)", "READY", "averaged", "key results", "solution", "residuals", "mass balance", "monitors stable", "y\+ vs", "p_mesh", "follow", "Relative to the base", "mesh size", "boundary values", "scene", "case report", "cells", "case tracker", "new version", "forked", "mesh level", "mesh study", "cells"
+  "plots exported", "scenes exported", "report values", "=> ", "names", "expected", "button", "kit ", "created", "monitors", "not proposed", "already exists", "boundary types", "report\(s\)", "READY", "averaged", "key results", "solution", "residuals", "mass balance", "monitors stable", "y\+ vs", "p_mesh", "follow", "Relative to the base", "mesh size", "boundary values", "scene", "case report", "cells", "case tracker", "new version", "forked", "mesh level", "mesh study", "cells", "toolbar buttons", "favourite"
 )
 $rx = ($patterns | ForEach-Object { $_ }) -join "|"
 foreach ($f in Get-ChildItem $results -Filter "0*.log" | Sort-Object Name) {
