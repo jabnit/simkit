@@ -1,0 +1,8 @@
+key,value
+# Run on cluster. command: the team's submit command; {sim} = the full path of the file, {ncpus} = CPUs, {queue} = the queue
+command,bsubs.starccmp --input={sim} --ncpus={ncpus} --queue={queue}
+# queue for 1 CPU (serial) and for more than 1 (parallel)
+queue_serial,A
+queue_parallel,B
+# terminal opened on Linux to run the command (konsole, gnome-terminal or xterm)
+terminal,konsole

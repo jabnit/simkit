@@ -4,13 +4,14 @@ One small macro per button. Each one finds the SimKit root from its own location
 and runs the current version of the tool, so the buttons never need updating when the kit changes.
 
   SimKit_Menu.java             the SimKit window (all tools)
-  SimKit_SaveNewVersion.java   Save as new (next version, or a new case; creates the case the first time)
+  SimKit_SaveNewVersion.java   Save run (the next run of the study; starts the study the first time)
+  SimKit_RunOnCluster.java     Run on cluster (saves, then submits with the team's command)
   SimKit_ExportResults.java    Export results
   SimKit_StandardReports.java  Standard reports
-  SimKit_MeshStudy.java        Mesh study (parametrize only, or one case per mesh level)
+  SimKit_MeshStudy.java        Mesh study
   SimKit_StandardScenes.java   Standard scenes
   SimKit_CaseReport.java       Case report
-  SimKit_CaseTracker.java      Case tracker
+  SimKit_CaseTracker.java      Tracker
   SimKit_Calculators.java      Calculators
 
   SimKit_InstallButtons.java   puts the buttons above on a SimKit toolbar (play once per user)
@@ -29,4 +30,4 @@ SimKit toolbar itself: <same config folder>/Toolbars/SimKit/, one link file per 
 is dragged onto a toolbar. In the STAR-CCM+ window both are set through STAR-CCM+ itself, so the toolbar appears at once.
 The buttons point at THESE files on the share (<SimKit root>/buttons/...). Do not copy them elsewhere: each button
 finds the root from its own location and always runs the current kit. No environment variable and no path to set.
-Cases are not stored in the SimKit root: the first Save as new of a sim asks the user for the folder.
+Studies are not stored in the SimKit root: the first Save run of a sim asks the user for the study folder.

@@ -113,13 +113,13 @@ public class SimKit extends StarMacro {
 
   static final String[][] DEFAULT_PROJECTS = {{"ISO", "ISO 2685 burner", ""}};
 
-  static final String[] TOOL_NAMES = {"", "New case", "Save as new", "", "Export results",
+  static final String[] TOOL_NAMES = {"", "New case", "Save run", "", "Export results",
       "Calculators", "", "Case tracker", "Guideline", "About", "Standard reports", "",
-      "Mesh study", "Standard scenes", "Case report"};
+      "Mesh study", "Standard scenes", "Case report", "Run on cluster"};
   static final String[] TOOL_HELP = {"",
       "Creates the case folder and saves this sim as <CASEID>_v01.sim (from a case: a new case with this one as parent)",
-      "Keeps this file as it is and continues in the next version (_v02, _v03, ...), or starts a new case from it. "
-          + "Not a case yet: creates the case folder and saves v01. Your normal Save (Ctrl+S) keeps saving the current file",
+      "Saves this simulation as the next run of its study (R008_...sim), based on this one at its iteration; the open "
+          + "file stays as it is. Not in a study yet: starts one. Your normal Save (Ctrl+S) keeps saving the current file",
       "Lists what would spoil a run (mesh, continua, stopping criteria, names); changes nothing",
       "Writes monitor plots (CSV), scenes (PNG) and report values (CSV) to the case results folder",
       "y+ and prism layers, Reynolds, time step, properties, ... (values ready to paste in STAR-CCM+)",
@@ -136,7 +136,9 @@ public class SimKit extends StarMacro {
       "Same views for every case: y+ and temperature on the WALL_ surfaces, velocity, pressure, temperature and mesh "
           + "on a mid-plane (you choose; existing scenes are never changed). Export results saves them as images",
       "One HTML page for the current version: identity, key results, "
-          + "averages, images (in the case record folder, opened in your browser)"};
+          + "averages, images (in the case record folder, opened in your browser)",
+      "Saves this file and submits it to the cluster with the team's command (config/cluster.csv): choose the "
+          + "number of CPUs; Linux: runs it in a terminal opened in the file's folder"};
 
   /** <CASEID>[_<label>]_v<nn>.sim ; label = free text, letters/digits, starts with a letter (old STAGE names fit). */
   /** <CASEID>[_<label>]_v<nn>.sim with CASEID = <PROJECT>-<NNN> (e.g. ISO-007). Cases made with SimKit 0.3 before
@@ -231,6 +233,7 @@ public class SimKit extends StarMacro {
         case "tracker": toolTracker(); break;
         case "opensim": testOpenSim(); break;   // test: the tracker's Open in STAR-CCM+
         case "newversion": toolSaveVersion(); break;   // New version (asks nothing, so it also runs in batch)
+        case "studytest": testStudy(); break;   // test: start a study, save a run, prepare a submission (no bsub)
         case "meshstudy": toolMeshStudy(); break;   // test action: levels coarse (2) and medium (1), meshed
         case "meshparams": {   // test action: parametrize the mesh (no prism layers) and save the sim in place
           CaseInfo c = requireCase();
@@ -292,6 +295,7 @@ public class SimKit extends StarMacro {
         case 12: toolMeshStudy(); break;
         case 13: toolStandardScenes(); break;
         case 14: toolCaseReport(); break;
+        case 15: toolSubmit(); break;
         default: log.line("unknown tool " + id);
       }
     } catch (Cancel c) {
@@ -347,15 +351,15 @@ public class SimKit extends StarMacro {
    *  A window left open by an earlier play is closed first (it may belong to another simulation). */
   /** Main window layout: one column per stage of the work; each button with a one-line explanation under it. */
   static final Object[][] SECTIONS = {
-      {"Case", new int[] {2, 7}},
+      {"Runs", new int[] {2, 15, 7}},
       {"Set-up", new int[] {10, 13, 12}},
       {"Results", new int[] {4, 14}},
       {"Tools", new int[] {5, 8, 9}}};
   static final String[] TOOL_SHORT = {"",
-      "Start a case folder (v01)", "Next version, or a new case", "", "Plots, images, values, averages",
+      "Start a case folder (v01)", "Next run, based on this one", "", "Plots, images, values, averages",
       "y+, Re, time step, properties, GCI", "", "All versions, comments, status",
       "Team guideline", "Version and kit location", "Mass balance, p, T, y+ ...", "",
-      "Parametrize, or mesh levels", "Same views for every case", "One page for reviews"};
+      "Parametrize, or mesh levels", "Same views for every case", "One page for reviews", "Submit with bsub"};
 
   JLabel headTitle, headSub, headPath, statusLine;
   JButton detailsButton;
@@ -474,23 +478,31 @@ public class SimKit extends StarMacro {
     if (headTitle == null) return;
     String path = sessionPath();
     CaseInfo c = caseOrNull();
-    if (c != null) {
+    if (c != null && c.study) {
+      Map<String, String> r = readIdentity(c);
+      headTitle.setText("Run " + c.caseId + (c.label.isEmpty() ? "" : "  \u00B7  " + c.label) + "  \u00B7  iteration " + currentIteration());
+      headTitle.setForeground(java.awt.Color.BLACK);
+      String note = r.getOrDefault("comment", "");
+      headSub.setText("Study " + c.caseDir.getFileName() + (r.getOrDefault("based_on", "").isEmpty() ? "" : "  \u00B7  based on "
+          + r.get("based_on")) + (note.isEmpty() ? "" : "  \u00B7  " + Md.plain(note)));
+      headPath.setText(path);
+    } else if (c != null) {
       headTitle.setText(c.caseId + "  \u00B7  v" + Fmt.two(c.version) + (c.label.isEmpty() ? "" : "  \u00B7  " + c.label));
       headTitle.setForeground(java.awt.Color.BLACK);
       String desc = readIdentity(c).getOrDefault("description", "");
       headSub.setText(desc.isEmpty() ? " " : Md.plain(desc));
       headPath.setText(path);
     } else {
-      headTitle.setText("Not a SimKit case yet");
+      headTitle.setText("Not in a study yet");
       headTitle.setForeground(new java.awt.Color(0x8A, 0x5A, 0x00));
-      headSub.setText("Start with Save as new: it creates the case folder and saves this simulation as v01.");
+      headSub.setText("Start with Save run: it creates the study folder and saves this simulation as run R001.");
       headPath.setText(path.isEmpty() ? "(simulation not saved yet)" : path);
     }
     for (int id : NEEDS_CASE) {   // greyed until the sim is a case
       JButton b = buttonById.get(id);
       if (b == null) continue;
       b.setEnabled(c != null && !busy);
-      b.setToolTipText(c != null ? TOOL_HELP[id] : "Needs a SimKit case: use Save as new first. (" + TOOL_HELP[id] + ")");
+      b.setToolTipText(c != null ? TOOL_HELP[id] : "Needs a run of a study: use Save run first. (" + TOOL_HELP[id] + ")");
     }
   }
 
@@ -582,11 +594,16 @@ public class SimKit extends StarMacro {
       return c;
     }
 
-    String simBase() { return caseId + (label.isEmpty() ? "" : "_" + label) + "_v" + Fmt.two(version); }
+    boolean study;   // a run of a study: caseDir = the study folder, caseId = R007, simFile = the file as it is named
+
+    String simBase() {
+      if (study) return simFile.getFileName().toString().replaceFirst("\\.sim$", "");
+      return caseId + (label.isEmpty() ? "" : "_" + label) + "_v" + Fmt.two(version);
+    }
     Path sub(String rel) { return caseDir.resolve(rel); }
     Path auditFile() { return sub("record").resolve("setup_" + simBase() + ".csv"); }
     Path cardFile() { return sub("record").resolve("case_card_" + simBase() + ".html"); }
-    Path identityFile() { return sub("sim").resolve("case_identity.txt"); }
+    Path identityFile() { return study ? sub("record").resolve(caseId + ".txt") : sub("sim").resolve("case_identity.txt"); }
   }
 
   /** Parses the case identity from a sim path (<any folder>/<CASEID>/sim/<file>.sim); throws with the reason. */
@@ -608,15 +625,352 @@ public class SimKit extends StarMacro {
 
   /** Case of the open sim, or a Cancel with the reason and the remedy. */
   CaseInfo requireCase() {
+    CaseInfo r = runOrNull();
+    if (r != null) return r;
     try {
       return parseCase(sessionPath());
     } catch (IllegalStateException e) {
-      throw new Cancel("this needs a sim saved with Save as new (" + e.getMessage() + ")");
+      throw new Cancel("this needs a run of a study: use Save run first (" + e.getMessage() + ")");
     }
   }
 
   CaseInfo caseOrNull() {
+    CaseInfo r = runOrNull();
+    if (r != null) return r;
     try { return parseCase(sessionPath()); } catch (IllegalStateException e) { return null; }
+  }
+
+  // =====================================================================================================
+  // Studies and runs: a study is a folder (any name, anywhere) holding simkit_study.txt, sims/, results/, record/.
+  // Each saved run is R<nnn>[_<name>].sim; its number also lives INSIDE the simulation (p_simkit_run), so every copy
+  // that comes back from the cluster, whatever its name, still says which run it is and what it was based on.
+  // =====================================================================================================
+
+  static final String STUDY_FILE = "simkit_study.txt", P_RUN = "p_simkit_run", P_FROM = "p_simkit_from",
+      P_FROM_IT = "p_simkit_from_iteration", ITER_SEP = "_iter_";
+  static final Pattern RUN_FILE = Pattern.compile("^R([0-9]{3,4})(?:_([A-Za-z][A-Za-z0-9]{0,19}))?(?:(?:_iter_|@).*)?\\.sim$");
+
+  static String runId(int n) { return String.format(Locale.ROOT, "R%03d", n); }
+
+  /** The study folder holding a file (itself or up to 5 folders above), or null. */
+  static Path studyDirOf(Path file) {
+    Path d = file.toAbsolutePath().normalize().getParent();
+    for (int k = 0; d != null && k < 6; k++, d = d.getParent()) if (Files.isRegularFile(d.resolve(STUDY_FILE))) return d;
+    return null;
+  }
+
+  /** The open simulation as a run of its study (number from p_simkit_run, else from the file name), or null. */
+  CaseInfo runOrNull() {
+    String p = sessionPath();
+    if (p.isEmpty()) return null;
+    Path f = Paths.get(p).toAbsolutePath().normalize();
+    Path st = studyDirOf(f);
+    if (st == null) return null;
+    int n = -1;
+    try {
+      ScalarGlobalParameter q = findParam(P_RUN);
+      if (q != null) n = (int) Math.round(q.getQuantity().getValue());
+    } catch (Throwable t) { /* from the name */ }
+    Matcher m = RUN_FILE.matcher(f.getFileName().toString());
+    if (n <= 0 && m.matches()) n = Integer.parseInt(m.group(1));
+    if (n <= 0) return null;
+    CaseInfo c = new CaseInfo();
+    c.study = true;
+    c.proj = "";
+    c.caseId = runId(n);
+    c.nnn = n;
+    c.version = n;
+    c.label = m.matches() && m.group(2) != null ? m.group(2) : "";
+    c.casesDir = st;
+    c.caseDir = st;
+    c.simFile = f;
+    Fs.allow(st);
+    return c;
+  }
+
+  /** Next free run number of a study (from its records and its sims folder). */
+  static int nextRun(Path study) {
+    int max = 0;
+    for (Path f : Fs.list(study.resolve("record"), "R*.txt")) {
+      Matcher m = Pattern.compile("^R([0-9]{3,4})\\.txt$").matcher(f.getFileName().toString());
+      if (m.matches()) max = Math.max(max, Integer.parseInt(m.group(1)));
+    }
+    for (Path f : Fs.list(study.resolve("sims"), "R*.sim")) {
+      Matcher m = RUN_FILE.matcher(f.getFileName().toString());
+      if (m.matches()) max = Math.max(max, Integer.parseInt(m.group(1)));
+    }
+    return max + 1;
+  }
+
+  int currentIteration() {
+    try { return sim.getSimulationIterator().getCurrentIteration(); } catch (Throwable t) { return 0; }
+  }
+
+  double physicalTime() {
+    try { return sim.getSolution().getPhysicalTime(); } catch (Throwable t) { return 0; }
+  }
+
+  void setParam(String name, double v) {
+    ScalarGlobalParameter p = findParam(name);
+    if (p == null) p = newParam(name, null, v, null);
+    p.getQuantity().setValue(v);
+  }
+
+  /** Files written by STAR-CCM+ during and at the end of a run get "_iter_" instead of "@" (R007_base_iter_05000.sim). */
+  void iterSeparator() {
+    try {
+      star.common.AutoSave a = sim.getSimulationIterator().getAutoSave();
+      if (!ITER_SEP.equals(a.getSeparator())) a.setSeparator(ITER_SEP);
+    } catch (Throwable t) {
+      log.na("auto-save name separator", t);
+    }
+  }
+
+  /** A small label on every scene: "Run R007  baseline" (images in reports then name their run), next to the
+   *  iteration (or physical time) annotation of STAR-CCM+. Scenes made later get it at the next Save run or Export. */
+  void runLabels(String text) {
+    try {
+      star.vis.AnnotationManager am = sim.getAnnotationManager();
+      star.vis.SimpleAnnotation lab = null;
+      Object it = null;
+      for (Object a : am.getObjects()) {
+        if (a instanceof star.vis.SimpleAnnotation && nm(a).equals("simkit_run")) lab = (star.vis.SimpleAnnotation) a;
+        if (it == null && (a instanceof star.vis.PhysicalTimeAnnotation && unsteadySolver() != null
+            || a instanceof star.vis.IterationAnnotation && unsteadySolver() == null)) it = a;
+      }
+      if (lab == null) {
+        lab = am.createSimpleAnnotation();
+        lab.setPresentationName("simkit_run");
+      }
+      lab.setText(text);
+      int n = 0;
+      for (Object sc : sim.getSceneManager().getObjects()) {
+        try {
+          Object pm = Reflect.invoke(sc, "getAnnotationPropManager");
+          if (!(Boolean) Reflect.invoke(pm, "hasPropForAnnotation", lab)) {
+            Object prop = Reflect.invoke(pm, "createPropForAnnotation", lab);
+            try { Reflect.invoke(prop, "setPosition", new star.base.neo.DoubleVector(new double[] {0.02, 0.95, 0.0})); }
+            catch (Throwable t) { /* default place */ }
+          }
+          if (it != null && !(Boolean) Reflect.invoke(pm, "hasPropForAnnotation", it)) Reflect.invoke(pm, "createPropForAnnotation", it);
+          n++;
+        } catch (Throwable t) {
+          log.na("run label on " + nm(sc), t);
+        }
+      }
+      log.line("  run label \"" + text + "\" on " + n + " scene(s)");
+    } catch (Throwable t) {
+      log.na("run labels", t);
+    }
+  }
+
+  /** Saves the open simulation as the next run of a study: R<nnn>[_name].sim in sims/, numbers inside the sim, the
+   *  run record (record/R<nnn>.txt), the run label on the scenes. The open file stays as it is on disk. */
+  CaseInfo saveRun(Path study, String name, String comment) throws IOException {
+    CaseInfo from = runOrNull();
+    int it = currentIteration();
+    double time = physicalTime();
+    String source = sessionPath();
+    int n = nextRun(study);
+    String id = runId(n);
+    Path f = study.resolve("sims").resolve(id + (name.isEmpty() ? "" : "_" + name) + ".sim");
+    Fs.allow(study);
+    Fs.mkdirs(f.getParent());
+    setParam(P_RUN, n);
+    setParam(P_FROM, from == null ? 0 : from.nnn);
+    setParam(P_FROM_IT, it);
+    iterSeparator();
+    runLabels("Run " + id + (name.isEmpty() ? "" : "  " + name));
+    sim.saveState(Fs.guard(f).toString());
+    Map<String, String> r = new LinkedHashMap<>();
+    r.put("run", id);
+    r.put("name", name);
+    r.put("comment", comment);
+    r.put("based_on", from != null ? from.caseId : source.isEmpty() ? "" : Paths.get(source).getFileName().toString());
+    r.put("based_on_file", source);
+    r.put("from_iteration", String.valueOf(it));
+    if (unsteadySolver() != null) r.put("from_time", Fmt.num(time));
+    r.put("created", Fmt.iso());
+    r.put("created_by", Env.user());
+    r.put("file", study.relativize(f).toString().replace('\\', '/'));
+    Fs.write(study.resolve("record").resolve(id + ".txt"), identityText(r));
+    log.line("saved " + f + "\n" + id + (from == null ? "" : " is based on " + from.caseId + " at iteration " + it)
+        + "; the file you came from is unchanged. Ctrl+S keeps saving " + f.getFileName() + ".");
+    result("saved " + f.getFileName() + (from == null ? "" : "  (based on " + from.caseId + ", iteration " + it + ")"));
+    return runOrNull();
+  }
+
+  /** Starts a study: the folder, its sub-folders and simkit_study.txt; then saves the open simulation as R001. */
+  void startStudy(Path dir, String name, String desc) throws IOException {
+    Fs.allow(dir);
+    for (String sd : new String[] {"sims", "results/csv", "results/img", "record"}) Fs.mkdirs(dir.resolve(sd));
+    Map<String, String> m = new LinkedHashMap<>();
+    m.put("study", dir.getFileName().toString());
+    m.put("description", desc);
+    m.put("created", Fmt.iso());
+    m.put("created_by", Env.user());
+    Fs.write(dir.resolve(STUDY_FILE), identityText(m));
+    Env.setPref("studyParent", dir.getParent() == null ? "" : dir.getParent().toString());
+    log.line("study " + dir);
+    saveRun(dir, name, "");
+  }
+
+  /** Batch test: a study next to the case of the test sim, R001 and R002 saved, a submission prepared (no bsub). */
+  void testStudy() throws IOException {
+    CaseInfo c = requireCase();
+    Path dir = c.casesDir.resolve("STUDY_TEST_" + new SimpleDateFormat("HHmmss").format(new Date()));
+    startStudy(dir, "base", "test study");
+    CaseInfo r1 = requireCase();
+    log.line("open run " + r1.caseId + " (" + P_RUN + " = " + findParam(P_RUN).getQuantity().getValue() + "), file " + r1.simFile.getFileName());
+    saveRun(dir, "finer", "test: second run");
+    CaseInfo r2 = requireCase();
+    log.line("open run " + r2.caseId + ", based on " + readIdentity(r2).get("based_on") + " at iteration "
+        + readIdentity(r2).get("from_iteration") + "; auto-save separator "
+        + sim.getSimulationIterator().getAutoSave().getSeparator());
+    String[] cmd = submitCommand(r2.simFile, 4);
+    log.line("submit command (not run): " + cmd[0] + "\nscript: " + writeSubmitScript(r2.simFile, cmd[0]));
+  }
+
+  // ----- Run on cluster -----
+
+  /** The team's cluster settings (config/cluster.csv: key, value). */
+  Map<String, String> clusterConfig() {
+    Map<String, String> m = new LinkedHashMap<>();
+    m.put("command", "bsubs.starccmp --input={sim} --ncpus={ncpus} --queue={queue}");
+    m.put("queue_serial", "A");
+    m.put("queue_parallel", "B");
+    m.put("terminal", "konsole");
+    for (String[] r : config("cluster.csv", new String[] {"key", "value"}, null)) {
+      if (r[0] != null && !r[0].trim().isEmpty() && r[1] != null) m.put(r[0].trim(), r[1].trim());
+    }
+    return m;
+  }
+
+  /** {command, queue} for a file and a number of CPUs (1 = the serial queue). */
+  String[] submitCommand(Path simFile, int ncpus) {
+    Map<String, String> m = clusterConfig();
+    String q = ncpus <= 1 ? m.get("queue_serial") : m.get("queue_parallel");
+    String path = simFile.toString().replace('\\', '/');
+    if (path.contains(" ")) path = "'" + path + "'";
+    return new String[] {m.get("command").replace("{sim}", path).replace("{ncpus}", String.valueOf(ncpus)).replace("{queue}", q), q};
+  }
+
+  /** A small script next to the file: goes to its folder, runs the command, keeps what it printed (job number). */
+  Path writeSubmitScript(Path simFile, String cmd) throws IOException {
+    Path dir = simFile.getParent();
+    String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+    String base = simFile.getFileName().toString().replaceFirst("\\.sim$", "");
+    Path script = dir.resolve(".simkit").resolve("submit_" + base + "_" + stamp + ".sh");
+    Path out = dir.resolve(".simkit").resolve("submit_" + base + "_" + stamp + ".log");
+    Fs.allow(dir);
+    Fs.write(script, "#!/bin/bash\n# SimKit: " + base + " submitted by " + Env.user() + " on " + Fmt.iso() + "\ncd '"
+        + dir.toString().replace('\\', '/') + "' || exit 1\necho \"$ " + cmd.replace("\"", "\\\"") + "\"\n" + cmd + " 2>&1 | tee '"
+        + out.toString().replace('\\', '/') + "'\n");
+    return script;
+  }
+
+  /** Run on cluster: saves the file in place (with the _iter_ naming), shows the team's command for the CPUs chosen,
+   *  then copies it, or on Linux runs it in a terminal opened in the file's folder. */
+  void toolSubmit() throws IOException {
+    final CaseInfo c = requireCase();
+    final Path f = Paths.get(sessionPath()).toAbsolutePath().normalize();
+    String pc = Env.pref("ncpus");
+    final int cpus0 = pc != null && pc.matches("[0-9]+") ? Integer.parseInt(pc) : 1;
+    final boolean linux = !Fs.WINDOWS;
+    final int[] cpus = {cpus0};
+    final boolean[] run = {false};
+    Boolean ok = Ui.edt(() -> {
+      final JTextField n = new JTextField(String.valueOf(cpus0), 5);
+      final JLabel queue = Ui.muted(" "), cmd = new JLabel(" ");
+      cmd.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+      final Runnable upd = () -> {
+        String t = n.getText().trim();
+        int k = t.matches("[0-9]{1,5}") ? Integer.parseInt(t) : 0;
+        String[] sc = submitCommand(f, Math.max(1, k));
+        queue.setText(k <= 0 ? "a whole number of CPUs" : k == 1 ? "serial, queue " + sc[1] : "parallel, queue " + sc[1]);
+        cmd.setText("<html><div style='width:520px'>" + Html.esc(sc[0]) + "</div></html>");
+      };
+      n.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+        @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+        @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+      });
+      upd.run();
+      JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+      row.add(new JLabel("CPUs"));
+      row.add(n);
+      row.add(queue);
+      JPanel body = new JPanel();
+      body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
+      JButton copy = Ui.link("Copy the command");
+      JButton go = Ui.primary(linux ? "Submit" : "Copy the command");
+      copy.addActionListener(e -> {
+        String t = n.getText().trim();
+        if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return;
+        copyText(submitCommand(f, Integer.parseInt(t))[0]);
+        copy.setText("Copied");
+      });
+      String base = f.getFileName().toString().replaceFirst("\\.sim$", "");
+      for (javax.swing.JComponent k : new javax.swing.JComponent[] {row, Ui.muted("Command"), cmd, copy,
+          Ui.muted("The file is saved first. Files that come back are named " + base + ITER_SEP + "<iteration>.sim."),
+          Ui.muted(linux ? "Submit opens a terminal in " + shortPath(f.getParent().toString()) + " and runs the command there."
+              : "On Windows the command is copied; paste it in a terminal on the cluster.")}) {
+        k.setAlignmentX(0f);
+        body.add(k);
+        body.add(javax.swing.Box.createVerticalStrut(6));
+      }
+      return Ui.sheet("Run on the cluster", c.caseId + "  \u00B7  " + f.getFileName(), body, go, () -> {
+        String t = n.getText().trim();
+        if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return "CPUs: a whole number, 1 or more.";
+        cpus[0] = Integer.parseInt(t);
+        run[0] = linux;
+        return null;
+      });
+    });
+    if (!Boolean.TRUE.equals(ok)) throw new Cancel(null);
+    Env.setPref("ncpus", String.valueOf(cpus[0]));
+    iterSeparator();
+    sim.saveState(Fs.guard(f).toString());
+    String[] sc = submitCommand(f, cpus[0]);
+    Path script = writeSubmitScript(f, sc[0]);
+    Path subs = c.sub("record").resolve("submissions.csv");
+    boolean fresh = !Files.isRegularFile(subs);
+    try (java.io.Writer w = Files.newBufferedWriter(Fs.guard(subs), StandardCharsets.UTF_8,
+        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)) {
+      if (fresh) w.write(Csv.row(new String[] {"submitted", "by", "run", "file", "ncpus", "queue", "command", "script"}));
+      w.write(Csv.row(new String[] {Fmt.iso(), Env.user(), c.caseId, f.toString(), String.valueOf(cpus[0]), sc[1], sc[0],
+          script.toString()}));
+    } catch (Throwable t) {
+      log.na("submission record", t);
+    }
+    if (!run[0]) {
+      copyText(sc[0]);
+      result("command copied: " + sc[0]);
+      return;
+    }
+    String term = clusterConfig().get("terminal");
+    String inner = "bash '" + script + "'; echo; echo 'SimKit: this window can be closed.'; exec bash";
+    List<String[]> tries = new ArrayList<>();
+    tries.add(term.equals("konsole") ? new String[] {"konsole", "--workdir", f.getParent().toString(), "-e", "bash", "-c", inner}
+        : new String[] {term, "-e", "bash", "-c", inner});
+    tries.add(new String[] {"konsole", "--workdir", f.getParent().toString(), "-e", "bash", "-c", inner});
+    tries.add(new String[] {"gnome-terminal", "--working-directory=" + f.getParent(), "--", "bash", "-c", inner});
+    tries.add(new String[] {"xterm", "-e", "bash", "-c", inner});
+    for (String[] t : tries) {
+      try {
+        new ProcessBuilder(t).directory(f.getParent().toFile()).start();
+        result("submitted in a " + t[0] + " window: " + sc[0]);
+        return;
+      } catch (IOException e) { /* the next terminal */ }
+    }
+    copyText(sc[0]);
+    result("no terminal found (konsole, gnome-terminal, xterm): the command is copied, paste it in a terminal");
+  }
+
+  static void copyText(String t) {
+    try {
+      java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(t), null);
+    } catch (Throwable x) { /* no clipboard (batch) */ }
   }
 
   /** Reads sim/case_identity.txt (key=value lines). Missing file -> empty map. */
@@ -773,23 +1127,103 @@ public class SimKit extends StarMacro {
     id.put("last_saved", Fmt.iso());
   }
 
-  /** Save as new (one button, one window): the next version of this case (Enter), or a new case based on it.
-   *  Not a case yet: starts the case (v01). The open file stays as it is on disk; you continue in the new one. */
+  /** Save run (one button): the next run of this study, based on this one at its current iteration; not in a study
+   *  yet: starts one (a folder you name) with this simulation as R001. The open file stays as it is on disk. */
   void toolSave() throws IOException {
-    final CaseInfo c = caseOrNull();
+    final CaseInfo r = runOrNull();
+    final String p = sessionPath();
+    final Path study = r != null ? r.caseDir : null;
     if (!gui) {
-      if (c == null) throw new Cancel("not a case yet: start it with Save as new in the STAR-CCM+ window");
-      saveNextVersion(c, c.label);
+      if (study == null) throw new Cancel("not in a study yet: start one with Save run in the STAR-CCM+ window");
+      saveRun(study, r.label, "");
       return;
     }
-    final List<String[]> projects = projects();
-    final Path dir0 = defaultCasesDir();
-    String last = Env.pref("project");
-    final String proj0 = c != null ? c.proj : last != null && !last.isEmpty() ? last : projects.isEmpty() ? "ISO" : projects.get(0)[0];
-    Object[] r = Ui.edt(() -> saveWindow(c, projects, dir0, proj0));
-    if (r == null) throw new Cancel(null);
-    if ("version".equals(r[0])) saveNextVersion(c, (String) r[1]);
-    else createCase(c, (String) r[1], (String) r[2], (Path) r[3]);
+    final int it = currentIteration();
+    String sp = Env.pref("studyParent");
+    final Path parent0 = sp != null && !sp.isEmpty() && Files.isDirectory(Paths.get(sp)) ? Paths.get(sp)
+        : !p.isEmpty() && Paths.get(p).getParent() != null ? Paths.get(p).toAbsolutePath().getParent() : Paths.get(System.getProperty("user.home"));
+    Object[] res = Ui.edt(() -> runWindow(r, study, it, parent0));
+    if (res == null) throw new Cancel(null);
+    if (study == null) startStudy((Path) res[2], (String) res[0], (String) res[1]);
+    else saveRun(study, (String) res[0], (String) res[1]);
+  }
+
+  /** The Save run window (Swing thread). In a study: {name, comment}; not yet: {name, description, study folder}. */
+  Object[] runWindow(final CaseInfo r, final Path study, final int it, Path parent0) {
+    final boolean first = study == null;
+    final JTextField name = Ui.hintField(r == null ? "" : r.label, "optional, e.g. baseline, finer", 16);
+    final JTextField note = Ui.hintField("", first ? "what the study is for, in one line" : "what changes, in one line (optional)", 34);
+    final JTextField sname = Ui.hintField("", "e.g. ISO_rebuild_2026", 22);
+    final JTextField where = new JTextField(parent0.toString(), 26);
+    JButton browse = new JButton("Browse...");
+    browse.addActionListener(e -> {
+      JFileChooser fc = new JFileChooser(where.getText());
+      fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+      fc.setDialogTitle("Folder for the study folder");
+      if (fc.showOpenDialog(where) == JFileChooser.APPROVE_OPTION) where.setText(fc.getSelectedFile().getPath());
+    });
+    final int n = first ? 1 : nextRun(study);
+    final JLabel file = new JLabel(" "), folder = Ui.muted(" ");
+    file.setFont(file.getFont().deriveFont(Font.BOLD));
+    final Runnable upd = () -> {
+      String t = name.getText().trim();
+      file.setText(runId(n) + (t.isEmpty() ? "" : "_" + t) + ".sim");
+      String sep = java.io.File.separator, w = where.getText().trim(), sn = sname.getText().trim();
+      String st = first ? (w.isEmpty() ? "?" : w.replaceAll("[\\\\/]+$", "")) + sep + (sn.isEmpty() ? "<study>" : sn) : study.toString();
+      folder.setText("in " + shortPath(st + sep + "sims"));   // text only: what is typed may not be a valid path yet
+    };
+    javax.swing.event.DocumentListener dl = new javax.swing.event.DocumentListener() {
+      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+    };
+    for (JTextField k : new JTextField[] {name, sname, where}) k.getDocument().addDocumentListener(dl);
+    JPanel form = new JPanel(new java.awt.GridBagLayout());
+    java.awt.GridBagConstraints g = new java.awt.GridBagConstraints();
+    g.insets = new java.awt.Insets(4, 0, 4, 10);
+    g.anchor = java.awt.GridBagConstraints.WEST;
+    g.fill = java.awt.GridBagConstraints.HORIZONTAL;
+    int y = 0;
+    if (first) {
+      g.gridy = y++; form.add(new JLabel("Study"), g); form.add(sname, g);
+      g.gridy = y++; form.add(new JLabel("Description"), g); form.add(note, g);
+      g.gridy = y++; form.add(new JLabel("In folder"), g); form.add(where, g); form.add(browse, g);
+    }
+    g.gridy = y++; form.add(new JLabel("Name in the file"), g); form.add(name, g);
+    if (!first) { g.gridy = y; form.add(new JLabel("Comment"), g); form.add(note, g); }
+    JPanel body = new JPanel();
+    body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
+    JPanel formRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+    formRow.add(form);
+    javax.swing.JSeparator sep = new javax.swing.JSeparator();
+    String basis = r == null ? "The open file stays as it is." : "Based on " + r.caseId + " at iteration " + it + ". The open file stays as it is.";
+    for (javax.swing.JComponent k : new javax.swing.JComponent[] {formRow, sep, file, folder, Ui.muted(basis)}) {
+      k.setAlignmentX(0f);
+      body.add(k);
+      body.add(javax.swing.Box.createVerticalStrut(k == formRow ? 10 : 3));
+    }
+    upd.run();
+    String title = first ? "Start a study" : "Save run";
+    String sub = first ? "A folder for one piece of work (a test rebuild, a design analysis); this simulation becomes run R001."
+        : "Study " + study.getFileName() + "  \u00B7  now " + r.caseId + (r.label.isEmpty() ? "" : " " + r.label) + ", iteration " + it;
+    boolean go = Ui.sheet(title, sub, body, Ui.primary(first ? "Start the study" : "Save run"), () -> {
+      try { checkLabel(name.getText()); } catch (Cancel x) { return "Name: letters and digits, starting with a letter (e.g. baseline)."; }
+      if (!first) return null;
+      String sn = sname.getText().trim();
+      if (!sn.matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,59}")) return "Study: letters, digits, _ . - (no spaces), e.g. ISO_rebuild_2026.";
+      if (where.getText().trim().isEmpty()) return "Choose the folder for the study.";
+      Path d;
+      try { d = Paths.get(where.getText().trim()).toAbsolutePath().normalize().resolve(sn); }
+      catch (RuntimeException x) { return "In folder: not a valid folder path."; }
+      if (Fs.under(d, Fs.kit()) || Fs.same(d, Fs.kit())) return "A study cannot go inside the kit folder.";
+      if (Files.exists(d.resolve(STUDY_FILE))) return "There is already a study " + sn + " there.";
+      return null;
+    });
+    if (!go) return null;
+    String nm = checkLabel(name.getText());
+    if (!first) return new Object[] {nm, Fmt.oneLine(note.getText())};
+    return new Object[] {nm, Fmt.oneLine(note.getText()),
+        Paths.get(where.getText().trim()).toAbsolutePath().normalize().resolve(sname.getText().trim())};
   }
 
   /** A long path shortened in the middle, for one line. */
@@ -3830,6 +4264,7 @@ public class SimKit extends StarMacro {
    *  follow the factor, then one case per level next to this one, meshed and saved. */
   void toolMeshStudy() throws IOException {
     CaseInfo c = caseOrNull();
+    if (c != null && c.study) throw new Cancel("mesh levels as runs of a study come with the next step (the new tracker); not yet available in a study");
     if (!gui) {
       if (c == null) throw new Cancel("mesh levels are saved as cases next to this one: start a case first");
       if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) toolParametrizeMesh();
@@ -4187,6 +4622,7 @@ public class SimKit extends StarMacro {
     Path csv = c.sub("results/csv"), img = c.sub("results/img");
     Fs.mkdirs(csv);
     Fs.mkdirs(img);
+    if (c.study) runLabels("Run " + c.caseId + (c.label.isEmpty() ? "" : "  " + c.label));   // scenes made since the last Save run
     exportPlots(c, csv);
     exportScenes(c, img);
     Map<String, String> values = exportReports(c, csv);

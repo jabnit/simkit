@@ -370,4 +370,16 @@ C. RESULTS SO FAR
   check / precheck, the case report section, config/naming_rules.csv and the object inventory it used. Test runners:
   step 03 removed; the button test (08) now plays buttons/SimKit_ExportResults.java. The installer clears the old
   Check slot with the other SimKit slots when it is played again.
+  Studies and runs (step 1 of 3, user: cases/versions did not fit; LSF round trip renames files): Save run starts a study
+  (folder named by the user: sims/, results/, record/, simkit_study.txt) with the open sim as R001, then each Save run =
+  next run R<nnn>[_name].sim, based on the open run at its iteration. Inside the sim: p_simkit_run, p_simkit_from,
+  p_simkit_from_iteration; auto-save separator set to "_iter_" (STAR-CCM+ AutoSave.setSeparator); a label
+  "Run R007 name" (simple annotation simkit_run) and the iteration / physical time annotation on every scene (also at
+  Export). A returned file anywhere under the study (up to 5 folders down) is recognised from p_simkit_run. Run on
+  cluster: CPUs -> queue (config/cluster.csv: command template, queue_serial, queue_parallel, terminal), saves the
+  file, writes .simkit/submit_<file>_<time>.sh (cd, command | tee .log) and record/submissions.csv; Linux: konsole
+  --workdir <folder> -e bash -c (then gnome-terminal, xterm); Windows: copies the command. New buttons file
+  SimKit_RunOnCluster.java (+ icon); installer list updated. Batch step 11c (studytest): study, R001, R002, the command
+  and script (no bsub). Not yet: tracker of runs, mesh study and GCI on runs, report markers (step 3); a real LSF round
+  trip and konsole are untested here (Windows).
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.

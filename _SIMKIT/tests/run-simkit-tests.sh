@@ -193,11 +193,12 @@ invoke_star 10_SimKit_casereport casereport ${COMMON[@]+"${COMMON[@]}"} -batch "
 invoke_star 10b_SimKit_newversion newversion ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[newver]=$RC
 invoke_star 11_SimKit_tracker tracker ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[tracker]=$RC
 invoke_star 11b_SimKit_opensim opensim ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[opensim]=$RC
+invoke_star 11c_SimKit_study studytest ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[study]=$RC
 
 # ------------------------------------------------------------------ PASTE_THIS.txt (raw, redacted below)
 PASTE="$RESULTS/PASTE_THIS.txt"
 RAW="$RESULTS/.paste_raw.txt"
-PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a \(|FAIL|WARN|PASS|batch:|licen|License|Could not|cannot|Self-check|GCI|Gamma|X=|p=|written|wrote|saved|exported|set-up record|case card|list of changes|case list|plots exported|scenes exported|report values|=> |names|expected|button|kit |created|monitors|not proposed|already exists|boundary types|report\(s\)|READY|averaged|key results|solution|residuals|mass balance|monitors stable|y\+ vs|p_mesh|follow|Relative to the base|mesh size|boundary values|scene|case report|cells|case tracker|new version|forked|toolbar buttons|favourite'
+PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a \(|FAIL|WARN|PASS|batch:|licen|License|Could not|cannot|Self-check|GCI|Gamma|X=|p=|written|wrote|saved|exported|set-up record|case card|list of changes|case list|plots exported|scenes exported|report values|=> |names|expected|button|kit |created|monitors|not proposed|already exists|boundary types|report\(s\)|READY|averaged|key results|solution|residuals|mass balance|monitors stable|y\+ vs|p_mesh|follow|Relative to the base|mesh size|boundary values|scene|case report|cells|case tracker|new version|forked|toolbar buttons|favourite|study|run R|submit|separator'
 {
   echo "===== SIMKIT BATCH VALIDATION (LINUX) - paste everything below into the chat ====="
   echo "date $STAMP | launcher $LAUNCHER | $(cat /etc/redhat-release 2>/dev/null || uname -sr)"

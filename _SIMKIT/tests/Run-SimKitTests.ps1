@@ -221,6 +221,7 @@ $rc["report"]   = Invoke-Star "10_SimKit_casereport"     ($common + @("-batch", 
 $rc["newver"]   = Invoke-Star "10b_SimKit_newversion"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "newversion"
 $rc["tracker"]  = Invoke-Star "11_SimKit_tracker"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "tracker"
 $rc["opensim"]  = Invoke-Star "11b_SimKit_opensim"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "opensim"
+$rc["study"]    = Invoke-Star "11c_SimKit_study"         ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "studytest"
 
 # ------------------------------------------------------------------ 6. PASTE_THIS.txt
 $paste = Join-Path $results "PASTE_THIS.txt"
@@ -235,7 +236,7 @@ $patterns = @(
   "\[BuildTestSim\]", "error:(?!.*deprecat)", "Exception", "Error:", "\[SimKit\]", "\[SimKitCalc\]", "n/a \(", "FAIL", "WARN", "PASS",
   "batch:", "licen", "License", "Could not", "cannot", "Self-check", "GCI", "Gamma", "X=", "p=", "parameter sync",
   "written", "wrote", "saved", "exported", "set-up record", "case card", "list of changes", "case list",
-  "plots exported", "scenes exported", "report values", "=> ", "names", "expected", "button", "kit ", "created", "monitors", "not proposed", "already exists", "boundary types", "report\(s\)", "READY", "averaged", "key results", "solution", "residuals", "mass balance", "monitors stable", "y\+ vs", "p_mesh", "follow", "Relative to the base", "mesh size", "boundary values", "scene", "case report", "cells", "case tracker", "new version", "forked", "mesh level", "mesh study", "cells", "toolbar buttons", "favourite"
+  "plots exported", "scenes exported", "report values", "=> ", "names", "expected", "button", "kit ", "created", "monitors", "not proposed", "already exists", "boundary types", "report\(s\)", "READY", "averaged", "key results", "solution", "residuals", "mass balance", "monitors stable", "y\+ vs", "p_mesh", "follow", "Relative to the base", "mesh size", "boundary values", "scene", "case report", "cells", "case tracker", "new version", "forked", "mesh level", "mesh study", "cells", "toolbar buttons", "favourite", "study", "run R", "submit", "separator", "run label", "open run"
 )
 $rx = ($patterns | ForEach-Object { $_ }) -join "|"
 foreach ($f in Get-ChildItem $results -Filter "0*.log" | Sort-Object Name) {
