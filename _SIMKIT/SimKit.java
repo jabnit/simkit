@@ -1221,6 +1221,20 @@ public class SimKit extends StarMacro {
     return false;
   }
 
+  /** The window object (star.coremodule.SimulationProcessObject) of this .sim when it is open with its own tab, else null. */
+  static Object simWindow(Path f) {
+    try {
+      Class<?> c = Class.forName("star.coremodule.SimulationProcessObject", true, StarSettings.class.getClassLoader());
+      Object[] all = (Object[]) c.getMethod("activeSimulationProcessObjects").invoke(null);
+      for (Object o : all) {
+        Simulation s = (Simulation) c.getMethod("getSimulation").invoke(o);
+        String p = s == null ? null : s.getSessionPath();
+        if (p != null && !p.isEmpty() && Fs.same(Paths.get(p), f)) return o;
+      }
+    } catch (Throwable t) { /* no STAR-CCM+ window (batch) */ }
+    return null;
+  }
+
   /** STAR-CCM+'s own Load Simulation dialog (what File > Load shows: star.coremodule.ui.OpenOptionsDialog) with this file
    *  filled in. show = false only checks that the dialog and its calls exist (batch test). Swing thread only when shown. */
   static void loadDialog(Path f, boolean show) throws Exception {
@@ -1272,6 +1286,40 @@ public class SimKit extends StarMacro {
   }
 
   /** Small painted icons (no font glyphs: the same on Windows and RHEL). kind: 0 folded, 1 unfolded, 2 open in STAR, 3 blank. */
+  /** Small icons of the tracker's actions: 0 results (bars), 1 folder, 2 copy, 4 hide (eye crossed), 5 show again (eye). */
+  static javax.swing.Icon actionIcon(final int kind) {
+    return new javax.swing.Icon() {
+      @Override public int getIconWidth() { return 18; }
+      @Override public int getIconHeight() { return 18; }
+      @Override public void paintIcon(java.awt.Component c, java.awt.Graphics g0, int x, int y) {
+        java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+        g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+        g.translate(x, y);
+        g.setColor(c != null && !c.isEnabled() ? new java.awt.Color(0xC4, 0xCA, 0xD2) : new java.awt.Color(0x4A, 0x55, 0x63));
+        g.setStroke(new java.awt.BasicStroke(1.5f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND));
+        switch (kind) {
+          case 0:
+            g.fillRect(3, 10, 3, 5); g.fillRect(8, 6, 3, 9); g.fillRect(13, 3, 3, 12);
+            g.drawLine(2, 16, 16, 16);
+            break;
+          case 1:
+            g.drawPolyline(new int[] {2, 2, 7, 9, 16, 16, 2}, new int[] {15, 4, 4, 6, 6, 15, 15}, 7);
+            break;
+          case 2:
+            g.drawRoundRect(6, 6, 9, 10, 2, 2);
+            g.drawPolyline(new int[] {12, 12, 3, 3, 6}, new int[] {4, 2, 2, 12, 12}, 5);
+            break;
+          default:
+            g.draw(new java.awt.geom.QuadCurve2D.Double(2, 9, 9, 2, 16, 9));
+            g.draw(new java.awt.geom.QuadCurve2D.Double(2, 9, 9, 16, 16, 9));
+            g.drawOval(7, 7, 4, 4);
+            if (kind == 4) g.drawLine(3, 15, 15, 3);
+        }
+        g.dispose();
+      }
+    };
+  }
+
   /** Case row: fold arrow, then the pin star (filled amber = pinned to the top, pale outline = not pinned). */
   static javax.swing.Icon caseIcon(final boolean open, final boolean pinned) {
     final javax.swing.Icon arrow = trackerIcon(open ? 1 : 0);
@@ -1358,7 +1406,18 @@ public class SimKit extends StarMacro {
     final javax.swing.JCheckBox showHidden = new javax.swing.JCheckBox("Show hidden");
     final JLabel summary = new JLabel(), message = new JLabel(" "), folderName = new JLabel(), headline = new JLabel(" "),
         areaLabel = new JLabel("Comment");
-    final JTextArea area = new JTextArea(5, 40);
+    final JTextArea area = new JTextArea(5, 40);         // the box in the "view, then edit" way of writing
+    final javax.swing.JTextPane live = new javax.swing.JTextPane();   // the box when formatted while typing (trial)
+    boolean liveMode = !"off".equals(Env.pref("trackerLiveFormat"));
+    final javax.swing.JCheckBox liveBox = new javax.swing.JCheckBox("Format while typing (trial)");
+    boolean restyling = false;
+    boolean detailsRight = !"below".equals(Env.pref("trackerDetails"));
+    javax.swing.JSplitPane split;
+    JPanel details;
+    JScrollPane tableScroll;
+    int hoverRow = -1;
+    final JPanel chips = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+    final java.awt.Color hoverBg = new java.awt.Color(0xF2, 0xF6, 0xFC), markGrey = new java.awt.Color(0xB0, 0xB6, 0xBE);
     final javax.swing.JEditorPane viewer = new javax.swing.JEditorPane();   // the comment, formatted
     final java.awt.CardLayout cardLayout = new java.awt.CardLayout();
     final JPanel cards = new JPanel(cardLayout), editPanel = new JPanel(new BorderLayout(0, 2));
@@ -1366,8 +1425,8 @@ public class SimKit extends StarMacro {
     final List<JButton> fmtButtons = new ArrayList<>();   // B, I, U, colour, lists: enabled when a single row is selected
     JButton doneBtn;
     JPanel fmtBar;
-    final JButton folderBtn = new JButton("Open case folder"), hideBtn = new JButton("Hide..."),
-        simBtn = new JButton("Open in STAR-CCM+..."), resultsBtn = new JButton("Open results folder");
+    final JButton folderBtn = new JButton(actionIcon(1)), hideBtn = new JButton(actionIcon(4)),
+        simBtn = new JButton("Open in STAR-CCM+..."), resultsBtn = new JButton(actionIcon(0)), copyBtn = new JButton(actionIcon(2));
     boolean opening = false;
     final Set<String> pins = new LinkedHashSet<>();   // pinned case folders (this user only)
 
@@ -1421,9 +1480,8 @@ public class SimKit extends StarMacro {
       table = new JTable(model);
       table.setRowHeight(26);
       table.setShowVerticalLines(false);
-      table.setShowHorizontalLines(true);
-      table.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
-      table.setIntercellSpacing(new java.awt.Dimension(0, 1));
+      table.setShowHorizontalLines(false);   // flat: stripes and case headers separate the rows
+      table.setIntercellSpacing(new java.awt.Dimension(0, 0));
       table.setFillsViewportHeight(true);
       table.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
       table.getTableHeader().setReorderingAllowed(false);
@@ -1467,8 +1525,18 @@ public class SimKit extends StarMacro {
           boolean hand = row >= 0 && (view.get(row).isCase() && col == T_ID
               || !view.get(row).isCase() && col == T_BASED && byId(view.get(row).r[COL_BASED]) != null);
           table.setCursor(java.awt.Cursor.getPredefinedCursor(hand ? java.awt.Cursor.HAND_CURSOR : java.awt.Cursor.DEFAULT_CURSOR));
+          if (row != hoverRow) { hoverRow = row; table.repaint(); }   // light highlight under the mouse
         }
       });
+      table.addMouseListener(new java.awt.event.MouseAdapter() {
+        @Override public void mouseExited(java.awt.event.MouseEvent e) { hoverRow = -1; table.repaint(); }
+      });
+      // keyboard: arrows move, Enter opens, F2 writes, Space pins a case, Left / Right fold / unfold, Ctrl+F filters
+      keyOn(table, "ENTER", this::openSelected);
+      keyOn(table, "F2", this::startEdit);
+      keyOn(table, "SPACE", () -> { Item it = current(); if (it != null) togglePin(it.caseId); });
+      keyOn(table, "LEFT", () -> { Item it = current(); if (it != null && expanded.contains(it.caseId)) toggleKeep(it.caseId); });
+      keyOn(table, "RIGHT", () -> { Item it = current(); if (it != null && !expanded.contains(it.caseId)) toggleKeep(it.caseId); });
 
       filter = new JTextField(26) {
         private static final long serialVersionUID = 1L;
@@ -1501,14 +1569,32 @@ public class SimKit extends StarMacro {
       area.addFocusListener(new java.awt.event.FocusAdapter() {
         @Override public void focusLost(java.awt.event.FocusEvent e) {
           java.awt.Component to = e.getOppositeComponent();
-          if (e.isTemporary() || to != null && javax.swing.SwingUtilities.isDescendingFrom(to, editPanel)) flushArea();
+          if (e.isTemporary() || to != null && (javax.swing.SwingUtilities.isDescendingFrom(to, editPanel)
+              || fmtBar != null && javax.swing.SwingUtilities.isDescendingFrom(to, fmtBar))) flushArea();
           else endEdit();
         }
       });
-      bind(area, "ctrl B", () -> wrap("**"));
-      bind(area, "ctrl I", () -> wrap("*"));
-      bind(area, "ESCAPE", this::endEdit);
-      bind(area, "ENTER", this::newLine);
+      live.setFont(table.getFont());
+      live.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
+      live.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { javax.swing.SwingUtilities.invokeLater(() -> restyle()); }
+        @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { javax.swing.SwingUtilities.invokeLater(() -> restyle()); }
+        @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { }
+      });
+      live.addFocusListener(new java.awt.event.FocusAdapter() {
+        @Override public void focusGained(java.awt.event.FocusEvent e) { if (liveMode && areaKey != null) editing = true; }
+        @Override public void focusLost(java.awt.event.FocusEvent e) {
+          flushArea();
+          if (!e.isTemporary()) editing = false;
+        }
+      });
+      for (javax.swing.text.JTextComponent ed : new javax.swing.text.JTextComponent[] {area, live}) {
+        bind(ed, "ctrl B", () -> wrap("**"));
+        bind(ed, "ctrl I", () -> wrap("*"));
+        bind(ed, "ctrl U", () -> wrap("__", "__"));
+        bind(ed, "ESCAPE", this::endEdit);
+        bind(ed, "ENTER", this::newLine);
+      }
       viewer.setContentType("text/html");
       viewer.setEditable(false);
       viewer.putClientProperty(javax.swing.JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
@@ -1520,8 +1606,7 @@ public class SimKit extends StarMacro {
         @Override public void mouseClicked(java.awt.event.MouseEvent e) { startEdit(); }
       });
       // the formatting bar is always shown; used on the formatted text, it first opens the box for writing
-      JPanel bar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
-      bind(area, "ctrl U", () -> wrap("__", "__"));
+      JPanel bar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));
       final javax.swing.JPopupMenu colours = new javax.swing.JPopupMenu();
       for (Map.Entry<String, String> c : Md.COLORS.entrySet()) {
         javax.swing.JMenuItem mi = new javax.swing.JMenuItem("<html><font color='" + c.getValue() + "'>&#9632;&nbsp;"
@@ -1532,15 +1617,26 @@ public class SimKit extends StarMacro {
       Object[][] tools = {{"B", "Bold: **text** (Ctrl+B)", (Runnable) () -> fmt(() -> wrap("**", "**"))},
           {"I", "Italic: *text* (Ctrl+I)", (Runnable) () -> fmt(() -> wrap("*", "*"))},
           {"U", "Underline: __text__ (Ctrl+U)", (Runnable) () -> fmt(() -> wrap("__", "__"))},
-          {"A ▾", "Text colour: [red]text[/]  (red, orange, green, blue, purple, grey)", null},
-          {"• List", "Bullet list: lines starting with - ", (Runnable) () -> fmt(() -> list(false))},
+          {"|", null, null},
+          {"A \u25BE", "Text colour: [red]text[/]  (red, orange, green, blue, purple, grey)", null},
+          {"|", null, null},
+          {"\u2022 List", "Bullet list: lines starting with - ", (Runnable) () -> fmt(() -> list(false))},
           {"1. List", "Numbered list: lines starting with 1. 2. 3.", (Runnable) () -> fmt(() -> list(true))},
+          {"|", null, null},
+          {"Template", "Insert Goal / Changes / Result / Next", (Runnable) () -> fmt(this::template)},
           {"Done", "Save and show the formatted text (Esc)", (Runnable) this::endEdit}};
       for (Object[] t : tools) {
+        if (t[0].equals("|")) {   // a thin line between groups
+          javax.swing.JSeparator sep = new javax.swing.JSeparator(javax.swing.SwingConstants.VERTICAL);
+          sep.setPreferredSize(new java.awt.Dimension(7, 18));
+          bar.add(sep);
+          continue;
+        }
         final JButton b = new JButton((String) t[0]);
         b.setFocusable(false);
         b.setToolTipText((String) t[1]);
-        b.setMargin(new java.awt.Insets(1, 8, 1, 8));
+        b.setMargin(new java.awt.Insets(1, 7, 1, 7));
+        flat(b);
         if (t[0].equals("B")) b.setFont(b.getFont().deriveFont(Font.BOLD));
         if (t[0].equals("I")) b.setFont(b.getFont().deriveFont(Font.ITALIC));
         if (t[0].equals("U")) {
@@ -1563,21 +1659,36 @@ public class SimKit extends StarMacro {
         }
         bar.add(b);
       }
-      JLabel marks = new JLabel("   saved when you leave the box");
-      marks.setForeground(pale);
-      bar.add(marks);
+      liveBox.setSelected(liveMode);
+      liveBox.setFocusable(false);
+      liveBox.setForeground(grey);
+      liveBox.setToolTipText("On: one box, formatted as you type (marks in grey). Off: the formatted text, click it to write.");
+      liveBox.addActionListener(e -> setLiveMode(liveBox.isSelected()));
+      areaLabel.setToolTipText("Saved when you leave the box");
       editPanel.add(new JScrollPane(area), BorderLayout.CENTER);
       fmtBar = bar;
       JScrollPane viewScroll = new JScrollPane(viewer);
       viewScroll.getViewport().setBackground(java.awt.Color.WHITE);
       cards.add(viewScroll, "view");
       cards.add(editPanel, "edit");
+      cards.add(new JScrollPane(live), "live");
       folderBtn.addActionListener(e -> openFolder());
       simBtn.addActionListener(e -> openSelected());
       resultsBtn.addActionListener(e -> openResults());
-      resultsBtn.setToolTipText("Exported plots (CSV) and images of the case");
+      copyBtn.addActionListener(e -> copyLinks());
+      resultsBtn.setToolTipText("Open the results folder (exported plots and images)");
+      folderBtn.setToolTipText("Open the case folder");
+      copyBtn.setToolTipText("Copy the ID and path (Ctrl+C), to paste in a mail or a document");
       simBtn.setToolTipText("STAR-CCM+'s Load Simulation dialog with this version filled in (processes, parallel, power...); "
-          + "a case row: its latest version");
+          + "a case row: its latest version. Already open: its tab comes to the front. (Enter)");
+      for (JButton b : new JButton[] {resultsBtn, folderBtn, copyBtn, hideBtn}) flat(b);
+      simBtn.setFont(simBtn.getFont().deriveFont(Font.BOLD));
+      simBtn.setForeground(java.awt.Color.WHITE);
+      simBtn.setBackground(new java.awt.Color(0x1F, 0x5F, 0xAF));
+      simBtn.setOpaque(true);
+      simBtn.setBorderPainted(false);
+      simBtn.setFocusPainted(false);
+      simBtn.setMargin(new java.awt.Insets(4, 12, 4, 12));
       hideBtn.addActionListener(e -> hideOrShow());
       headline.setFont(headline.getFont().deriveFont(Font.BOLD));
       areaLabel.setForeground(grey);
@@ -1613,14 +1724,36 @@ public class SimKit extends StarMacro {
       topLeft.add(statusFilter);
       topLeft.add(showHidden);
       summary.setForeground(grey);
+      final javax.swing.JCheckBox rightBox = new javax.swing.JCheckBox("Details on the right (trial)", detailsRight);
+      rightBox.setFocusable(false);
+      rightBox.setForeground(grey);
+      rightBox.addActionListener(e -> {
+        detailsRight = rightBox.isSelected();
+        Env.setPref("trackerDetails", detailsRight ? "right" : "below");
+        layoutDetails();
+      });
+      JPanel topRight = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 10, 0));
+      topRight.add(summary);
+      topRight.add(liveBox);
+      topRight.add(rightBox);
       JPanel top = new JPanel(new BorderLayout());
       top.add(topLeft, BorderLayout.WEST);
-      top.add(summary, BorderLayout.EAST);
+      top.add(topRight, BorderLayout.EAST);
 
-      JPanel details = new JPanel(new BorderLayout(10, 4));
-      details.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, new java.awt.Color(0xDD, 0xDD, 0xDD)),
-          BorderFactory.createEmptyBorder(8, 2, 4, 2)));
-      details.add(headline, BorderLayout.NORTH);
+      details = new JPanel(new BorderLayout(10, 6));
+      details.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 2));
+      JPanel acts = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));   // the main action, then small icons
+      acts.add(simBtn);
+      acts.add(javax.swing.Box.createHorizontalStrut(6));
+      for (JButton b : new JButton[] {resultsBtn, folderBtn, copyBtn, hideBtn}) acts.add(b);
+      JPanel head = new JPanel();   // headline (2 lines), actions, status labels: each its own height
+      head.setLayout(new javax.swing.BoxLayout(head, javax.swing.BoxLayout.Y_AXIS));
+      for (javax.swing.JComponent c : new javax.swing.JComponent[] {headline, acts, chips}) {
+        c.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
+        if (c != headline) head.add(javax.swing.Box.createVerticalStrut(6));
+        head.add(c);
+      }
+      details.add(head, BorderLayout.NORTH);
       JPanel areaBox = new JPanel(new BorderLayout(0, 2));
       JPanel areaHead = new JPanel(new BorderLayout(0, 2));
       areaHead.add(areaLabel, BorderLayout.NORTH);
@@ -1628,16 +1761,7 @@ public class SimKit extends StarMacro {
       areaBox.add(areaHead, BorderLayout.NORTH);
       areaBox.add(cards, BorderLayout.CENTER);
       details.add(areaBox, BorderLayout.CENTER);
-      details.setPreferredSize(new java.awt.Dimension(1250, 210));
-      details.setMinimumSize(new java.awt.Dimension(400, 120));
-      JPanel acts = new JPanel(new GridLayout(4, 1, 0, 6));
-      acts.add(simBtn);
-      acts.add(resultsBtn);
-      acts.add(folderBtn);
-      acts.add(hideBtn);
-      JPanel actsBox = new JPanel(new BorderLayout());
-      actsBox.add(acts, BorderLayout.NORTH);
-      details.add(actsBox, BorderLayout.EAST);
+      details.setMinimumSize(new java.awt.Dimension(360, 160));
 
       JPanel bottom = new JPanel(new BorderLayout());
       JPanel btns = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 6, 0));
@@ -1649,15 +1773,14 @@ public class SimKit extends StarMacro {
       JPanel root = new JPanel(new BorderLayout(0, 8));
       root.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
       root.add(top, BorderLayout.NORTH);
-      JScrollPane sp = new JScrollPane(table);
-      sp.getViewport().setBackground(java.awt.Color.WHITE);
-      sp.setPreferredSize(new java.awt.Dimension(1250, 420));
-      sp.setMinimumSize(new java.awt.Dimension(400, 120));
-      javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, sp, details);
-      split.setResizeWeight(1.0);   // a bigger window gives the table the room; drag the bar for a bigger box
+      tableScroll = new JScrollPane(table);
+      tableScroll.getViewport().setBackground(java.awt.Color.WHITE);
+      tableScroll.setMinimumSize(new java.awt.Dimension(400, 120));
+      split = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, tableScroll, details);
       split.setBorder(null);
       split.setDividerSize(7);
       split.setContinuousLayout(true);
+      layoutDetails();
       root.add(split, BorderLayout.CENTER);
       root.add(bottom, BorderLayout.SOUTH);
       w.setContentPane(root);
@@ -1667,9 +1790,63 @@ public class SimKit extends StarMacro {
           if (!table.isEditing() && !editing) reload();
         }
       });
+      // Ctrl+F anywhere in the window: the filter; Esc in the filter: clear it
+      w.getRootPane().getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke("ctrl F"), "simkitFilter");
+      w.getRootPane().getActionMap().put("simkitFilter", new javax.swing.AbstractAction() {
+        private static final long serialVersionUID = 1L;
+        @Override public void actionPerformed(java.awt.event.ActionEvent e) { filter.requestFocusInWindow(); filter.selectAll(); }
+      });
+      keyOn(filter, "ESCAPE", () -> { filter.setText(""); table.requestFocusInWindow(); });
       reload();
       if (openId != null) jumpTo(openId);
+      cardLayout.show(cards, liveMode ? "live" : "view");
+      if (doneBtn != null) doneBtn.setVisible(!liveMode);
       w.pack();
+      layoutDetails();
+    }
+
+    /** Details on the right (table left, comment box the full height) or below the table; kept in the preferences. */
+    void layoutDetails() {
+      if (split == null) return;
+      split.setOrientation(detailsRight ? javax.swing.JSplitPane.HORIZONTAL_SPLIT : javax.swing.JSplitPane.VERTICAL_SPLIT);
+      split.setResizeWeight(detailsRight ? 0.6 : 1.0);
+      tableScroll.setPreferredSize(detailsRight ? new java.awt.Dimension(860, 560) : new java.awt.Dimension(1250, 400));
+      details.setPreferredSize(detailsRight ? new java.awt.Dimension(500, 560) : new java.awt.Dimension(1250, 250));
+      split.resetToPreferredSizes();
+      split.revalidate();
+    }
+
+    /** The focused row of the table (null if none). */
+    Item current() {
+      int r = table.getSelectionModel().getLeadSelectionIndex();
+      return r >= 0 && r < view.size() ? view.get(r) : null;
+    }
+
+    /** Fold or unfold a case from the keyboard, keeping the case row selected. */
+    void toggleKeep(String caseId) {
+      toggle(caseId);
+      for (int i = 0; i < view.size(); i++) if (view.get(i).isCase() && view.get(i).caseId.equals(caseId)) table.setRowSelectionInterval(i, i);
+    }
+
+    void keyOn(javax.swing.JComponent c, String keyStroke, Runnable r) {
+      c.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke(keyStroke), "simkit " + keyStroke);
+      c.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke(keyStroke), "simkit " + keyStroke);
+      c.getActionMap().put("simkit " + keyStroke, new javax.swing.AbstractAction() {
+        private static final long serialVersionUID = 1L;
+        @Override public void actionPerformed(java.awt.event.ActionEvent e) { r.run(); }
+      });
+    }
+
+    /** A flat button: no border until the mouse is over it. */
+    void flat(final JButton b) {
+      b.setFocusable(false);
+      b.setContentAreaFilled(false);
+      b.setBorderPainted(false);
+      b.setFocusPainted(false);
+      b.addMouseListener(new java.awt.event.MouseAdapter() {
+        @Override public void mouseEntered(java.awt.event.MouseEvent e) { if (b.isEnabled()) { b.setContentAreaFilled(true); b.setBorderPainted(true); } }
+        @Override public void mouseExited(java.awt.event.MouseEvent e) { b.setContentAreaFilled(false); b.setBorderPainted(false); }
+      });
     }
 
     // ----- data -----
@@ -1744,6 +1921,7 @@ public class SimKit extends StarMacro {
         if (expanded.contains(cid) || filtering()) for (String[] r : vis) view.add(new Item(cid, r));
       }
       model.fireTableDataChanged();
+      rowHeights();
       for (int i = 0; i < view.size(); i++) if (sel.contains(view.get(i).key())) table.addRowSelectionInterval(i, i);
       summary.setText(nCases + (nCases == 1 ? " case" : " cases") + "  ·  " + nVers + (nVers == 1 ? " version" : " versions")
           + (nRunning > 0 ? "  ·  " + nRunning + " meshing or running" : "") + (nHidden > 0 ? "  ·  " + nHidden + " hidden" : ""));
@@ -1779,7 +1957,10 @@ public class SimKit extends StarMacro {
       try {
         setIdentityKey(dir, caseOf(r[COL_ID]), key + "_v" + verOf(r[COL_ID]), value);
         r[col] = value;
-        if (col == COL_COMMENT && r[COL_ID].equals(areaKey)) area.setText(value);   // else the details box would put the old text back
+        if (col == COL_COMMENT && r[COL_ID].equals(areaKey)) {   // else the details box would put the old text back
+          if (!area.getText().equals(value)) area.setText(value);
+          if (!txt(live).equals(value)) live.setText(value);
+        }
         afterSave("Saved: " + key + " of " + r[COL_ID]);
       } catch (Throwable t) {
         say("NOT saved (" + key + " of " + r[COL_ID] + "): " + reason(t), red);
@@ -1791,7 +1972,10 @@ public class SimKit extends StarMacro {
       try {
         setIdentityKey(dir, caseId, "description", value);
         for (String[] r : byCase.get(caseId)) r[COL_DESC] = value;
-        if (("case:" + caseId).equals(areaKey)) area.setText(value);
+        if (("case:" + caseId).equals(areaKey)) {
+          if (!area.getText().equals(value)) area.setText(value);
+          if (!txt(live).equals(value)) live.setText(value);
+        }
         afterSave("Saved: description of " + caseId);
         updateCaseList(dir);
       } catch (Throwable t) {
@@ -1823,13 +2007,15 @@ public class SimKit extends StarMacro {
       List<Item> sel = selected();
       boolean allHidden = !sel.isEmpty();
       for (Item it : sel) allHidden &= it.isCase() ? caseHidden(it.caseId) : caseHidden(it.caseId) || hidden(it.r);
-      hideBtn.setText(allHidden ? "Show again" : "Hide...");
-      hideBtn.setToolTipText(allHidden ? "Bring the selection back into the tracker and the case list"
-          : "Take the selection out of the tracker and the case list; the files stay where they are");
+      hideBtn.setIcon(actionIcon(allHidden ? 5 : 4));
+      hideBtn.setToolTipText(allHidden ? "Show again: bring the selection back into the tracker and the case list"
+          : "Hide: take the selection out of the tracker and the case list; the files stay where they are");
       hideBtn.setEnabled(!sel.isEmpty());
       folderBtn.setEnabled(!sel.isEmpty());
+      copyBtn.setEnabled(!sel.isEmpty());
       simBtn.setEnabled(sel.size() == 1 && !opening);
       resultsBtn.setEnabled(!sel.isEmpty());
+      showChips(sel);
       String key = null, text = "";
       if (sel.isEmpty()) {
         headline.setText("Select a case or a version to see its details");
@@ -1847,7 +2033,7 @@ public class SimKit extends StarMacro {
         if (!id.getOrDefault("mesh_level", "").isEmpty()) bits.add("mesh study " + id.getOrDefault("mesh_study", "")
             + ": " + id.get("mesh_level") + (id.getOrDefault("mesh_cells", "").isEmpty() ? "" : ", " + id.get("mesh_cells") + " cells"));
         if (caseHidden(it.caseId)) bits.add("hidden");
-        headline.setText("<html>" + html(it.caseId) + "&nbsp;&nbsp;<font color='#6B7580'>" + html(String.join("  ·  ", bits))
+        headline.setText("<html>" + html(it.caseId) + "<br><font color='#6B7580'>" + html(String.join("  ·  ", bits))
             + "</font></html>");
         areaLabel.setText("Description of the case (the same for all its versions)");
         key = it.key();
@@ -1863,7 +2049,7 @@ public class SimKit extends StarMacro {
             + (id.getOrDefault("mesh_cells", "").isEmpty() ? "" : ", " + id.get("mesh_cells") + " cells"));
         if (r[COL_ID].equals(openId)) bits.add("open in STAR-CCM+");
         if (hidden(r) || caseHidden(sel.get(0).caseId)) bits.add("hidden");
-        headline.setText("<html>" + html(r[COL_ID]) + "&nbsp;&nbsp;<font color='#6B7580'>" + html(String.join("  ·  ", bits))
+        headline.setText("<html>" + html(r[COL_ID]) + "<br><font color='#6B7580'>" + html(String.join("  ·  ", bits))
             + "</font></html>");
         areaLabel.setText("Comment  (what you are doing with this version)");
         key = r[COL_ID];
@@ -1872,11 +2058,14 @@ public class SimKit extends StarMacro {
       if (key == null || !key.equals(areaKey) || !editing) {   // never overwrite what is being typed
         if (editing && (key == null || !key.equals(areaKey))) {
           editing = false;
-          cardLayout.show(cards, "view");
+          if (!liveMode) cardLayout.show(cards, "view");
         }
         areaKey = key;
         if (!area.getText().equals(text)) area.setText(text);
         area.setEditable(key != null);
+        if (!txt(live).equals(text)) { live.setText(text); restyle(); }
+        live.setEditable(key != null);
+        live.setBackground(key != null ? java.awt.Color.WHITE : new java.awt.Color(0xF4, 0xF5, 0xF7));
         String empty = key == null ? "" : key.startsWith("case:") ? "Click here to describe the case" : "Click here to write a comment";
         viewer.setText("<html><head><style>" + viewerCss() + "</style></head><body>"
             + (text.trim().isEmpty() ? "<p class='empty'>" + empty + "</p>" : Md.toHtml(text)) + "</body></html>");
@@ -1886,6 +2075,43 @@ public class SimKit extends StarMacro {
       }
       for (JButton b : fmtButtons) b.setEnabled(key != null);
       if (doneBtn != null) doneBtn.setEnabled(editing);
+    }
+
+    /** Status labels under the headline: click one to give it to the selection (a case row: all its versions). */
+    void showChips(List<Item> sel) {
+      chips.removeAll();
+      if (!sel.isEmpty()) {
+        String cur = sel.size() == 1 && !sel.get(0).isCase() ? sel.get(0).r[COL_STATUS] : null;
+        JLabel lab = new JLabel(sel.size() == 1 && !sel.get(0).isCase() ? "Status" : "Status of all");
+        lab.setForeground(grey);
+        chips.add(lab);
+        for (final String st : STATUSES) {
+          if (st.isEmpty()) continue;
+          final boolean on = st.equals(cur);
+          final java.awt.Color[] c = statusColors(st);
+          JLabel chip = new JLabel(st) {
+            private static final long serialVersionUID = 1L;
+            @Override protected void paintComponent(java.awt.Graphics g0) {
+              java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+              g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+              if (on) { g.setColor(c[0]); g.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, getHeight(), getHeight()); }
+              else { g.setColor(new java.awt.Color(0xD5, 0xD9, 0xDE)); g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, getHeight(), getHeight()); }
+              g.dispose();
+              super.paintComponent(g0);
+            }
+          };
+          chip.setForeground(on ? c[1] : grey);
+          chip.setBorder(BorderFactory.createEmptyBorder(2, 9, 2, 9));
+          chip.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+          chip.setToolTipText(on ? "Current status: click to clear it" : "Set the status to " + st);
+          chip.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override public void mouseClicked(java.awt.event.MouseEvent e) { setStatusAll(on ? "" : st); }
+          });
+          chips.add(chip);
+        }
+      }
+      chips.revalidate();
+      chips.repaint();
     }
 
     String viewerCss() {
@@ -1900,6 +2126,13 @@ public class SimKit extends StarMacro {
     void startEdit() {
       if (areaKey == null || selected().size() != 1) return;
       editing = true;
+      if (liveMode) {
+        if (!live.isFocusOwner()) {
+          live.requestFocusInWindow();
+          live.setCaretPosition(live.getDocument().getLength());
+        }
+        return;
+      }
       cardLayout.show(cards, "edit");
       area.requestFocusInWindow();
       area.setCaretPosition(area.getText().length());
@@ -1910,9 +2143,117 @@ public class SimKit extends StarMacro {
       if (!editing) return;
       flushArea();
       editing = false;
+      if (liveMode) {
+        table.requestFocusInWindow();
+        return;
+      }
       showDetails();   // the formatted text, as saved
       cardLayout.show(cards, "view");
       if (doneBtn != null) doneBtn.setEnabled(false);
+    }
+
+    /** The box being written in: the formatted-while-typing one, or the plain one. */
+    javax.swing.text.JTextComponent ed() { return liveMode ? live : area; }
+
+    /** Switches between the two ways of writing (a trial: compare them, then keep one). */
+    void setLiveMode(boolean on) {
+      flushArea();
+      editing = false;
+      liveMode = on;
+      liveBox.setSelected(on);
+      Env.setPref("trackerLiveFormat", on ? "on" : "off");
+      areaKey = null;   // reloads the text in both boxes
+      showDetails();
+      cardLayout.show(cards, on ? "live" : "view");
+      if (doneBtn != null) doneBtn.setVisible(!on);
+      fmtBar.revalidate();
+    }
+
+    /** Shows the marks in the box as you type: **bold**, *italic*, __underline__, [colour]text[/], list markers (marks in grey). */
+    void restyle() {
+      if (restyling) return;
+      restyling = true;
+      try {
+        javax.swing.text.StyledDocument d = live.getStyledDocument();
+        String t = d.getText(0, d.getLength());
+        Font f = table.getFont();
+        javax.swing.text.SimpleAttributeSet base = new javax.swing.text.SimpleAttributeSet();
+        javax.swing.text.StyleConstants.setFontFamily(base, f.getFamily());
+        javax.swing.text.StyleConstants.setFontSize(base, f.getSize());
+        javax.swing.text.StyleConstants.setForeground(base, java.awt.Color.BLACK);
+        d.setCharacterAttributes(0, t.length(), base, true);
+        javax.swing.text.SimpleAttributeSet mark = new javax.swing.text.SimpleAttributeSet();
+        javax.swing.text.StyleConstants.setForeground(mark, markGrey);
+        Matcher lm = Pattern.compile("(?m)^\\s*(?:[-*\u2022]|\\d+[.)])\\s").matcher(t);
+        while (lm.find()) d.setCharacterAttributes(lm.start(), lm.end() - lm.start(), mark, false);
+        javax.swing.text.SimpleAttributeSet b = new javax.swing.text.SimpleAttributeSet(), i = new javax.swing.text.SimpleAttributeSet(),
+            u = new javax.swing.text.SimpleAttributeSet();
+        javax.swing.text.StyleConstants.setBold(b, true);
+        javax.swing.text.StyleConstants.setItalic(i, true);
+        javax.swing.text.StyleConstants.setUnderline(u, true);
+        styleSpans(d, t, "\\*\\*(\\S(?:.*?\\S)?)\\*\\*", 1, b, mark);
+        styleSpans(d, t, "__(\\S(?:.*?\\S)?)__", 1, u, mark);
+        styleSpans(d, t, "(?<![*\\w])\\*([^*\\s](?:.*?[^*\\s])?)\\*(?![*\\w])", 1, i, mark);
+        Matcher cm = Md.COLOR.matcher(t);
+        while (cm.find()) {
+          javax.swing.text.SimpleAttributeSet c = new javax.swing.text.SimpleAttributeSet();
+          javax.swing.text.StyleConstants.setForeground(c, java.awt.Color.decode(Md.COLORS.get(cm.group(1))));
+          d.setCharacterAttributes(cm.start(2), cm.end(2) - cm.start(2), c, false);
+          d.setCharacterAttributes(cm.start(), cm.start(2) - cm.start(), mark, false);
+          d.setCharacterAttributes(cm.end(2), cm.end() - cm.end(2), mark, false);
+        }
+      } catch (javax.swing.text.BadLocationException e) {
+        /* text changed meanwhile: the next change restyles */
+      } finally {
+        restyling = false;
+      }
+    }
+
+    void styleSpans(javax.swing.text.StyledDocument d, String t, String re, int g, javax.swing.text.AttributeSet a,
+        javax.swing.text.AttributeSet mark) {
+      Matcher m = Pattern.compile(re).matcher(t);
+      while (m.find()) {
+        d.setCharacterAttributes(m.start(g), m.end(g) - m.start(g), a, false);
+        d.setCharacterAttributes(m.start(), m.start(g) - m.start(), mark, false);
+        d.setCharacterAttributes(m.end(g), m.end() - m.end(g), mark, false);
+      }
+    }
+
+    /** Inserts a short structure to fill in: Goal / Changes / Result / Next. */
+    void template() {
+      javax.swing.text.JTextComponent e = ed();
+      String t = "**Goal:** \n**Changes:**\n- \n**Result:** \n**Next:** ";
+      String cur = txt(e);
+      int at = cur.trim().isEmpty() ? 0 : cur.length();
+      String ins = cur.trim().isEmpty() ? t : (cur.endsWith("\n") ? "\n" : "\n\n") + t;
+      if (cur.trim().isEmpty()) e.setText(""); else e.setCaretPosition(at);
+      e.replaceSelection(ins);
+      e.setCaretPosition((cur.trim().isEmpty() ? 0 : at + ins.indexOf("**Goal:**")) + "**Goal:** ".length());
+      e.requestFocusInWindow();
+    }
+
+    /** The text as the document holds it ("\n" line ends; JTextPane.getText() gives "\r\n" on Windows). */
+    String txt(javax.swing.text.JTextComponent e) {
+      try {
+        return e.getDocument().getText(0, e.getDocument().getLength());
+      } catch (javax.swing.text.BadLocationException x) {
+        return e.getText();
+      }
+    }
+
+    int lineStart(javax.swing.text.JTextComponent e, int off) {
+      javax.swing.text.Element root = e.getDocument().getDefaultRootElement();
+      return root.getElement(root.getElementIndex(off)).getStartOffset();
+    }
+
+    int lineEnd(javax.swing.text.JTextComponent e, int off) {
+      javax.swing.text.Element root = e.getDocument().getDefaultRootElement();
+      return Math.min(e.getDocument().getLength(), root.getElement(root.getElementIndex(off)).getEndOffset());
+    }
+
+    void replaceRange(javax.swing.text.JTextComponent e, String text, int a, int b) throws javax.swing.text.BadLocationException {
+      e.getDocument().remove(a, b - a);
+      e.getDocument().insertString(a, text, null);
     }
 
     /** A formatting button: on the formatted text it first opens the box for writing (caret at the end). */
@@ -1921,7 +2262,7 @@ public class SimKit extends StarMacro {
       if (editing) r.run();
     }
 
-    void bind(JTextArea a, String keyStroke, Runnable r) {
+    void bind(javax.swing.text.JTextComponent a, String keyStroke, Runnable r) {
       a.getInputMap().put(javax.swing.KeyStroke.getKeyStroke(keyStroke), keyStroke);
       a.getActionMap().put(keyStroke, new javax.swing.AbstractAction() {
         private static final long serialVersionUID = 1L;
@@ -1933,6 +2274,7 @@ public class SimKit extends StarMacro {
     void wrap(String m) { wrap(m, m); }
 
     void wrap(String open, String close) {
+      javax.swing.text.JTextComponent area = ed();
       int a = area.getSelectionStart(), b = area.getSelectionEnd(), n = open.length() + close.length();
       String s = area.getSelectedText() == null ? "" : area.getSelectedText();
       if (s.length() >= n && s.startsWith(open) && s.endsWith(close) && !(open.equals("*") && s.startsWith("**"))) {
@@ -1947,11 +2289,13 @@ public class SimKit extends StarMacro {
 
     /** Makes the selected lines (or the current one) a bullet or numbered list; again on a list: back to plain lines. */
     void list(boolean numbered) {
+      javax.swing.text.JTextComponent area = ed();
       try {
-        int l0 = area.getLineOfOffset(area.getSelectionStart()), l1 = area.getLineOfOffset(area.getSelectionEnd());
-        if (l1 > l0 && area.getSelectionEnd() == area.getLineStartOffset(l1)) l1--;
-        int start = area.getLineStartOffset(l0), end = area.getLineEndOffset(l1);
-        String[] ls = area.getText().substring(start, end).split("\n", -1);
+        int s0 = area.getSelectionStart(), s1 = area.getSelectionEnd();
+        if (s1 > s0 && lineStart(area, s1) == s1) s1--;
+        int start = lineStart(area, s0), end = lineEnd(area, s1);
+        if (end > start && txt(area).charAt(end - 1) == '\n') end--;
+        String[] ls = txt(area).substring(start, end).split("\n", -1);
         boolean all = true;
         for (String l : ls) if (!l.trim().isEmpty()) all &= (numbered ? Md.NUMBER : Md.BULLET).matcher(l).matches();
         StringBuilder sb = new StringBuilder();
@@ -1964,22 +2308,23 @@ public class SimKit extends StarMacro {
           if (l.trim().isEmpty() && i == ls.length - 1 && ls.length > 1) continue;
           sb.append(all ? body : (numbered ? (n++) + ". " : "- ") + body);
         }
-        area.replaceRange(sb.toString(), start, end);
-        area.setCaretPosition(Math.min(area.getText().length(), start + sb.length()));
+        replaceRange(area, sb.toString(), start, end);
+        area.setCaretPosition(Math.min(area.getDocument().getLength(), start + sb.length()));
       } catch (javax.swing.text.BadLocationException e) { /* nothing selected */ }
       area.requestFocusInWindow();
     }
 
     /** Enter: in a list, the next line starts with the next bullet or number; Enter on an empty item ends the list. */
     void newLine() {
+      javax.swing.text.JTextComponent area = ed();
       try {
-        int caret = area.getCaretPosition(), line = area.getLineOfOffset(caret), ls = area.getLineStartOffset(line);
+        int caret = area.getCaretPosition(), ls = lineStart(area, caret);
         String before = area.getText(ls, caret - ls);
         Matcher b = Pattern.compile("^(\\s*)([-*\u2022])\\s+(.*)$").matcher(before), k = Md.NUMBER.matcher(before);
         if (b.matches() || k.matches()) {
           String rest = b.matches() ? b.group(3) : k.group(2);
           if (rest.trim().isEmpty()) {   // empty item: end the list
-            area.replaceRange("", ls, caret);
+            replaceRange(area, "", ls, caret);
             return;
           }
           area.replaceSelection("\n" + (b.matches() ? b.group(1) + b.group(2) + " " : (Integer.parseInt(k.group(1)) + 1) + ". "));
@@ -1991,8 +2336,8 @@ public class SimKit extends StarMacro {
 
     /** Saves the box (comment or description) if it differs from what is stored; line breaks are kept. */
     void flushArea() {
-      if (areaKey == null || !area.isEditable()) return;
-      String s = area.getText().replace("\r", "").replaceAll("[ \\t]+\n", "\n").replaceAll("^\n+|\\s+$", "");
+      if (areaKey == null || !ed().isEditable()) return;
+      String s = txt(ed()).replace("\r", "").replaceAll("[ \\t]+\n", "\n").replaceAll("^\n+|\\s+$", "");
       if (areaKey.startsWith("case:")) {
         String cid = areaKey.substring(5);
         if (!byCase.containsKey(cid) || s.equals(description(cid))) return;
@@ -2003,6 +2348,7 @@ public class SimKit extends StarMacro {
         saveVersion(r, COL_COMMENT, "comment", s);
       }
       if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);   // keeps the selection
+      if (!view.isEmpty()) rowHeights();
     }
 
 
@@ -2081,51 +2427,64 @@ public class SimKit extends StarMacro {
       return dir.resolve(caseOf(r[COL_ID])).resolve("sim").resolve(r[COL_FILE]);
     }
 
-    /** Opens the selected version: STAR-CCM+'s own Load Simulation dialog with the file filled in (processes, serial or
-     *  parallel, power session, remote host: as in File > Load, which remembers your choices); if that dialog cannot be
-     *  reached, the file is loaded directly with the default options. */
+    /** Opens the selected version in a STAR-CCM+ tab. Already open with its tab: that tab comes to the front. Else
+     *  STAR-CCM+'s own Load Simulation dialog with the file filled in (processes, serial or parallel, power session,
+     *  remote host: as in File > Load, which remembers your choices). A copy loaded without a tab by an earlier SimKit
+     *  is closed first. Without that dialog, the path is copied for File > Load. */
     void openSelected() {
       final Path f = selectedSim();
       if (f == null || opening) return;
       if (!Files.isRegularFile(f)) { say("Not found: " + f + " (deleted? the tracker reloads when you come back to it)", red); return; }
-      if (isOpen(f)) { say(f.getFileName() + " is already open in STAR-CCM+: pick its tab", green); return; }
+      Object tab = simWindow(f);
+      if (tab != null) {
+        try {
+          tab.getClass().getMethod("setActive", boolean.class).invoke(tab, true);
+          say(f.getFileName() + " is already open: its tab is now in front", green);
+        } catch (Throwable t) {
+          say(f.getFileName() + " is already open in STAR-CCM+: pick its tab", green);
+        }
+        return;
+      }
+      if (isOpen(f)) {   // loaded without a tab (the first Open of SimKit did that): close that copy, then load properly
+        opening = true;
+        simBtn.setEnabled(false);
+        say("Closing a copy of " + f.getFileName() + " that was loaded without a tab ...", grey);
+        Thread t = new Thread(() -> {
+          String err = null;
+          for (Simulation s : new ArrayList<>(SimulationManager.getSingleton().simulations())) {
+            try {
+              String p = s.getSessionPath();
+              if (p != null && Fs.same(Paths.get(p), f)) s.close(star.base.neo.ServerConnection.CloseOption.ForceClose);
+            } catch (Throwable x) {
+              err = reason(x);
+            }
+          }
+          final String e2 = err;
+          javax.swing.SwingUtilities.invokeLater(() -> {
+            opening = false;
+            showDetails();
+            if (e2 != null && isOpen(f)) say("Could not close the copy without a tab (" + e2 + "): close STAR-CCM+ and open again", red);
+            else showLoadDialog(f);
+          });
+        }, "SimKit close hidden sim");
+        t.setDaemon(true);
+        t.start();
+        return;
+      }
+      showLoadDialog(f);
+    }
+
+    void showLoadDialog(Path f) {
       try {
         say("Load Simulation: " + f.getFileName() + " filled in; choose the processes and options, then OK", grey);
         loadDialog(f, true);
-        return;
+        log.line("case tracker: Load Simulation dialog for " + f);
       } catch (Throwable t) {
-        say("STAR-CCM+'s Load dialog is not available here (" + reason(t) + "): loading with the default options", grey);
-      }
-      loadDirect(f);
-    }
-
-    /** Loads the file without a dialog (default options), in the background (loading takes a while). */
-    void loadDirect(final Path f) {
-      opening = true;
-      simBtn.setEnabled(false);
-      say("Opening " + f.getFileName() + " in STAR-CCM+ ... (the tracker stays usable)", grey);
-      Thread t = new Thread(() -> {
-        String msg;
-        java.awt.Color col;
         try {
-          boolean was = openSim(f) == null;
-          msg = was ? f.getFileName() + " is already open in STAR-CCM+: pick its tab" : "Opened " + f.getFileName() + " in STAR-CCM+ (its own tab)";
-          col = green;
-          log.line("case tracker: " + msg);
-        } catch (Throwable x) {
-          msg = "Could not open " + f.getFileName() + ": " + reason(x) + "  (File > Load Simulation opens it too)";
-          col = red;
-        }
-        final String m2 = msg;
-        final java.awt.Color c2 = col;
-        javax.swing.SwingUtilities.invokeLater(() -> {
-          opening = false;
-          say(m2, c2);
-          showDetails();
-        });
-      }, "SimKit open sim");
-      t.setDaemon(true);
-      t.start();
+          java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(f.toString()), null);
+        } catch (Throwable x) { /* nothing to copy into */ }
+        say("STAR-CCM+'s Load dialog could not be shown (" + reason(t) + "). Use File > Load: the path is copied, paste it there", red);
+      }
     }
 
     void openFolder() {
@@ -2138,7 +2497,7 @@ public class SimKit extends StarMacro {
       List<Item> sel = selected();
       if (sel.isEmpty()) return;
       try {
-        if (hideBtn.getText().startsWith("Show")) {
+        if (hideBtn.getToolTipText() != null && hideBtn.getToolTipText().startsWith("Show")) {
           List<String> done = new ArrayList<>();
           for (Item it : sel) {
             if (it.isCase() || caseHidden(it.caseId)) setHidden(dir, it.caseId, null, false);
@@ -2205,7 +2564,8 @@ public class SimKit extends StarMacro {
       openSim.setEnabled(row >= 0 && !opening);
       javax.swing.JMenuItem open = new javax.swing.JMenuItem("Open case folder");
       open.addActionListener(a -> openFolder());
-      javax.swing.JMenuItem hide = new javax.swing.JMenuItem(hideBtn.getText());
+      javax.swing.JMenuItem hide = new javax.swing.JMenuItem(hideBtn.getToolTipText() != null
+          && hideBtn.getToolTipText().startsWith("Show") ? "Show again" : "Hide...");
       hide.addActionListener(a -> hideOrShow());
       open.setEnabled(row >= 0);
       hide.setEnabled(row >= 0);
@@ -2251,6 +2611,7 @@ public class SimKit extends StarMacro {
     java.awt.Color rowBg(int row, boolean sel) {
       if (sel) return selBg;
       Item it = view.get(row);
+      if (row == hoverRow) return hoverBg;
       if (it.isCase()) return caseBg;
       int k = 0;
       for (int i = row - 1; i >= 0 && !view.get(i).isCase(); i--) k++;
@@ -2271,6 +2632,11 @@ public class SimKit extends StarMacro {
           + (more > 0 ? "&nbsp;&nbsp;<font color='#8A94A0'>+" + more + (more == 1 ? " line" : " lines") + "</font>" : "") + "</html>";
     }
 
+    /** Case rows a little taller than versions: more air between cases. */
+    void rowHeights() {
+      for (int i = 0; i < view.size(); i++) table.setRowHeight(i, view.get(i).isCase() ? 32 : 26);
+    }
+
     final class Cells extends javax.swing.table.DefaultTableCellRenderer {
       private static final long serialVersionUID = 1L;
       @Override
@@ -2282,7 +2648,8 @@ public class SimKit extends StarMacro {
         setIcon(null);
         setToolTipText(null);
         setHorizontalAlignment(LEFT);
-        setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 6));
+        setBorder(it.isCase() && row > 0 ? BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
+            new java.awt.Color(0xE3, 0xE6, 0xEA)), BorderFactory.createEmptyBorder(0, 6, 0, 6)) : BorderFactory.createEmptyBorder(0, 6, 0, 6));
         Font f = t.getFont();
         String s = v == null ? "" : String.valueOf(v);
         if (it.isCase()) {
@@ -4672,7 +5039,7 @@ public class SimKit extends StarMacro {
       String h = Html.esc(s);
       h = h.replaceAll("\\*\\*(\\S(?:.*?\\S)?)\\*\\*", "<b>$1</b>");
       h = h.replaceAll("__(\\S(?:.*?\\S)?)__", "<u>$1</u>");
-      h = h.replaceAll("(?<![*\\w])\\*(\\S(?:.*?\\S)?)\\*(?![*\\w])", "<i>$1</i>");
+      h = h.replaceAll("(?<![*\\w])\\*([^*\\s](?:.*?[^*\\s])?)\\*(?![*\\w])", "<i>$1</i>");
       Matcher m = COLOR.matcher(h);
       StringBuffer sb = new StringBuffer();
       while (m.find()) m.appendReplacement(sb, Matcher.quoteReplacement("<font color='" + COLORS.get(m.group(1)) + "'>" + m.group(2) + "</font>"));
@@ -4735,7 +5102,7 @@ public class SimKit extends StarMacro {
         Matcher b = BULLET.matcher(l);
         String t = b.matches() ? "• " + b.group(1) : l.trim();
         parts.add(COLOR.matcher(t.replaceAll("\\*\\*(\\S(?:.*?\\S)?)\\*\\*", "$1").replaceAll("__(\\S(?:.*?\\S)?)__", "$1")
-            .replaceAll("(?<![*\\w])\\*(\\S(?:.*?\\S)?)\\*(?![*\\w])", "$1")).replaceAll("$2"));
+            .replaceAll("(?<![*\\w])\\*([^*\\s](?:.*?[^*\\s])?)\\*(?![*\\w])", "$1")).replaceAll("$2"));
       }
       return String.join(" / ", parts);
     }

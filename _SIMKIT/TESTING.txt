@@ -132,10 +132,10 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       shows the first line + "+n lines" (point at it: the whole comment). Close and reopen the tracker: the lines are
       kept; case_identity.txt holds comment_vNN=ml:...\n...; Case report shows it formatted. A case description:
       select the case row, click the box: same; case_list.csv follows.
-      Open in STAR-CCM+...: select another version, click the button (or double-click its ID): STAR-CCM+'s own Load
-      Simulation dialog appears with that file filled in. Choose parallel, 4 processes (and Power Session if your
+      Open in STAR-CCM+...: select another version, click the blue button (or Enter, or double-click its ID): STAR-CCM+'s
+      own Load Simulation dialog appears with that file filled in. Choose parallel, 4 processes (and Power Session if your
       licence has it), OK: the file opens in a new simulation tab with those options. Next time the dialog shows
-      the same choices. Again on the same row: "already open". On a case row: its latest version. Status list:
+      the same choices. Again on the same row: its tab comes to the front (note whether it really does). On a case row: its latest version. Status list:
       no "reported" any more (an older "reported" version still shows its label).
       Pin: click the pale star of a case: it turns amber and the case moves to the top; close and reopen the
       tracker: still on top; a colleague's tracker is unchanged; click again: unpinned. Open results folder: the
@@ -325,4 +325,16 @@ C. RESULTS SO FAR
   Tracker formatting: __underline__ (U, Ctrl+U) and text colour [red]text[/] (A button: red, orange, green, blue,
   purple, grey; only these names, so [m/s] stays as typed); the formatting bar is always shown (Done only while
   writing). Offline test (FmtShot) passed; STAR regression SKT42 (Load dialog found) all 0.
+  Tracker rework (trials marked in the window): details on the right of the table or below (Details on the right,
+  remembered); details header = 2-line headline, blue Open in STAR-CCM+... and flat icons (results, case folder,
+  copy, hide / show), status labels to click; comment box formatted while typing (JTextPane, marks in grey; Format
+  while typing, remembered) or the earlier view-then-edit box; compact flat formatting bar with groups and Template
+  (Goal / Changes / Result / Next); flatter table (no grid lines, row under the mouse highlighted, case rows taller
+  with a line above); keys Enter open, F2 write, Space pin, Left / Right fold, Ctrl+F filter, Esc clears it.
+  Open fixed: the first version loaded with new Simulation(path), which starts a server but makes no tab, and the
+  second Open then said "already open". Now: open with its tab (SimulationProcessObject) -> setActive(true), its
+  tab to the front; loaded without a tab -> that copy is closed, then STAR-CCM+'s Load dialog; otherwise the Load
+  dialog; no direct load in the window any more. Offline tests (UiShot both modes, earlier harnesses in the other
+  mode) passed. Bold was also read as italic (italic pattern matched inside **): fixed in the box, the view and
+  the one-line text.
   Not yet run: section B (GUI: Save new version, Compare, Case tracker, Calculators copy), release 2402, Linux.
