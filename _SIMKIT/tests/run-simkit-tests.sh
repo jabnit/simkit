@@ -3,7 +3,7 @@
 # SimKit - automated batch validation on a licensed STAR-CCM+ installation, LINUX (RHEL 7 / RHEL 9).
 # Same steps and same PASTE_THIS.txt as tests/Run-SimKitTests.ps1 (Windows 10/11):
 #   00 version | 01 build test sim (tests/BuildSimKitTestSim.java) | 02 SimKitCalc self-check |
-#   04 record | 05 export | 06 default (record + export) | optional 07 short solver run.
+#   07 reports, mesh, scenes, mesh study | 08 buttons | optional 09 short solver run | 10-11 runs, tracker.
 # Needs only bash >= 4.2, GNU coreutils/grep/sed/awk, tar (all standard on RHEL 7 and 9).
 #
 # Usage:
@@ -114,29 +114,33 @@ if [ -z "$SIM" ]; then
   log "test sim      : built $SIM ($(du -h "$SIM" | cut -f1))"
 fi
 
-CASE_ID="ISO-001"
-CASE="$TEST_ROOT/cases/$CASE_ID"
-for d in sim results/csv results/img record; do mkdir -p "$CASE/$d"; done
-CASE_SIM="$CASE/sim/${CASE_ID}_v01.sim"
+# the test project: cases/SIMKIT_TEST/simkit_project.txt, run R001_base/R001_base.sim + run.txt
+CASE="$TEST_ROOT/cases/SIMKIT_TEST"
+RUN_DIR="$CASE/R001_base"
+mkdir -p "$RUN_DIR"
+CASE_SIM="$RUN_DIR/R001_base.sim"
 cp "$SIM" "$CASE_SIM" || die "cannot copy the sim"
-cat > "$CASE/sim/case_identity.txt" <<EOF
-case_id=$CASE_ID
+NOW=$(date '+%Y-%m-%d %H:%M:%S')
+cat > "$CASE/simkit_project.txt" <<EOF
+project=SIMKIT_TEST
 description=SimKit batch validation ($STAMP)
-configuration=CF cold flow
-parent_case=
-parent_file=
-created=$(date '+%Y-%m-%d %H:%M:%S')
+created=$NOW
 created_by=${USER:-unknown}
-latest_file=${CASE_ID}_v01.sim
-latest_note=
-last_saved=
 EOF
-log "test case     : $CASE_SIM"
+cat > "$RUN_DIR/run.txt" <<EOF
+run=R001
+name=base
+comment=
+based_on=
+created=$NOW
+created_by=${USER:-unknown}
+file=R001_base/R001_base.sim
+EOF
+log "test run      : $CASE_SIM"
 
 # ------------------------------------------------------------------ 2-13. batch runs
 declare -A RCS
 invoke_star 02_SimKitCalc_selfcheck "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/lib/generic/SimKitCalc.java" "$CASE_SIM"; RCS[calc]=$RC
-invoke_star 04_SimKit_record record ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[record]=$RC
 invoke_star 07a_SimKit_reports reports ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[reports]=$RC
 invoke_star 07b_SimKit_reports_again reports ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[reports2]=$RC
 invoke_star 07c_SimKit_meshparams meshparams ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshpar]=$RC
@@ -185,9 +189,9 @@ done < <(star_settings)
 rm -rf "$BK"
 log "    user STAR-CCM+ settings restored (${#SAVED[@]} file(s))"
 if [ "$RUN_SOLVER" -eq 1 ]; then
-  invoke_star 09_SimKit_run_record_export "" ${COMMON[@]+"${COMMON[@]}"} -batch "run,$KIT/SimKit.java" -batch-report "$CASE_SIM"; RCS[run]=$RC
+  invoke_star 09_SimKit_run "" ${COMMON[@]+"${COMMON[@]}"} -batch "run,$KIT/SimKit.java" -batch-report "$CASE_SIM"; RCS[run]=$RC
 fi
-invoke_star 10b_SimKit_newversion newversion ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[newver]=$RC
+invoke_star 10b_SimKit_saverun saverun ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[saverun]=$RC
 invoke_star 11_SimKit_tracker tracker ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[tracker]=$RC
 invoke_star 11b_SimKit_opensim opensim ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[opensim]=$RC
 invoke_star 11c_SimKit_study studytest ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[study]=$RC
@@ -225,17 +229,6 @@ PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a
   echo "----- files produced in the test case -----"
   (cd "$CASE" && find . -type f ! -name '*.sim' ! -name '*.sim~' -printf '%P  %s B\n' | sort)
   echo
-  for pat in 'setup_*.csv'; do
-    f=$(ls -t "$CASE"/record/$pat 2>/dev/null | head -n 1)
-    if [ -n "$f" ]; then
-      echo "----- $(basename "$f") (first 60 lines; n/a rows first) -----"
-      na=$(grep 'n/a' "$f" | head -n 30)
-      nna=$(printf '%s' "$na" | grep -c .)
-      [ -n "$na" ] && echo "$na"
-      head -n $((60 - nna)) "$f"
-      echo
-    fi
-  done
   echo "===== END ====="
 } > "$RAW" 2>&1
 

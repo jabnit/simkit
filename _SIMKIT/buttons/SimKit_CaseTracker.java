@@ -1,4 +1,4 @@
-// SimKit: Case tracker (every version of every case: configuration, results, status, comments)
+// SimKit: Tracker (every run of the project: status, comments, based on, family tree)
 //
 // SimKit 0.3 toolbar button. Play it from the buttons/ folder of the SimKit root on the team share (do not copy
 // it elsewhere): it finds the root from its own location (STAR-CCM+ resolvePath("..")) and plays SimKit.java

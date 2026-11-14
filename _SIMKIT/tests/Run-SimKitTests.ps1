@@ -5,11 +5,10 @@
 .DESCRIPTION
   Runs, without any GUI interaction, every check of TESTING.txt that works in batch:
     0. environment and STAR-CCM+ version
-    1. test share set-up (copy of _SIMKIT + a ready-made test case ISO-001 built from your sim)
+    1. test share set-up (copy of _SIMKIT + a project SIMKIT_TEST whose run R001_base is your sim)
     2. SimKitCalc.java in batch  -> compiles the calculator macro and prints its self-check
     3. (Check removed)
-    4. SimKit.java  record       -> set-up record + case card
-    7. (optional, -RunSolver)    -> starccm+ -batch run,SimKit.java : short solver run + record + export
+    7. (optional, -RunSolver)    -> starccm+ -batch run,SimKit.java : short solver run
   Then it writes  <TestRoot>\results\PASTE_THIS.txt  (paste it into the chat) and a zip with all logs/outputs.
   The interactive tools (case initialisation dialogs, renaming previews, parameter-sync preview, calculator
   window) still need the GUI: use -Interactive at the end, or section C of TESTING.txt.
@@ -139,19 +138,18 @@ if (-not $Sim) {
   }
   Log ("test sim      : built {0} ({1:N1} MB)" -f $Sim, ((Get-Item $Sim).Length / 1MB))
 }
-$caseId = "ISO-001"
-$case = Join-Path $TestRoot "cases\$caseId"
-foreach ($d in "sim", "results\csv", "results\img", "record") {
-  New-Item -ItemType Directory -Force -Path (Join-Path $case $d) | Out-Null
-}
-$caseSim = Join-Path $case "sim\${caseId}_v01.sim"
+# the test project: cases\SIMKIT_TEST\simkit_project.txt, run R001_base\R001_base.sim + run.txt
+$case = Join-Path $TestRoot "cases\SIMKIT_TEST"
+$runDir = Join-Path $case "R001_base"
+New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+$caseSim = Join-Path $runDir "R001_base.sim"
 Copy-Item -Path $Sim -Destination $caseSim -Force
-@(
-  "case_id=$caseId", "description=SimKit batch validation ($stamp)", "configuration=CF cold flow", "parent_case=", "parent_file=",
-  "created=$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))", "created_by=$env:USERNAME",
-  "latest_file=${caseId}_v01.sim", "latest_note=", "last_saved="
-) | Set-Content -Path (Join-Path $case "sim\case_identity.txt") -Encoding ASCII
-Log "test case     : $caseSim"
+$now = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+@("project=SIMKIT_TEST", "description=SimKit batch validation ($stamp)", "created=$now", "created_by=$env:USERNAME") |
+  Set-Content -Path (Join-Path $case "simkit_project.txt") -Encoding ASCII
+@("run=R001", "name=base", "comment=", "based_on=", "created=$now", "created_by=$env:USERNAME", "file=R001_base/R001_base.sim") |
+  Set-Content -Path (Join-Path $runDir "run.txt") -Encoding ASCII
+Log "test run      : $caseSim"
 
 $kit = Join-Path $TestRoot "_SIMKIT"
 $q = { param($s) "`"$s`"" }
@@ -159,7 +157,6 @@ $q = { param($s) "`"$s`"" }
 # ------------------------------------------------------------------ 2-5. batch runs
 $rc = @{}
 $rc["calc"]     = Invoke-Star "02_SimKitCalc_selfcheck" ($common + @("-batch", (& $q (Join-Path $kit "lib\generic\SimKitCalc.java")), (& $q $caseSim))) ""
-$rc["record"]   = Invoke-Star "04_SimKit_record"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "record"
 $rc["reports"]  = Invoke-Star "07a_SimKit_reports"      ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "reports"
 $rc["reports2"] = Invoke-Star "07b_SimKit_reports_again" ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "reports"
 $rc["meshpar"]  = Invoke-Star "07c_SimKit_meshparams"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "meshparams"
@@ -211,9 +208,9 @@ try {
   Log ("    user STAR-CCM+ settings restored ({0} file(s))" -f $saved.Count)
 }
 if ($RunSolver) {
-  $rc["run"]    = Invoke-Star "09_SimKit_run_record_export" ($common + @("-batch", ("run," + (Join-Path $kit "SimKit.java")), "-batch-report", (& $q $caseSim))) ""
+  $rc["run"]    = Invoke-Star "09_SimKit_run" ($common + @("-batch", ("run," + (Join-Path $kit "SimKit.java")), "-batch-report", (& $q $caseSim))) ""
 }
-$rc["newver"]   = Invoke-Star "10b_SimKit_newversion"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "newversion"
+$rc["saverun"]  = Invoke-Star "10b_SimKit_saverun"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "saverun"
 $rc["tracker"]  = Invoke-Star "11_SimKit_tracker"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "tracker"
 $rc["opensim"]  = Invoke-Star "11b_SimKit_opensim"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "opensim"
 $rc["study"]    = Invoke-Star "11c_SimKit_study"         ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "studytest"
@@ -263,18 +260,6 @@ Get-ChildItem $case -Recurse -File | Where-Object { $_.Extension -ne ".sim" } |
   ForEach-Object { $out.Add(("{0}  {1:N0} B" -f $_.FullName.Substring($case.Length + 1), $_.Length)) }
 $out.Add("")
 
-# heads of the key audit outputs
-foreach ($pat in "setup_*.csv") {
-  $f = Get-ChildItem (Join-Path $case "record") -Filter $pat -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
-  if ($f) {
-    $out.Add("----- $($f.Name) (first 60 lines; n/a rows first) -----")
-    $c = Get-Content $f.FullName
-    $na = $c | Where-Object { $_ -match "n/a" } | Select-Object -First 30
-    foreach ($l in $na) { $out.Add($l) }
-    foreach ($l in ($c | Select-Object -First (60 - [Math]::Min(30, @($na).Count)))) { $out.Add($l) }
-    $out.Add("")
-  }
-}
 $out.Add("===== END =====")
 
 # ------------------------------------------------------------------ privacy: never expose the licence

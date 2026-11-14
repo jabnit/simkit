@@ -1,65 +1,66 @@
-SimKit 0.3 (2026-11-11) -- TESTING (toolkit owner only; users never need this file)
+SimKit 0.3 (2026-11-14) -- TESTING (toolkit owner only; users never need this file)
 =====================================================================================
 
 What is in the kit
-  SimKit.java                 the macro users play (Save as new, Check, Export results + small tools)
+  SimKit.java                 the macro users play: Save as new run, Run on cluster, Tracker, Standard reports,
+                              Standard scenes, Mesh study, Calculators
   lib/generic/SimKitCalc.java calculators (opened by the Calculators button); data in lib/generic/data/*.csv
-  config/projects.csv         projects and their configuration codes (offered when a case is created)
-  config/naming_rules.csv     the two checked name patterns (parts, part surfaces)
-  config/links.csv            what the Guideline button opens (paste the Google Doc / Sheet links)
-  config/material_folders.csv team folders of MatML material files (*.xml) for Calculators > Material properties
-  buttons/                    one macro per toolbar button (Menu, SaveNewVersion, Check, ExportResults,
-                              Calculators); see buttons/README.txt
-  templates/ISO/tools/        template-owner macros for the ISO template (not part of the user workflow)
+  config/cluster.csv          bsub command and options for Run on cluster
+  config/standard_reports.csv the reports, monitors and plots of Standard reports
+  config/material_folders.csv team folders of MatML material files (*.xml) for Calculators > Materials
+  config/comment_template.txt optional: the comment template of the tracker (absent = built-in)
+  buttons/                    one macro per toolbar button; see buttons/README.txt
+  templates/ISO/tools/        template-owner macros for the ISO template (written for SimKit 0.2 case folders; not
+                              part of the user workflow)
   tests/                      validation runners (this file)
-The kit lives in ONE shared folder (Windows and Linux mounts of the same share). Cases do not: the first Save as new asks
-the user for the folder that will hold the case folder (any local or network folder).
-The full 0.2.1 kit (tags, groups, parameter sync, register script, batch-script writer) is kept outside the kit
-in SimKit_deliverables/_archive/SimKit_0.2.1_full for a later update.
+The kit lives in ONE shared folder (Windows and Linux mounts of the same share). Projects do not: the first Save as
+new run asks for the project folder (any local or network folder).
 
 Path map
   SimKit root = the folder that holds SimKit.java. Each macro finds it from its OWN location with the STAR-CCM+
   call resolvePath (no environment variable, no path written anywhere):
     SimKit.java "."   buttons/*.java ".."   lib/generic/SimKitCalc.java "../.."   templates/ISO/tools/*.java "../../.."
   So the kit works wherever the folder is copied (any drive letter or mount point, Windows or Linux), as long as
-  its inner layout is kept. Every kit file is reached from the root with a relative path written with '/', in one
-  place per macro:
-    SimKit.java        config/projects.csv, config/naming_rules.csv, config/links.csv, VERSION.txt,
-                       lib/generic/SimKitCalc.java
-    SimKitCalc.java    lib/generic/data/ (fluids.csv, materials.csv, emissivity.csv)
-    buttons/*.java     SimKit.java, lib/generic/SimKitCalc.java
-    ISO tools          templates/ISO/tools/parameters_ISO.csv, templates/ISO/tools/template_objects_ISO.csv
-  Nothing of the kit is addressed in any other way, and nothing is ever written inside the root.
-  User side (never under the root): the sim file the user opened, and for a SimKit case
-    <folder chosen at the first Save as new>/case_list.csv
-    <folder chosen at the first Save as new>/<CASEID>/sim/<CASEID>[_label]_v<nn>.sim, case_identity.txt
-    <folder chosen at the first Save as new>/<CASEID>/record/  results/csv/  results/img/
-  case_identity.txt keeps the full path of the parent case's sim.
+  its inner layout is kept. Every kit file is reached from the root with a relative path written with '/'.
+  Nothing is ever written inside the root.
+  User side (never under the root), one project:
+    <project>/simkit_project.txt                     project, description, created, created_by
+    <project>/[group/]R<nnn>_<name>/R<nnn>_<name>.sim the run file (a run may sit in a group folder)
+    <project>/[group/]R<nnn>_<name>/run.txt          name, based on, comment, status, hidden, mesh_* (key=value)
+    <project>/[group/]R<nnn>_<name>/submit/          scripts and logs of Run on cluster
+    <project>/[group/]R<nnn>_<name>/<any>/R<nnn>_<name>_iter_<n>.sim   copies returned by the cluster
+    <project>/.simkit/run_numbers/R<nnn>.txt         run numbers taken (who, when); never removed
+  SimKit looks 6 folder levels below the project for run.txt and .sim files, and 6 levels above a file for the
+  project. Projects of SimKit 0.3 before 2026-11-14 (sims/ and record/R<nnn>.txt) are still read.
 
 Site set-up (once)
   1. Copy the _SIMKIT folder anywhere on the share (e.g. S:\CFD\_SIMKIT on Windows = /mnt/cfd/_SIMKIT on Linux).
      Nothing else to configure: no environment variable, no path in the macros.
-  2. Edit config/projects.csv (projects, configuration codes) and config/links.csv (Google Doc / Sheet links).
+  2. Edit config/cluster.csv (bsub command, queue, cores) and config/material_folders.csv.
   3. Each user plays buttons/SimKit_InstallButtons.java once (File > Macro > Play Macro, from the share): the SimKit
      buttons go to a SimKit toolbar (STAR-CCM+ favourite macros), pointing at the files on the share (do not
      copy them: each button finds the root from its own location and always runs the current kit).
-  4. Import Google/SimKit_Case_List_ISO.xlsx into Google Sheets and put the guideline docx in Google Docs.
+  4. Put the guideline docx in Google Docs.
 
-A. BATCH VALIDATION (no GUI; about 10 min)
+A. BATCH VALIDATION (no GUI; about 15 min)
   Windows 10/11:
     powershell -ExecutionPolicy Bypass -File <SimKit root>\tests\Run-SimKitTests.ps1 -Star "<STAR install>" ^
         -LicenseFile "<licence file or port@server>" -TestRoot C:\SimKitTest
   Linux RHEL 7/9:
     bash <SimKit root>/tests/run-simkit-tests.sh --star /opt/Siemens/<release> --license <port@server> \
         --test-root ~/SimKitTest
-  Both copy the kit to <TestRoot>/_SIMKIT (with SIMKIT_HOME cleared: the kit finds itself), build a small test sim (tests/BuildSimKitTestSim.java),
-  make it the case <TestRoot>/cases/ISO-001/sim/ISO-001_v01.sim and run:
-    02 calculator self-check | 03 Check | 04 set-up record | 05 Export results | 06 default batch (record + export)
-    07a standard reports (batch action 'reports', saves the sim) | 07b the same again (must add nothing)
-    08 toolbar button buttons/SimKit_Check.java (plays SimKit.java from the kit and runs Check directly)
+  Both copy the kit to <TestRoot>/_SIMKIT, build a small test sim (tests/BuildSimKitTestSim.java), make it run R001
+  of the project <TestRoot>/cases/SIMKIT_TEST (R001_base/R001_base.sim + run.txt) and run:
+    02 calculator self-check
+    07a standard reports (saves the sim) | 07b the same again (must add nothing) | 07c parametrize mesh
+    07d standard scenes | 07e mesh study (coarse and medium levels, meshed, saved as runs)
+    08 tracker button | 08b/08c toolbar buttons install / remove (the user's settings.props is restored)
+    09 optional short solver run (-RunSolver)
+    10b save as new run (batch: next run, same name) | 11 tracker (writes case_tracker.csv)
+    11b open sim (the tracker's Open in STAR-CCM+) | 11c project test (new project, runs, returned copy, submit
+        script without bsub, new project from a run)
   Then paste <TestRoot>/results/PASTE_THIS.txt (the licence location is masked) to whoever maintains SimKit.
-  Expected: every exit code 0; record/setup_ISO-CF-001_v01.csv and case_card_*.html written;
-  plots/scenes/report values exported.
+  Expected: every exit code 0 and no "Exception" in results/*.log.
 
 B. GUI TEST (on the release and OS the team uses; about 15 min)
   Open a COPY of a real sim (or <TestRoot>/scratch/SimKit_testcase.sim) and play SimKit.java.
@@ -457,4 +458,20 @@ C. RESULTS SO FAR
   is linked to the nearest shown run (dashed); right-click menu in the tree. Offline HideTest: 9 checks ok.
   Standard reports fix: a tick in the right pane no longer clears the selected report (row updated only);
   offline ReportsTickTest ok. STAR regression SKT72: all 15 exit codes 0, no exception.
+  Case model removed and file safety on the share (2026-11-14, from the independent review, items R1 and R4).
+  R1: the SimKit 0.2 case model is gone from SimKit.java (about 900 lines): <CASEID>/sim/<CASEID>_vNN.sim files,
+  case_identity.txt, case_list.csv, New case / New version, the old Save window, the set-up record and case card
+  (batch action record), the case-folder branches of the tracker and of Mesh study, config/projects.csv. The tracker
+  opens projects only (a folder that is not a project: message, nothing shown). Batch action newversion replaced by
+  saverun (Save as new run in batch). Test runners: the test sim is R001 of a project; steps 04 (record) and the
+  set-up record listing removed. R4: (1) run.txt and simkit_project.txt are written to a temporary file and renamed
+  over the old one (a reader never sees half a file; on Windows the rename is retried for 2 s while another user
+  reads the file, then written directly); (2) a run number is taken with an exclusive create of
+  .simkit/run_numbers/R<nnn>.txt, and the run folder is created new (an existing folder is not reused): two users
+  saving at the same moment get two numbers; (3) one scan depth (6) for run.txt, .sim and the project above a file;
+  (4) one walk of the project per 10 s (run.txt and .sim together), cleared by every SimKit write, instead of 2 + 1
+  per run on every tracker focus. Offline: R4Test (16 threads take 16 different numbers; a reader during 40
+  rewrites never sees a partial file; no temporary file left; cache and depth) ALL OK; HideTest 9/9 ok;
+  ReportsTickTest ok. STAR regression SKT73: all 14 exit codes 0, no exception (saverun: R004; mesh study:
+  R002, R003; tracker 4 runs; open sim loads R002 and closes it).
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.
