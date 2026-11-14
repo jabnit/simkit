@@ -8,7 +8,6 @@ pattern,,r_{q}_{s}_{o}
 quantity,Temperature,T
 quantity,Pressure,p
 quantity,Velocity:magnitude,U
-quantity,WallYplus,yplus
 statistic,maximum,max
 statistic,minimum,min
 statistic,area average,aavg
