@@ -557,3 +557,13 @@ C. RESULTS SO FAR
   groups; result list). One blue button acting on the open tab; the window stays open. Batch path of Standard
   reports unchanged (stdPlan + stdApply). SKT86: exit codes 0 (08b/08c skipped: STAR-CCM+ window open); 07j: window
   data read (40 reports, Standard 15 present, 40 rows). Offline: the three tabs rendered (RepShot). Not run: GUI.
+
+  Reports window after a UI review (2026-11-14). Tabs Standard / Per object / In this simulation (opens on Standard);
+  flat tables (left header, row lines, pale blue selection, rows sized from the font, empty-state text); status pills
+  Present / Create / Update / New; "No surfaces selected" turns a report off (back on when a surface is selected);
+  right pane: formula text, or the surfaces; Per object: one report per object / for all selected objects as radio
+  buttons under the objects, step 4 "Reports to create" with Status and Plot columns; In this simulation: real
+  checkboxes, "Can be renamed (n)" filter, Select all / Clear; outcome next to the buttons, cleared on change; tabs
+  and button off while working; Space toggles; Esc clears a search field, else closes; Close drawn flat (all SimKit
+  windows). SKT87: exit codes 0 (08b/08c skipped: STAR-CCM+ window open). Offline: three tabs rendered (RepShot).
+  Not run: the window in the STAR-CCM+ GUI.

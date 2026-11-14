@@ -4879,6 +4879,7 @@ public class SimKit extends StarMacro {
     String why;
     boolean on;
     boolean present;      // already in the simulation (nothing to do)
+    boolean putBack;      // turned off because its surface list was emptied: on again when a surface is selected
     Object existing;      // the report already in the simulation: on Create, the new surfaces are added to it
     int added;            // surfaces it does not have yet
   }
@@ -5018,8 +5019,11 @@ public class SimKit extends StarMacro {
       if (mp[1] != null) plots.add(mp[1]);
     }
     if (!plots.isEmpty()) toFolder(sim.getPlotManager(), "Standard reports", plots);
-    return n + " report(s) with monitors and " + groups.size() + " plot(s) created" + (upd > 0 ? ", " + upd + " updated" : "")
-        + (crit > 0 ? ", " + crit + " stopping criterion(a)" : "") + (means > 0 ? ", " + means + " mean report(s)" : "") + ".";
+    String out = n > 0 ? plural(n, "report", "reports") + " with monitors and " + plural(plots.size(), "plot", "plots") + " created" : "";
+    if (upd > 0) out += (out.isEmpty() ? "" : ", ") + plural(upd, "report", "reports") + " updated";
+    if (crit > 0) out += ", " + plural(crit, "stopping criterion", "stopping criteria");
+    if (means > 0) out += ", " + plural(means, "mean report", "mean reports");
+    return (out.isEmpty() ? "Nothing created" : Ui.cap(out)) + ".";
   }
 
   /** Standard reports. In the STAR-CCM+ window: the Reports window. In batch: creates the standard reports that can be
@@ -5109,9 +5113,9 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** The Standard page of the Reports window (Swing thread): the reports grouped by purpose on the left with their
-   *  status (present, add, update, or why not); the surfaces of the selected report on the right (defaults ticked from
-   *  the surface names; change them freely). 'changed' runs when a tick changes. */
+  /** The Standard page of the Reports window (Swing thread): the reports by group on the left with their status
+   *  (Present, Create, Update, or why not); on the right the surfaces of the selected report (defaults selected from
+   *  the surface names; change them freely), or a short text. 'changed' runs when a selection changes. */
   JPanel stdPage(final List<StdReport> all, final List<Object> every, final Runnable changed) {
     final List<Object> rows = new ArrayList<>();   // a String = a group title, else a StdReport
     String last = null;
@@ -5121,125 +5125,148 @@ public class SimKit extends StarMacro {
       rows.add(x);
     }
     final java.util.function.Function<StdReport, Boolean> surf = x -> x.why == null && !x.def[2].equalsIgnoreCase("expression") && !x.def[4].equals("REGIONS");
+    final java.util.function.Function<StdReport, Boolean> noSurf = x -> surf.apply(x) && x.target.isEmpty();
     final java.util.function.Function<StdReport, Boolean> edited = x -> !new HashSet<>(x.target).equals(new HashSet<>(x.deflt));
+    final java.util.function.Function<StdReport, Boolean> editable = x -> x.why == null && !noSurf.apply(x);
+    final java.util.function.Function<StdReport, String> detail = x -> {
+      if (x.def[2].equalsIgnoreCase("expression")) return "Formula";
+      if (x.def[4].equals("REGIONS")) return "All regions";
+      if (x.existing != null) return "+" + x.added + (x.added == 1 ? " surface" : " surfaces");
+      int n = x.target.size();
+      return n + (n == 1 ? " surface" : " surfaces") + (edited.apply(x) ? ", edited" : "");
+    };
     final javax.swing.table.AbstractTableModel model = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
       @Override public int getRowCount() { return rows.size(); }
       @Override public int getColumnCount() { return 4; }
-      @Override public String getColumnName(int c) { return new String[] {"", "Report", "Gives", "Status"}[c]; }
+      @Override public String getColumnName(int c) { return new String[] {"", "Report", "Description", "Status"}[c]; }
       @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
-      @Override public boolean isCellEditable(int r, int c) { return c == 0 && rows.get(r) instanceof StdReport && ((StdReport) rows.get(r)).why == null; }
+      @Override public boolean isCellEditable(int r, int c) { return c == 0 && rows.get(r) instanceof StdReport && editable.apply((StdReport) rows.get(r)); }
       @Override public Object getValueAt(int r, int c) {
         Object o = rows.get(r);
         if (o instanceof String) return c == 1 ? o : c == 0 ? null : "";
         StdReport x = (StdReport) o;
-        switch (c) {
-          case 0: return x.why == null && x.on;
-          case 1: return x.def[0];
-          case 2: return x.existing != null ? "update: " + x.def[6] : x.def[6];
-          default:
-            if (x.present) return "present";
-            if (x.why != null) return x.why;
-            if (x.existing != null) return "+" + x.added + (x.added == 1 ? " new surface" : " new surfaces");
-            if (x.def[2].equalsIgnoreCase("expression")) return "formula";
-            if (x.def[4].equals("REGIONS")) return "all regions";
-            int n = x.target.size();
-            return (edited.apply(x) ? "● " : "") + n + (n == 1 ? " surface" : " surfaces");
-        }
+        return c == 0 ? (Object) (x.why == null && x.on) : c == 1 ? x.def[0] : c == 2 ? Ui.cap(x.def[6]) : "";
       }
       @Override public void setValueAt(Object v, int r, int c) {
-        ((StdReport) rows.get(r)).on = Boolean.TRUE.equals(v);
+        StdReport x = (StdReport) rows.get(r);
+        x.on = Boolean.TRUE.equals(v);
+        x.putBack = false;
+        fireTableRowsUpdated(r, r);
         changed.run();
       }
     };
-    final JTable table = new JTable(model) {
+    final JTable table = plainTable(model);
+    final javax.swing.table.DefaultTableCellRenderer text = new javax.swing.table.DefaultTableCellRenderer() {
       private static final long serialVersionUID = 1L;
-      @Override public java.awt.Component prepareRenderer(javax.swing.table.TableCellRenderer rr, int r, int c) {
-        java.awt.Component k = super.prepareRenderer(rr, r, c);
+      @Override public java.awt.Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean f, int r, int c) {
+        super.getTableCellRendererComponent(t, v, false, false, r, c);
         Object o = rows.get(r);
-        boolean head = o instanceof String, off = !head && ((StdReport) o).why != null && !((StdReport) o).present;
-        boolean ed = !head && !off && edited.apply((StdReport) o);
-        k.setBackground(head ? new java.awt.Color(0xF2, 0xF4, 0xF7) : isRowSelected(r) && !off ? Ui.PALE : java.awt.Color.WHITE);
-        boolean pres = !head && ((StdReport) o).present;
-        k.setForeground(off ? new java.awt.Color(0xA8, 0xB0, 0xBA) : head ? Ui.MUTED : c == 3 && ed ? Ui.BLUE : c >= 2 || pres ? Ui.MUTED : java.awt.Color.BLACK);
-        k.setFont(k.getFont().deriveFont(head ? Font.BOLD : Font.PLAIN));
-        if (k instanceof javax.swing.JCheckBox) k.setEnabled(!off && !head);
-        return k;
+        boolean head = o instanceof String;
+        StdReport x = head ? null : (StdReport) o;
+        boolean off = !head && x.why != null && !x.present;
+        setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+        setBackground(head ? Ui.BAND : t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+        setForeground(head ? Ui.MUTED : off ? Ui.FAINT : c == 1 && !x.present ? java.awt.Color.BLACK : Ui.MUTED);
+        setFont(t.getFont().deriveFont(head ? Font.BOLD : Font.PLAIN));
+        setToolTipText(c == 2 && !head ? Ui.cap(x.def[6]) : null);
+        return this;
       }
     };
-    javax.swing.table.TableCellRenderer boxes = table.getDefaultRenderer(Boolean.class);
+    table.setDefaultRenderer(String.class, text);
     final Ui.PillCell pill = new Ui.PillCell();
+    pill.setFont(table.getFont());
     table.getColumnModel().getColumn(3).setCellRenderer((t, v, sel, foc, r, c) -> {
       Object o = rows.get(r);
-      if (o instanceof String) return pill.set("", null, Ui.MUTED);
+      if (o instanceof String) { pill.setBackground(Ui.BAND); return pill.set(null, null, null, null); }
       StdReport x = (StdReport) o;
-      String s0 = String.valueOf(v);
-      if (x.present) return pill.set("present", new java.awt.Color(0xDD, 0xF2, 0xDF), new java.awt.Color(0x2E, 0x6B, 0x2E));
-      if (x.why != null) return pill.set(s0, null, new java.awt.Color(0xA8, 0xB0, 0xBA));
-      if (!x.on) return pill.set(s0, null, Ui.MUTED);
-      if (x.existing != null) return pill.set("update  " + s0, new java.awt.Color(0xFF, 0xF1, 0xD6), new java.awt.Color(0x8A, 0x5A, 0x00));
-      return pill.set("add  " + s0, new java.awt.Color(0xDC, 0xEB, 0xFF), new java.awt.Color(0x1F, 0x4E, 0x9A));
+      pill.setBackground(t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+      if (x.present) return pill.set("Present", Ui.PILL_GREEN, null, null);
+      if (x.why != null) return pill.set(null, null, Ui.cap(x.why), Ui.MUTED);
+      if (noSurf.apply(x)) return pill.set(null, null, "No surfaces selected", Ui.AMBER);
+      if (!x.on) return pill.set(null, null, detail.apply(x), Ui.MUTED);
+      if (x.existing != null) return pill.set("Update", Ui.PILL_AMBER, detail.apply(x), Ui.MUTED);
+      return pill.set("Create", Ui.PILL_BLUE, detail.apply(x), edited.apply(x) ? Ui.BLUE : Ui.MUTED);
     });
-    final JLabel presentMark = new JLabel("\u2713", javax.swing.SwingConstants.CENTER);
-    presentMark.setOpaque(true);
-    presentMark.setBackground(java.awt.Color.WHITE);
-    presentMark.setForeground(new java.awt.Color(0x2E, 0x6B, 0x2E));
+    final JLabel doneMark = Ui.doneCell(), band = new JLabel();
+    doneMark.setToolTipText("Already in the simulation.");
+    band.setOpaque(true);
+    band.setBackground(Ui.BAND);
+    final javax.swing.table.TableCellRenderer boxes = table.getDefaultRenderer(Boolean.class);
+    final JLabel blank = new JLabel();
+    blank.setOpaque(true);
     table.setDefaultRenderer(Boolean.class, (t, v, sel, foc, r, c) -> {
-      if (rows.get(r) instanceof StdReport && ((StdReport) rows.get(r)).present) return presentMark;
-      if (rows.get(r) instanceof String) {
-        JLabel l = new JLabel();
-        l.setOpaque(true);
-        l.setBackground(new java.awt.Color(0xF2, 0xF4, 0xF7));
-        return l;
-      }
-      return boxes.getTableCellRendererComponent(t, v, sel, foc, r, c);
+      Object o = rows.get(r);
+      if (o instanceof String) return band;
+      StdReport x = (StdReport) o;
+      java.awt.Color bg = t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE;
+      if (x.present) { doneMark.setBackground(bg); return doneMark; }
+      if (!editable.apply(x)) { blank.setBackground(bg); return blank; }
+      java.awt.Component k = boxes.getTableCellRendererComponent(t, v, false, false, r, c);
+      k.setBackground(bg);
+      return k;
     });
-    table.setRowHeight(24);
-    table.setShowVerticalLines(false);
-    table.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
-    table.setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
-    table.getColumnModel().getColumn(0).setMaxWidth(30);
-    table.getColumnModel().getColumn(1).setPreferredWidth(150);
-    table.getColumnModel().getColumn(2).setPreferredWidth(270);
-    table.getColumnModel().getColumn(3).setPreferredWidth(170);
+    table.getColumnModel().getColumn(0).setMaxWidth(28);
+    table.getColumnModel().getColumn(0).setMinWidth(28);
+    table.getColumnModel().getColumn(1).setPreferredWidth(170);
+    table.getColumnModel().getColumn(2).setPreferredWidth(240);
+    table.getColumnModel().getColumn(3).setPreferredWidth(190);
 
-    // ----- the right pane: the surfaces of the selected report -----
-    final JLabel title = new JLabel(" "), meaning = Ui.muted(" "), countLbl = Ui.muted(" ");
-    title.setFont(title.getFont().deriveFont(Font.BOLD, 14f));
+    // ----- the right pane: the surfaces of the selected report, or a short text -----
+    final JLabel title = new JLabel(" "), meaning = Ui.muted(" "), countLbl = Ui.muted(" "), textLbl = Ui.muted(" ");
+    title.setFont(title.getFont().deriveFont(Font.BOLD, title.getFont().getSize2D() + 2f));
     final JTextField search = Ui.hintField("", "Search surfaces", 18);
     final JPanel list = new JPanel();
     list.setLayout(new javax.swing.BoxLayout(list, javax.swing.BoxLayout.Y_AXIS));
     list.setBackground(java.awt.Color.WHITE);
-    final JLabel note = Ui.muted(" ");
     final JButton dflt = Ui.link("Default"), allB = Ui.link("All"), none = Ui.link("None");
+    dflt.setToolTipText("Select the surfaces that match the report's name prefixes.");
+    allB.setToolTipText("Select all surfaces.");
+    none.setToolTipText("Clear all surfaces.");
     final StdReport[] cur = {null};
     final Runnable[] fill = {null};
+    final java.awt.CardLayout cards = new java.awt.CardLayout();
+    final JPanel body2 = new JPanel(cards);
     final Runnable refreshRow = () -> {   // only the row of the report: the selection (and the right pane) stays
       int i = cur[0] == null ? -1 : rows.indexOf(cur[0]);
       if (i >= 0) model.fireTableRowsUpdated(i, i);
     };
+    final Runnable targetChanged = () -> {   // an empty surface list turns the report off; a surface again turns it back on
+      StdReport x = cur[0];
+      if (x == null) return;
+      if (x.target.isEmpty() && x.on) { x.on = false; x.putBack = true; }
+      else if (!x.target.isEmpty() && x.putBack) { x.on = true; x.putBack = false; }
+      countLbl.setText(x.target.size() + " of " + every.size() + " selected");
+      refreshRow.run();
+      changed.run();
+    };
     fill[0] = () -> {
       list.removeAll();
       StdReport x = cur[0];
-      boolean can = x != null && surf.apply(x);
-      search.setEnabled(can);
-      dflt.setEnabled(can);
-      allB.setEnabled(can);
-      none.setEnabled(can);
       if (x == null) {
-        title.setText("Select a report");
+        title.setText(" ");
         meaning.setText(" ");
-        note.setText(" ");
-        countLbl.setText(" ");
+        textLbl.setText("Select a report to see its surfaces.");
+        cards.show(body2, "text");
       } else {
         title.setText(x.def[0]);
-        meaning.setText(x.def[6]);
-        if (x.why != null) note.setText("Not possible here: " + x.why);
-        else if (x.def[2].equalsIgnoreCase("expression")) note.setText("<html>Formula: " + Html.esc(x.def[3])
-            + (x.def[5].startsWith("needs ") ? "<br>Uses: " + Html.esc(x.def[5].substring(6).trim().replace(" ", ", ")) : "") + "</html>");
-        else if (x.def[4].equals("REGIONS")) note.setText("All regions");
-        else note.setText(" ");
-        if (can) {
+        meaning.setText("<html><div style='width:215px'>" + Html.esc(Ui.cap(x.def[6])) + "</div></html>");
+        if (x.present) {
+          textLbl.setText("Already in the simulation.");
+          cards.show(body2, "text");
+        } else if (x.why != null) {
+          textLbl.setText("<html><div style='width:215px'>Cannot be created: " + Html.esc(x.why) + ".</div></html>");
+          cards.show(body2, "text");
+        } else if (x.def[2].equalsIgnoreCase("expression")) {
+          textLbl.setText("<html><div style='width:215px'><b>Formula</b><br><tt>" + Html.esc(x.def[3]) + "</tt>"
+              + (x.def[5].startsWith("needs ") ? "<br><br>Uses: " + Html.esc(x.def[5].substring(6).trim().replace(" ", ", ")) : "")
+              + "<br><br>A formula report has no surfaces to select.</div></html>");
+          cards.show(body2, "text");
+        } else if (x.def[4].equals("REGIONS")) {
+          textLbl.setText("Computed on all regions.");
+          cards.show(body2, "text");
+        } else {
+          cards.show(body2, "surf");
           String q = search.getText().trim().toLowerCase(Locale.ROOT);
           // surfaces grouped by type prefix (IN_, OUT_, OPEN_, WALL_, SYM_, IF_, then the others)
           Map<String, List<Object>> groups = new LinkedHashMap<>();
@@ -5263,12 +5290,11 @@ public class SimKit extends StarMacro {
             for (Object b : members) if (x.target.contains(b)) on++;
             final javax.swing.JCheckBox gb = new javax.swing.JCheckBox("", on == members.size());
             gb.setBackground(java.awt.Color.WHITE);
-            gb.setFocusPainted(false);
-            gb.setToolTipText("All " + (tok == null ? "other" : tok + "_") + " surfaces");
+            gb.setToolTipText(tok == null ? "Select or clear all other surfaces." : "Select or clear all " + tok + "_ surfaces.");
             final JLabel tag = new JLabel(tok == null ? "OTHER" : tok);
-            tag.setFont(tag.getFont().deriveFont(Font.BOLD, 11f));
+            tag.setFont(tag.getFont().deriveFont(Font.BOLD, tag.getFont().getSize2D() - 1f));
             java.awt.Color[] tc = tagColors(tok == null ? "" : tok);
-            if (tok == null) tc = new java.awt.Color[] {new java.awt.Color(0xF2, 0xF4, 0xF7), Ui.MUTED};
+            if (tok == null) tc = new java.awt.Color[] {Ui.BAND, Ui.MUTED};
             tag.setOpaque(true);
             tag.setBackground(tc[0]);
             tag.setForeground(tc[1]);
@@ -5292,15 +5318,14 @@ public class SimKit extends StarMacro {
               }
               x.target.clear();
               x.target.addAll(nt);
+              targetChanged.run();
               fill[0].run();
-              refreshRow.run();
             });
             for (final Object b : members) {
               String n = nm(b), reg = "";
               try { reg = nm(((Boundary) b).getRegion()); } catch (Throwable t) { /* offline */ }
               final javax.swing.JCheckBox cb = new javax.swing.JCheckBox(n.substring(n.lastIndexOf('.') + 1), x.target.contains(b));
               cb.setBackground(java.awt.Color.WHITE);
-              cb.setFocusPainted(false);
               cb.setToolTipText(reg.isEmpty() ? n : reg + " : " + n);
               JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
               row.setBackground(java.awt.Color.WHITE);
@@ -5322,23 +5347,25 @@ public class SimKit extends StarMacro {
                 for (Object o : members) if (x.target.contains(o)) k++;
                 gb.setSelected(k == members.size());
                 gn.setText(k + " / " + members.size());
-                countLbl.setText(x.target.size() + " of " + every.size() + " surfaces");
-                refreshRow.run();
+                targetChanged.run();
               });
               list.add(row);
             }
           }
-          countLbl.setText(x.target.size() + " of " + every.size() + " surfaces");
-        } else {
-          countLbl.setText(" ");
+          if (list.getComponentCount() == 0) {
+            JLabel nm0 = Ui.muted("No surface matches.");
+            nm0.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+            list.add(nm0);
+          }
+          countLbl.setText(x.target.size() + " of " + every.size() + " selected");
         }
       }
       list.revalidate();
       list.repaint();
     };
-    dflt.addActionListener(e -> { if (cur[0] != null) { cur[0].target.clear(); cur[0].target.addAll(cur[0].deflt); fill[0].run(); refreshRow.run(); } });
-    allB.addActionListener(e -> { if (cur[0] != null) { cur[0].target.clear(); cur[0].target.addAll(every); fill[0].run(); refreshRow.run(); } });
-    none.addActionListener(e -> { if (cur[0] != null) { cur[0].target.clear(); fill[0].run(); refreshRow.run(); } });
+    dflt.addActionListener(e -> { if (cur[0] != null) { cur[0].target.clear(); cur[0].target.addAll(cur[0].deflt); targetChanged.run(); fill[0].run(); } });
+    allB.addActionListener(e -> { if (cur[0] != null) { cur[0].target.clear(); cur[0].target.addAll(every); targetChanged.run(); fill[0].run(); } });
+    none.addActionListener(e -> { if (cur[0] != null) { cur[0].target.clear(); targetChanged.run(); fill[0].run(); } });
     search.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
       @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { fill[0].run(); }
       @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { fill[0].run(); }
@@ -5347,46 +5374,79 @@ public class SimKit extends StarMacro {
     table.getSelectionModel().addListSelectionListener(e -> {
       if (e.getValueIsAdjusting()) return;
       int r = table.getSelectedRow();
-      StdReport x = r >= 0 && rows.get(r) instanceof StdReport ? (StdReport) rows.get(r) : null;
+      if (r >= 0 && rows.get(r) instanceof String) {   // a group row: the next report (or the one before at the end)
+        int to = r + 1 < rows.size() ? r + 1 : r - 1;
+        if (to >= 0) table.setRowSelectionInterval(to, to);
+        return;
+      }
+      StdReport x = r >= 0 ? (StdReport) rows.get(r) : null;
       if (x == cur[0]) return;
       cur[0] = x;
       search.setText("");
       fill[0].run();
     });
+    table.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke("SPACE"), "simkit.toggle");
+    table.getActionMap().put("simkit.toggle", new javax.swing.AbstractAction() {
+      private static final long serialVersionUID = 1L;
+      @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+        int r = table.getSelectedRow();
+        if (r >= 0 && model.isCellEditable(r, 0)) model.setValueAt(!Boolean.TRUE.equals(model.getValueAt(r, 0)), r, 0);
+      }
+    });
+
     JPanel quick = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));
     quick.add(Ui.muted("Select:"));
     quick.add(dflt);
     quick.add(allB);
     quick.add(none);
+    JPanel shead = new JPanel(new BorderLayout());
+    JLabel sl = new JLabel("Surfaces");
+    sl.setFont(sl.getFont().deriveFont(Font.BOLD));
+    shead.add(sl, BorderLayout.WEST);
+    shead.add(countLbl, BorderLayout.EAST);
+    JPanel stop = new JPanel();
+    stop.setLayout(new javax.swing.BoxLayout(stop, javax.swing.BoxLayout.Y_AXIS));
+    for (javax.swing.JComponent k : new javax.swing.JComponent[] {shead, search, quick}) {
+      k.setAlignmentX(0f);
+      k.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, k.getPreferredSize().height));
+      stop.add(k);
+      stop.add(javax.swing.Box.createVerticalStrut(4));
+    }
+    JPanel surfPane = new JPanel(new BorderLayout(0, 2));
+    surfPane.add(stop, BorderLayout.NORTH);
+    surfPane.add(plainScroll(list, 290, 200), BorderLayout.CENTER);
+    JPanel textPane = new JPanel(new BorderLayout());
+    textLbl.setVerticalAlignment(javax.swing.SwingConstants.TOP);
+    textPane.add(textLbl, BorderLayout.NORTH);
+    body2.add(surfPane, "surf");
+    body2.add(textPane, "text");
     JPanel head = new JPanel();
     head.setLayout(new javax.swing.BoxLayout(head, javax.swing.BoxLayout.Y_AXIS));
-    for (javax.swing.JComponent k : new javax.swing.JComponent[] {title, meaning, note, search, quick}) {
-      k.setAlignmentX(0f);
-      head.add(k);
-      head.add(javax.swing.Box.createVerticalStrut(k == meaning || k == note ? 6 : 4));
-    }
-    search.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, search.getPreferredSize().height));
-    JScrollPane ls = new JScrollPane(list);
-    ls.getViewport().setBackground(java.awt.Color.WHITE);
-    ls.getVerticalScrollBar().setUnitIncrement(16);
-    ls.setBorder(BorderFactory.createLineBorder(new java.awt.Color(0xE3, 0xE7, 0xEC)));
-    JPanel right = new JPanel(new BorderLayout(0, 6));
+    title.setAlignmentX(0f);
+    meaning.setAlignmentX(0f);
+    head.add(title);
+    head.add(javax.swing.Box.createVerticalStrut(2));
+    head.add(meaning);
+    head.add(javax.swing.Box.createVerticalStrut(12));
+    JPanel right = new JPanel(new BorderLayout());
     right.add(head, BorderLayout.NORTH);
-    right.add(ls, BorderLayout.CENTER);
-    right.add(countLbl, BorderLayout.SOUTH);
+    right.add(body2, BorderLayout.CENTER);
     right.setPreferredSize(new java.awt.Dimension(300, 10));
 
-    JScrollPane sp = plainScroll(table, 660, 440);
-    JPanel center = new JPanel(new BorderLayout(14, 0));
-    center.add(sp, BorderLayout.CENTER);
+    JPanel center = new JPanel(new BorderLayout(16, 0));
+    center.add(plainScroll(table, 620, 400), BorderLayout.CENTER);
     center.add(right, BorderLayout.EAST);
     JPanel body = new JPanel(new BorderLayout(0, 8));
     body.add(center, BorderLayout.CENTER);
-    body.add(Ui.muted("A monitor per report, a plot per group, in folders by purpose  \u00b7  \u25cf surfaces changed  \u00b7  list: config/standard_reports.csv"),
-        BorderLayout.SOUTH);
-    for (int i = 0; i < rows.size(); i++) {   // the first report that can be made, selected
+    body.add(Ui.muted("<html>Each report gets a monitor; each group gets one plot. Reports and monitors are stored in one folder per group."
+        + "<br>List: config/standard_reports.csv.</html>"), BorderLayout.SOUTH);
+    for (int i = 0; i < rows.size(); i++) {   // the first report that can be created, selected
       if (rows.get(i) instanceof StdReport && ((StdReport) rows.get(i)).why == null) { table.setRowSelectionInterval(i, i); break; }
     }
+    if (table.getSelectedRow() < 0) for (int i = 0; i < rows.size(); i++) {
+      if (rows.get(i) instanceof StdReport) { table.setRowSelectionInterval(i, i); break; }
+    }
+    if (cur[0] == null) fill[0].run();
     return body;
   }
 
@@ -5820,58 +5880,132 @@ public class SimKit extends StarMacro {
   }
 
   /** A page of the Reports window: its panel, the text of the main button (null: nothing to do), the work to run in
-   *  a worker thread (made on the Swing thread from the ticks), and a refresh after the data were read again. */
+   *  a worker thread (made on the Swing thread from the selection), and a refresh after the data were read again. */
   static final class Page {
     final JPanel panel = new JPanel(new BorderLayout());
     java.util.function.Supplier<String> label = () -> null;
     java.util.function.Supplier<java.util.function.Supplier<String>> job = () -> null;
     Runnable reload = () -> { };
+    java.awt.Component focus;
   }
 
-  /** A small grey table, white rows, no vertical lines. */
+  /** The tables of the Reports window: flat left-aligned header, row lines, no vertical lines, a pale blue selected row,
+   *  rows sized from the font, and the text of the client property "simkit.empty" in the middle when there is no row. */
   static JTable plainTable(javax.swing.table.TableModel m) {
-    JTable t = new JTable(m);
-    t.setRowHeight(24);
+    final JTable t = new JTable(m) {
+      private static final long serialVersionUID = 1L;
+      @Override protected void paintComponent(java.awt.Graphics g) {
+        super.paintComponent(g);
+        Object e = getClientProperty("simkit.empty");
+        if (getRowCount() == 0 && e != null) {
+          java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+          g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+          g2.setColor(Ui.MUTED);
+          g2.setFont(getFont());
+          java.awt.FontMetrics fm = g2.getFontMetrics();
+          java.awt.Rectangle v = getVisibleRect();
+          String s = String.valueOf(e);
+          g2.drawString(s, v.x + Math.max(8, (v.width - fm.stringWidth(s)) / 2), v.y + Math.max(fm.getAscent() + 8, v.height / 2));
+          g2.dispose();
+        }
+      }
+    };
+    final int h = Math.max(24, t.getFontMetrics(t.getFont()).getHeight() + 8);
+    t.setRowHeight(h);
     t.setShowVerticalLines(false);
-    t.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
-    t.setFillsViewportHeight(true);
+    t.setShowHorizontalLines(true);
+    t.setGridColor(Ui.RULE);
     t.setIntercellSpacing(new java.awt.Dimension(0, 1));
+    t.setFillsViewportHeight(true);
+    t.setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
+    t.setSelectionBackground(Ui.SEL);
+    t.setSelectionForeground(java.awt.Color.BLACK);
     t.getTableHeader().setReorderingAllowed(false);
+    final JLabel hl = new JLabel();
+    hl.setOpaque(true);
+    hl.setBackground(Ui.BAND);
+    hl.setForeground(Ui.MUTED);
+    hl.setFont(t.getFont().deriveFont(Font.PLAIN, t.getFont().getSize2D() - 1f));
+    int pad = Math.max(2, (h + 2 - hl.getFontMetrics(hl.getFont()).getHeight()) / 2);
+    hl.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Ui.RULE), BorderFactory.createEmptyBorder(pad, 8, pad - 1, 8)));
+    t.getTableHeader().setDefaultRenderer((tb, v, s, f, r, c) -> { hl.setText(v == null ? "" : String.valueOf(v)); return hl; });
     return t;
   }
 
   static JScrollPane plainScroll(java.awt.Component c, int w, int h) {
     JScrollPane s = new JScrollPane(c);
     s.getViewport().setBackground(java.awt.Color.WHITE);
-    s.setBorder(BorderFactory.createLineBorder(new java.awt.Color(0xE3, 0xE7, 0xEC)));
+    s.setBorder(BorderFactory.createLineBorder(Ui.RULE));
     s.getVerticalScrollBar().setUnitIncrement(16);
     s.setPreferredSize(new java.awt.Dimension(w, h));
     return s;
   }
 
+  /** A text cell of the Reports tables: padding 0/8, the row background (pale blue when selected). */
+  static javax.swing.table.DefaultTableCellRenderer textCell(final java.util.function.BiFunction<Integer, Integer, java.awt.Color> fg) {
+    return new javax.swing.table.DefaultTableCellRenderer() {
+      private static final long serialVersionUID = 1L;
+      @Override public java.awt.Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean f, int r, int c) {
+        super.getTableCellRendererComponent(tb, v, false, false, r, c);
+        setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+        setBackground(tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+        setForeground(fg.apply(r, c));
+        setFont(tb.getFont().deriveFont(Font.PLAIN));
+        String s = v == null ? "" : String.valueOf(v);
+        setToolTipText(s.isEmpty() ? null : s);
+        return this;
+      }
+    };
+  }
+
+  /** Space toggles the checkbox (column 0) of the selected row. */
+  static void spaceToggles(final JTable t) {
+    t.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke("SPACE"), "simkit.toggle");
+    t.getActionMap().put("simkit.toggle", new javax.swing.AbstractAction() {
+      private static final long serialVersionUID = 1L;
+      @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+        int r = t.getSelectedRow();
+        if (r >= 0 && t.getModel().isCellEditable(r, 0)) t.getModel().setValueAt(!Boolean.TRUE.equals(t.getModel().getValueAt(r, 0)), r, 0);
+      }
+    });
+  }
+
   static JLabel step(String n, String text) {
     JLabel l = new JLabel("<html><font color='#1F5FAF'>" + n + "</font>&nbsp;&nbsp;" + Html.esc(text) + "</html>");
-    l.setFont(l.getFont().deriveFont(Font.BOLD, 13f));
+    l.setFont(l.getFont().deriveFont(Font.BOLD, l.getFont().getSize2D() + 1f));
     l.setAlignmentX(0f);
     return l;
   }
 
-  /** The Reports window (Swing thread). */
+  static String plural(int n, String one, String many) { return n + " " + (n == 1 ? one : many); }
+
+  /** Set by reportsMain so the pages can reach the action (one window at a time). */
+  ReportsAct reportsAct;
+
+  /** The Reports window (Swing thread): tabs Standard, Per object, In this simulation; one main button acting on the
+   *  open tab; the outcome next to the buttons. */
   Boolean reportsMain(final ReportsData[] data, final ObjNames names, final List<ObjQty> qs, final List<ObjQty> others,
       final List<ObjTarget> objs, final ReportsAct act, final java.util.function.Supplier<ReportsData> reload, String simTitle) {
-    final JButton go = Ui.primary("Add");
+    final JButton go = Ui.primary("Create reports");
     go.putClientProperty("simkit.stay", Boolean.TRUE);
     final JLabel done = new JLabel(" "), counts = Ui.muted(" ");
-    final java.awt.Color green = new java.awt.Color(0x2E, 0x6B, 0x2E);
+    go.putClientProperty("simkit.status", done);
     final Runnable[] update = {null};
+    final boolean[] busy = {false};
     reportsAct = act;
-    final Runnable changed = () -> { if (update[0] != null) update[0].run(); };
-    final Page inv = invPage(data, changed);
+    final Runnable changed = () -> {
+      if (update[0] == null) return;
+      if (!busy[0]) done.setText(" ");
+      update[0].run();
+    };
     final Page std = stdPageOf(data, changed);
     final Page obj = objPage(data, names, qs, others, objs, changed);
-    final Page[] pages = {inv, std, obj};
-    final String[] titles = {"In this simulation", "Standard", "Per object"};
-    final int[] cur = {1};
+    final Page inv = invPage(data, changed);
+    final Page[] pages = {std, obj, inv};
+    final String[] titles = {"Standard", "Per object", "In this simulation"};
+    final String[] idle = {"Create reports", "Create reports", "Rename reports"};
+    final String[] idleTip = {"Select a report to create.", "Select a quantity, a statistic and an object.", "Select a report to rename."};
+    final int[] cur = {0};
     final JPanel cards = new JPanel(new java.awt.CardLayout());
     for (int i = 0; i < pages.length; i++) cards.add(pages[i].panel, titles[i]);
     final List<JButton> tabs = new ArrayList<>();
@@ -5882,24 +6016,29 @@ public class SimKit extends StarMacro {
       t.addActionListener(e -> {
         cur[0] = k;
         ((java.awt.CardLayout) cards.getLayout()).show(cards, titles[k]);
+        done.setText(" ");
         update[0].run();
+        if (pages[k].focus != null) pages[k].focus.requestFocusInWindow();
       });
       tabs.add(t);
       tabRow.add(t);
     }
     update[0] = () -> {
       ReportsData d = data[0];
-      tabs.get(0).setText("In this simulation (" + d.reports + ")");
       for (int i = 0; i < tabs.size(); i++) Ui.tabOn(tabs.get(i), i == cur[0]);
-      counts.setText(d.reports + " reports  ·  " + d.monitors + " monitors  ·  " + d.plots + " plots");
+      counts.setText(plural(d.reports, "report", "reports") + "  ·  " + plural(d.monitors, "monitor", "monitors") + "  ·  "
+          + plural(d.plots, "plot", "plots"));
       String l = pages[cur[0]].label.get();
-      go.setText(l == null ? new String[] {"Rename", "Add", "Create"}[cur[0]] : l);
-      go.setEnabled(l != null);
+      go.setText(l == null ? idle[cur[0]] : l);
+      go.setToolTipText(l == null ? idleTip[cur[0]] : null);
+      go.setEnabled(l != null && !busy[0]);
     };
     go.addActionListener(e -> {
       final java.util.function.Supplier<String> job = pages[cur[0]].job.get();
       if (job == null) return;
+      busy[0] = true;
       go.setEnabled(false);
+      for (JButton t : tabs) t.setEnabled(false);
       done.setForeground(Ui.MUTED);
       done.setText("Working…");
       Thread w = new Thread(() -> {
@@ -5912,7 +6051,9 @@ public class SimKit extends StarMacro {
         javax.swing.SwingUtilities.invokeLater(() -> {
           data[0] = fd;
           for (Page p : pages) p.reload.run();
-          done.setForeground(msg.startsWith("Failed") ? Ui.RED : green);
+          busy[0] = false;
+          for (JButton t : tabs) t.setEnabled(true);
+          done.setForeground(msg.startsWith("Failed") ? Ui.RED : Ui.GREEN);
           done.setText(msg);
           update[0].run();
         });
@@ -5923,102 +6064,131 @@ public class SimKit extends StarMacro {
     JPanel top = new JPanel(new BorderLayout());
     top.add(tabRow, BorderLayout.WEST);
     top.add(counts, BorderLayout.EAST);
-    top.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new java.awt.Color(0xE3, 0xE7, 0xEC)));
+    top.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Ui.RULE));
     JPanel body = new JPanel(new BorderLayout(0, 12));
     body.add(top, BorderLayout.NORTH);
     body.add(cards, BorderLayout.CENTER);
-    body.add(done, BorderLayout.SOUTH);
     ((java.awt.CardLayout) cards.getLayout()).show(cards, titles[cur[0]]);
     update[0].run();
+    if (std.focus != null) javax.swing.SwingUtilities.invokeLater(() -> std.focus.requestFocusInWindow());
     return Ui.sheet("Reports", simTitle, body, go, null);
   }
 
   /** In this simulation: every report with its type, quantity, objects and folder; reports of the six statistics on one
-   *  object can take the rule name (tick, then Rename). */
+   *  object can take the rule name (select, then Rename). */
   Page invPage(final ReportsData[] data, final Runnable changed) {
     final Page p = new Page();
     final List<InvRow> shown = new ArrayList<>();
-    final JTextField search = Ui.hintField("", "Search reports", 20);
+    final JTextField search = Ui.hintField("", "Search reports", 22);
+    final javax.swing.JToggleButton only = Ui.chip("Can be renamed");
+    only.setToolTipText("Show only the reports that do not follow the naming rule.");
     final javax.swing.table.AbstractTableModel m = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
       @Override public int getRowCount() { return shown.size(); }
-      @Override public int getColumnCount() { return 6; }
-      @Override public String getColumnName(int c) { return new String[] {"Report", "Type", "Quantity", "On", "Folder", "Rename to the rule"}[c]; }
-      @Override public Class<?> getColumnClass(int c) { return String.class; }
+      @Override public int getColumnCount() { return 7; }
+      @Override public String getColumnName(int c) { return new String[] {"", "Report", "Type", "Quantity", "Objects", "Folder", "New name"}[c]; }
+      @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
+      @Override public boolean isCellEditable(int r, int c) { return c == 0 && shown.get(r).rename != null; }
       @Override public Object getValueAt(int r, int c) {
         InvRow x = shown.get(r);
         switch (c) {
-          case 0: return x.name;
-          case 1: return x.type;
-          case 2: return x.field;
-          case 3: return x.on;
-          case 4: return x.folder;
+          case 0: return x.rename != null && x.rename.pick;
+          case 1: return x.name;
+          case 2: return x.type;
+          case 3: return x.field;
+          case 4: return x.on;
+          case 5: return x.folder;
           default: return x.rename == null ? "" : x.rename.name;
         }
       }
+      @Override public void setValueAt(Object v, int r, int c) {
+        InvRow x = shown.get(r);
+        if (x.rename == null) return;
+        x.rename.pick = Boolean.TRUE.equals(v);
+        fireTableRowsUpdated(r, r);
+        changed.run();
+      }
     };
     final JTable t = plainTable(m);
-    final java.awt.Color amber = new java.awt.Color(0x8A, 0x5A, 0x00);
     t.setDefaultRenderer(String.class, new javax.swing.table.DefaultTableCellRenderer() {
       private static final long serialVersionUID = 1L;
       @Override public java.awt.Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean f, int r, int c) {
         super.getTableCellRendererComponent(tb, v, false, false, r, c);
         InvRow x = shown.get(r);
         setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
-        setBackground(java.awt.Color.WHITE);
-        setForeground(c == 0 ? java.awt.Color.BLACK : c == 5 ? (x.rename != null && x.rename.pick ? Ui.BLUE : amber) : Ui.MUTED);
-        setFont(tb.getFont().deriveFont(c == 5 && x.rename != null && x.rename.pick ? Font.BOLD : Font.PLAIN));
-        if (c == 5 && x.rename != null) setText((x.rename.pick ? "☑ " : "☐ ") + x.rename.name);
-        setToolTipText(c == 3 && !x.onTip.isEmpty() ? x.onTip : c == 2 && !x.field.isEmpty() ? x.field
-            : c == 5 && x.rename != null ? "Click to tick: renamed to " + x.rename.name : null);
+        setBackground(tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+        setForeground(c == 1 ? java.awt.Color.BLACK : c == 6 ? (x.rename != null && x.rename.pick ? java.awt.Color.BLACK : Ui.AMBER) : Ui.MUTED);
+        setFont(tb.getFont().deriveFont(Font.PLAIN));
+        setToolTipText(c == 4 && !x.onTip.isEmpty() ? x.onTip : c == 6 && x.rename != null ? "Renames the report to " + x.rename.name + "."
+            : v == null || String.valueOf(v).isEmpty() ? null : String.valueOf(v));
         return this;
       }
     });
-    int[] w = {230, 110, 170, 150, 110, 250};
-    for (int i = 0; i < w.length; i++) t.getColumnModel().getColumn(i).setPreferredWidth(w[i]);
-    t.addMouseListener(new java.awt.event.MouseAdapter() {
-      @Override public void mouseClicked(java.awt.event.MouseEvent e) {
-        int r = t.rowAtPoint(e.getPoint()), c = t.columnAtPoint(e.getPoint());
-        if (r < 0 || c != 5 || shown.get(r).rename == null) return;
-        shown.get(r).rename.pick = !shown.get(r).rename.pick;
-        m.fireTableRowsUpdated(r, r);
-        changed.run();
-      }
+    final javax.swing.table.TableCellRenderer boxes = t.getDefaultRenderer(Boolean.class);
+    final JLabel blank = new JLabel();
+    blank.setOpaque(true);
+    t.setDefaultRenderer(Boolean.class, (tb, v, sel, foc, r, c) -> {
+      java.awt.Color bg = tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE;
+      if (shown.get(r).rename == null) { blank.setBackground(bg); return blank; }
+      javax.swing.JComponent k = (javax.swing.JComponent) boxes.getTableCellRendererComponent(tb, v, false, false, r, c);
+      k.setBackground(bg);
+      k.setToolTipText("Renames the report to " + shown.get(r).rename.name + ".");
+      return k;
     });
-    final JButton tickAll = Ui.link("Tick all renames"), none = Ui.link("None");
+    int[] w = {28, 220, 120, 160, 140, 110, 200};
+    for (int i = 0; i < w.length; i++) t.getColumnModel().getColumn(i).setPreferredWidth(w[i]);
+    t.getColumnModel().getColumn(0).setMaxWidth(28);
+    t.getColumnModel().getColumn(0).setMinWidth(28);
+    spaceToggles(t);
+    final JButton selAll = Ui.link("Select all"), clear = Ui.link("Clear");
+    selAll.setToolTipText("Select all reports that can be renamed.");
+    clear.setToolTipText("Clear the selection.");
     final JLabel note = Ui.muted(" ");
     final Runnable fill = () -> {
       String q = search.getText().trim().toLowerCase(Locale.ROOT);
-      shown.clear();
-      for (InvRow x : data[0].inv) {
-        if (q.isEmpty() || (x.name + " " + x.type + " " + x.field + " " + x.onTip + " " + x.folder).toLowerCase(Locale.ROOT).contains(q)) shown.add(x);
-      }
-      m.fireTableDataChanged();
       int k = 0;
       for (InvRow x : data[0].inv) if (x.rename != null) k++;
-      note.setText(data[0].inv.isEmpty() ? "No reports yet: Standard and Per object create them."
-          : k == 0 ? "All reports of the six statistics on one object have the rule name, or a name in use."
-          : k + (k == 1 ? " report can" : " reports can") + " take the rule name (config/report_names.csv): click a cell of the last column to tick.");
-      tickAll.setVisible(k > 0);
-      none.setVisible(k > 0);
+      only.setText("Can be renamed (" + k + ")");
+      only.setVisible(k > 0);
+      if (k == 0) only.setSelected(false);
+      shown.clear();
+      for (InvRow x : data[0].inv) {
+        if (only.isSelected() && x.rename == null) continue;
+        if (q.isEmpty() || (x.name + " " + x.type + " " + x.field + " " + x.onTip + " " + x.folder).toLowerCase(Locale.ROOT).contains(q)) shown.add(x);
+      }
+      t.putClientProperty("simkit.empty", data[0].inv.isEmpty() ? "No reports in this simulation. Create them on the Standard or Per object tab."
+          : "No report matches.");
+      m.fireTableDataChanged();
+      String s = data[0].inv.isEmpty() ? " " : k == 0 ? "No report to rename."
+          : k == 1 ? "1 report does not follow the naming rule (config/report_names.csv). Select it to rename it."
+          : k + " reports do not follow the naming rule (config/report_names.csv). Select them to rename them.";
+      if (shown.size() < data[0].inv.size() && !data[0].inv.isEmpty()) s += "  ·  " + shown.size() + " of " + data[0].inv.size() + " shown";
+      note.setText(s);
+      selAll.setVisible(k > 0);
+      clear.setVisible(k > 0);
     };
-    tickAll.addActionListener(e -> { for (InvRow x : data[0].inv) if (x.rename != null) x.rename.pick = true; m.fireTableDataChanged(); changed.run(); });
-    none.addActionListener(e -> { for (InvRow x : data[0].inv) if (x.rename != null) x.rename.pick = false; m.fireTableDataChanged(); changed.run(); });
+    only.addActionListener(e -> fill.run());
+    selAll.addActionListener(e -> { for (InvRow x : data[0].inv) if (x.rename != null) x.rename.pick = true; m.fireTableDataChanged(); changed.run(); });
+    clear.addActionListener(e -> { for (InvRow x : data[0].inv) if (x.rename != null) x.rename.pick = false; m.fireTableDataChanged(); changed.run(); });
     search.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
       @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
       @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
       @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
     });
     JPanel head = new JPanel(new BorderLayout(8, 0));
-    head.add(search, BorderLayout.WEST);
+    JPanel lefts = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+    lefts.add(search);
+    lefts.add(only);
+    head.add(lefts, BorderLayout.WEST);
     JPanel links = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
-    links.add(tickAll);
-    links.add(none);
+    links.add(selAll);
+    links.add(clear);
     head.add(links, BorderLayout.EAST);
     p.panel.setLayout(new BorderLayout(0, 8));
     p.panel.add(head, BorderLayout.NORTH);
-    p.panel.add(plainScroll(t, 980, 470), BorderLayout.CENTER);
+    p.panel.add(plainScroll(t, 940, 420), BorderLayout.CENTER);
     p.panel.add(note, BorderLayout.SOUTH);
+    p.focus = t;
     p.label = () -> {
       int k = 0;
       for (InvRow x : data[0].inv) if (x.rename != null && x.rename.pick) k++;
@@ -6027,24 +6197,20 @@ public class SimKit extends StarMacro {
     p.job = () -> {
       final List<ObjRow> rows = new ArrayList<>();
       for (InvRow x : data[0].inv) if (x.rename != null && x.rename.pick) rows.add(x.rename);
-      return rows.isEmpty() ? null : () -> act0(rows);
+      return rows.isEmpty() ? null : () -> reportsAct.run("obj", rows, "none");
     };
     p.reload = fill;
     fill.run();
     return p;
   }
 
-  /** Set by reportsMain so the pages can reach the action (one window at a time). */
-  ReportsAct reportsAct;
-
-  String act0(List<ObjRow> rows) { return reportsAct.run("obj", rows, "none"); }
-
-  /** Standard: the team's list (present, add, update, or why not), the surfaces of the selected report on the right. */
+  /** Standard: the team's list (Present, Create, Update, or why not), the surfaces of the selected report on the right. */
   Page stdPageOf(final ReportsData[] data, final Runnable changed) {
     final Page p = new Page();
     final Runnable build = () -> {
       p.panel.removeAll();
       p.panel.add(stdPage(data[0].std, data[0].every, changed), BorderLayout.CENTER);
+      p.focus = TableFinder.table(p.panel);
       p.panel.revalidate();
       p.panel.repaint();
     };
@@ -6052,11 +6218,12 @@ public class SimKit extends StarMacro {
       int a = 0, u = 0;
       for (StdReport x : data[0].std) {
         if (!x.on || x.why != null) continue;
+        if (!x.def[2].equalsIgnoreCase("expression") && !x.def[4].equals("REGIONS") && x.target.isEmpty()) continue;
         if (x.existing != null) u++;
         else a++;
       }
       if (a + u == 0) return null;
-      return a > 0 && u > 0 ? "Add " + a + ", update " + u : a > 0 ? "Add " + a + (a == 1 ? " report" : " reports") : "Update " + u + (u == 1 ? " report" : " reports");
+      return a > 0 && u > 0 ? "Create " + a + ", update " + u : a > 0 ? "Create " + plural(a, "report", "reports") : "Update " + plural(u, "report", "reports");
     };
     p.job = () -> {
       final List<StdReport> rows = new ArrayList<>(data[0].std);
@@ -6067,37 +6234,49 @@ public class SimKit extends StarMacro {
     return p;
   }
 
-  /** Per object: 1 quantities, 2 statistics (each object or all together), 3 objects; the result below. */
+  /** The first JTable inside a container (focus on open). */
+  static final class TableFinder {
+    static JTable table(java.awt.Container c) {
+      for (java.awt.Component k : c.getComponents()) {
+        if (k instanceof JTable) return (JTable) k;
+        if (k instanceof java.awt.Container) {
+          JTable t = table((java.awt.Container) k);
+          if (t != null) return t;
+        }
+      }
+      return null;
+    }
+  }
+
+  /** Per object: 1 quantities, 2 statistics, 3 objects (one report per object or one for all), 4 the reports to create. */
   Page objPage(final ReportsData[] data, final ObjNames names, final List<ObjQty> qs, final List<ObjQty> others,
       final List<ObjTarget> objs, final Runnable changed) {
     final Page p = new Page();
     final String[] plotKeys = {"quantity", "object", "none"};
-    final JComboBox<String> plots = new JComboBox<>(new String[] {"one per quantity and statistic", "one per object", "none (monitors only)"});
+    final JComboBox<String> plots = new JComboBox<>(new String[] {"One per quantity and statistic", "One per object", "None (monitors only)"});
     final List<String> stats = new ArrayList<>();
     final List<ObjRow> rows = new ArrayList<>();
     final Map<String, Boolean> picks = new HashMap<>();
     final boolean[] together = {false};
-    final JTextField label = Ui.hintField("", "walls", 9);
-    final JLabel result = new JLabel(" "), info = Ui.muted(" "), objCount = Ui.muted(" ");
-    result.setFont(result.getFont().deriveFont(Font.BOLD, 13f));
+    final JTextField label = Ui.hintField("", "e.g. walls", 12);
+    final JLabel summary = Ui.muted(" "), objCount = Ui.muted(" ");
     final Runnable[] refresh = {null};
-    final java.awt.Color grey = new java.awt.Color(0xA8, 0xB0, 0xBA), green = new java.awt.Color(0x2E, 0x6B, 0x2E);
 
     // 1 quantities
     final JPanel qChips = Ui.flow(400);
     final java.util.function.Consumer<ObjQty> addQ = q -> {
       final javax.swing.JToggleButton b = Ui.chip(q.label);
       b.setSelected(q.pick);
-      b.setToolTipText("Field function " + q.ffName + "; " + q.code + " in the report name");
+      b.setToolTipText("Field function " + q.ffName + ". Code in the report name: " + q.code + ".");
       b.addActionListener(e -> { q.pick = b.isSelected(); refresh[0].run(); });
       qChips.add(b);
     };
     for (ObjQty q : qs) addQ.accept(q);
     List<String> on = new ArrayList<>();
-    on.add("+ field…");
+    on.add("Add field…");
     for (ObjQty q : others) on.add(q.label);
     final JComboBox<String> other = new JComboBox<>(on.toArray(new String[0]));
-    other.setToolTipText("Other scalar fields; the function name is used in the report name");
+    other.setToolTipText("Add another scalar field. Its function name is used in the report name.");
     other.addActionListener(e -> {
       int i = other.getSelectedIndex();
       if (i <= 0) return;
@@ -6106,14 +6285,13 @@ public class SimKit extends StarMacro {
       other.setSelectedIndex(0);
       refresh[0].run();
     });
-    qChips.add(other);
 
     // 2 statistics
     final JPanel sChips = Ui.flow(400);
     for (final String s : OBJ_STATS) {
-      final javax.swing.JToggleButton b = Ui.chip(s);
-      b.setToolTipText((s.equals("volume average") ? "Regions only" : s.equals("maximum") || s.equals("minimum") ? "Boundaries and regions" : "Boundaries only")
-          + "; " + names.stat(s) + " in the report name");
+      final javax.swing.JToggleButton b = Ui.chip(Ui.cap(s));
+      b.setToolTipText((s.equals("volume average") ? "Regions only." : s.equals("maximum") || s.equals("minimum") ? "Boundaries and regions." : "Boundaries only.")
+          + " Code in the report name: " + names.stat(s) + ".");
       b.addActionListener(e -> {
         if (b.isSelected()) { stats.add(s); stats.sort(java.util.Comparator.comparingInt(x -> Arrays.asList(OBJ_STATS).indexOf(x))); }
         else stats.remove(s);
@@ -6121,20 +6299,6 @@ public class SimKit extends StarMacro {
       });
       sChips.add(b);
     }
-    final JPanel modeChips = Ui.flow(400);
-    final javax.swing.JToggleButton each = Ui.chip("each object"), all = Ui.chip("all together, named");
-    javax.swing.ButtonGroup bg = new javax.swing.ButtonGroup();
-    bg.add(each);
-    bg.add(all);
-    each.setSelected(true);
-    each.setToolTipText("One report per object");
-    all.setToolTipText("One report over all ticked objects, named with the text on the right");
-    label.setEnabled(false);
-    each.addActionListener(e -> { together[0] = false; label.setEnabled(false); refresh[0].run(); });
-    all.addActionListener(e -> { together[0] = true; label.setEnabled(true); label.requestFocusInWindow(); refresh[0].run(); });
-    modeChips.add(each);
-    modeChips.add(all);
-    modeChips.add(label);
 
     // 3 objects
     final List<ObjTarget> shown = new ArrayList<>(objs);
@@ -6148,27 +6312,28 @@ public class SimKit extends StarMacro {
       @Override public boolean isCellEditable(int r, int c) { return c == 0; }
       @Override public Object getValueAt(int r, int c) {
         ObjTarget x = shown.get(r);
-        return c == 0 ? x.pick : c == 1 ? x.name : x.region() ? "region" : x.region;
+        return c == 0 ? x.pick : c == 1 ? x.name : x.region() ? "Region" : x.region;
       }
       @Override public void setValueAt(Object v, int r, int c) {
         shown.get(r).pick = Boolean.TRUE.equals(v);
+        fireTableRowsUpdated(r, r);
         refresh[0].run();
       }
     };
     final JTable ot = plainTable(om);
-    ot.getColumnModel().getColumn(0).setMaxWidth(30);
-    ot.getColumnModel().getColumn(1).setPreferredWidth(260);
-    ot.getColumnModel().getColumn(2).setPreferredWidth(110);
-    ot.setDefaultRenderer(String.class, new javax.swing.table.DefaultTableCellRenderer() {
-      private static final long serialVersionUID = 1L;
-      @Override public java.awt.Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean f, int r, int c) {
-        super.getTableCellRendererComponent(tb, v, false, false, r, c);
-        setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 6));
-        setBackground(java.awt.Color.WHITE);
-        setForeground(c == 1 && shown.get(r).pick ? java.awt.Color.BLACK : Ui.MUTED);
-        return this;
-      }
+    ot.putClientProperty("simkit.empty", "No object matches.");
+    ot.getColumnModel().getColumn(0).setMaxWidth(28);
+    ot.getColumnModel().getColumn(0).setMinWidth(28);
+    ot.getColumnModel().getColumn(1).setPreferredWidth(300);
+    ot.getColumnModel().getColumn(2).setPreferredWidth(120);
+    ot.setDefaultRenderer(String.class, textCell((r, c) -> c == 1 && shown.get(r).pick ? java.awt.Color.BLACK : Ui.MUTED));
+    final javax.swing.table.TableCellRenderer oboxes = ot.getDefaultRenderer(Boolean.class);
+    ot.setDefaultRenderer(Boolean.class, (tb, v, sel, foc, r, c) -> {
+      java.awt.Component k = oboxes.getTableCellRendererComponent(tb, v, false, false, r, c);
+      k.setBackground(tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+      return k;
     });
+    spaceToggles(ot);
     final Runnable filter = () -> {
       String q = search.getText().trim().toLowerCase(Locale.ROOT);
       shown.clear();
@@ -6180,18 +6345,17 @@ public class SimKit extends StarMacro {
       @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { filter.run(); }
       @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { filter.run(); }
     });
-    // group chips: a click ticks the whole group, or unticks it when all are ticked
-    final JPanel gChips = Ui.flow(470);
+    // group chips: a click selects the whole group, or clears it when all are selected
+    final JPanel gChips = Ui.flow(500);
     final Map<String, javax.swing.JToggleButton> groupChip = new LinkedHashMap<>();
-    final List<String> kinds = new ArrayList<>();
-    for (ObjTarget x : objs) {
-      String k = x.region() ? "regions" : x.kind.isEmpty() ? "other" : x.kind;
-      if (!kinds.contains(k)) kinds.add(k);
-    }
-    kinds.sort(java.util.Comparator.comparingInt(k -> k.equals("regions") ? 99 : k.equals("other") ? 98 : 0));
     final java.util.function.Function<ObjTarget, String> kindOf = x -> x.region() ? "regions" : x.kind.isEmpty() ? "other" : x.kind;
+    final List<String> kinds = new ArrayList<>();
+    for (ObjTarget x : objs) if (!kinds.contains(kindOf.apply(x))) kinds.add(kindOf.apply(x));
+    kinds.sort(java.util.Comparator.comparingInt(k -> k.equals("regions") ? 99 : k.equals("other") ? 98 : 0));
     for (final String k : kinds) {
-      final javax.swing.JToggleButton b = Ui.chip(k);
+      final javax.swing.JToggleButton b = Ui.chip(Ui.cap(k));
+      b.setToolTipText(k.equals("regions") ? "Select or clear all regions." : k.equals("other") ? "Select or clear all surfaces without a type prefix."
+          : "Select or clear all " + k + "_ surfaces.");
       b.addActionListener(e -> {
         boolean allOn = true;
         for (ObjTarget x : objs) if (kindOf.apply(x).equals(k)) allOn &= x.pick;
@@ -6203,21 +6367,28 @@ public class SimKit extends StarMacro {
       gChips.add(b);
     }
     final JButton clear = Ui.link("Clear");
+    clear.setToolTipText("Clear all selected objects.");
     clear.addActionListener(e -> { for (ObjTarget x : objs) x.pick = false; om.fireTableDataChanged(); refresh[0].run(); });
+    final javax.swing.JRadioButton each = new javax.swing.JRadioButton("One report per object", true),
+        all = new javax.swing.JRadioButton("One report for all selected objects");
+    javax.swing.ButtonGroup bg = new javax.swing.ButtonGroup();
+    bg.add(each);
+    bg.add(all);
+    label.setEnabled(false);
+    each.addActionListener(e -> { together[0] = false; label.setEnabled(false); refresh[0].run(); });
+    all.addActionListener(e -> { together[0] = true; label.setEnabled(true); label.requestFocusInWindow(); refresh[0].run(); });
 
-    // result
+    // 4 reports to create
     final javax.swing.table.AbstractTableModel pm = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
       @Override public int getRowCount() { return rows.size(); }
-      @Override public int getColumnCount() { return 3; }
-      @Override public String getColumnName(int c) { return new String[] {"", "Report", ""}[c]; }
+      @Override public int getColumnCount() { return 4; }
+      @Override public String getColumnName(int c) { return new String[] {"", "Report", "Status", "Plot"}[c]; }
       @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
       @Override public boolean isCellEditable(int r, int c) { return c == 0 && rows.get(r).action.equals("create"); }
       @Override public Object getValueAt(int r, int c) {
         ObjRow x = rows.get(r);
-        if (c == 0) return x.pick;
-        if (c == 1) return x.name;
-        return x.action.equals("create") ? (x.plotTitle == null ? "new" : "new, plot " + x.plotTitle) : "present" + (x.note.startsWith("same report") ? " as " + x.note.substring(13) : "");
+        return c == 0 ? (Object) x.pick : c == 1 ? x.name : c == 3 ? (x.plotTitle == null || !x.action.equals("create") ? "" : x.plotTitle) : "";
       }
       @Override public void setValueAt(Object v, int r, int c) {
         ObjRow x = rows.get(r);
@@ -6227,55 +6398,80 @@ public class SimKit extends StarMacro {
       }
     };
     final JTable pt = plainTable(pm);
-    pt.setRowHeight(22);
-    pt.setTableHeader(null);
-    pt.getColumnModel().getColumn(0).setMaxWidth(30);
-    pt.getColumnModel().getColumn(1).setPreferredWidth(460);
-    pt.getColumnModel().getColumn(2).setPreferredWidth(420);
-    pt.setDefaultRenderer(String.class, new javax.swing.table.DefaultTableCellRenderer() {
-      private static final long serialVersionUID = 1L;
-      @Override public java.awt.Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean f, int r, int c) {
-        super.getTableCellRendererComponent(tb, v, false, false, r, c);
-        ObjRow x = rows.get(r);
-        boolean nw = x.action.equals("create");
-        setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 6));
-        setBackground(java.awt.Color.WHITE);
-        setForeground(!nw ? (c == 2 ? green : grey) : c == 2 ? Ui.MUTED : x.pick ? java.awt.Color.BLACK : grey);
-        return this;
-      }
+    pt.getColumnModel().getColumn(0).setMaxWidth(28);
+    pt.getColumnModel().getColumn(0).setMinWidth(28);
+    pt.getColumnModel().getColumn(1).setPreferredWidth(420);
+    pt.getColumnModel().getColumn(2).setPreferredWidth(240);
+    pt.getColumnModel().getColumn(3).setPreferredWidth(200);
+    pt.setDefaultRenderer(String.class, textCell((r, c) -> {
+      ObjRow x = rows.get(r);
+      return c == 1 ? (x.action.equals("create") && x.pick ? java.awt.Color.BLACK : Ui.FAINT) : Ui.MUTED;
+    }));
+    final Ui.PillCell pill = new Ui.PillCell();
+    pill.setFont(pt.getFont());
+    pt.getColumnModel().getColumn(2).setCellRenderer((tb, v, sel, foc, r, c) -> {
+      ObjRow x = rows.get(r);
+      pill.setBackground(tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+      if (x.action.equals("create")) return pill.set("New", Ui.PILL_BLUE, null, null);
+      return pill.set("Present", Ui.PILL_GREEN, x.note.startsWith("same report: ") ? "as " + x.note.substring(13) : null, Ui.MUTED);
     });
-    final JLabel empty = Ui.muted("Pick at least one quantity, one statistic and one object: the reports show here.");
+    final JLabel doneMark = Ui.doneCell();
+    doneMark.setToolTipText("Already in the simulation.");
+    final javax.swing.table.TableCellRenderer pboxes = pt.getDefaultRenderer(Boolean.class);
+    pt.setDefaultRenderer(Boolean.class, (tb, v, sel, foc, r, c) -> {
+      java.awt.Color bgc = tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE;
+      if (!rows.get(r).action.equals("create")) { doneMark.setBackground(bgc); return doneMark; }
+      java.awt.Component k = pboxes.getTableCellRendererComponent(tb, v, false, false, r, c);
+      k.setBackground(bgc);
+      return k;
+    });
+    spaceToggles(pt);
 
     refresh[0] = () -> {
       rows.clear();
       int skipped = 0, present = 0, nw = 0;
-      Set<String> why = new LinkedHashSet<>(), plotSet = new LinkedHashSet<>();
+      Set<String> why = new LinkedHashSet<>();
       for (ObjRow r : objPlan(names, qs, stats, objs, together[0], label.getText(), plotKeys[plots.getSelectedIndex()], data[0].obj)) {
-        if (r.action.equals("n/a")) { skipped++; why.add(r.note); continue; }
+        if (r.action.equals("n/a")) { skipped++; why.add(Ui.cap(r.note)); continue; }
         if (r.action.equals("create")) {
           r.pick = !Boolean.FALSE.equals(picks.get(r.name));
-          if (r.pick) { nw++; if (r.plotTitle != null) plotSet.add(r.plotTitle); }
+          if (r.pick) nw++;
         } else present++;
         rows.add(r);
       }
       pm.fireTableDataChanged();
-      empty.setVisible(rows.isEmpty());
-      int no = 0;
+      int no = 0, nq = 0;
       for (ObjTarget x : objs) if (x.pick) no++;
-      objCount.setText(no == 0 ? "none ticked" : no + " ticked");
+      for (ObjQty q : qs) if (q.pick) nq++;
+      List<String> miss = new ArrayList<>();
+      if (nq == 0) miss.add("a quantity");
+      if (stats.isEmpty()) miss.add("a statistic");
+      if (no == 0) miss.add("an object");
+      String empty;
+      if (!miss.isEmpty()) {
+        String m0 = miss.size() == 1 ? miss.get(0) : String.join(", ", miss.subList(0, miss.size() - 1)) + " and " + miss.get(miss.size() - 1);
+        empty = "Select " + m0 + " to list the reports.";
+      } else {
+        empty = "No report fits this selection: " + String.join("; ", why) + ".";
+      }
+      pt.putClientProperty("simkit.empty", empty);
+      pt.repaint();
+      objCount.setText(no == 0 ? "None selected" : no + " selected");
       for (Map.Entry<String, javax.swing.JToggleButton> g : groupChip.entrySet()) {
         int k = 0, n = 0;
         for (ObjTarget x : objs) if (kindOf.apply(x).equals(g.getKey())) { n++; if (x.pick) k++; }
-        g.getValue().setText(g.getKey() + "  " + (k == 0 ? String.valueOf(n) : k + "/" + n));
+        g.getValue().setText(Ui.cap(g.getKey()) + "  " + k + "/" + n);
         g.getValue().setSelected(k == n && n > 0);
       }
       ot.repaint();
-      result.setText(rows.isEmpty() ? "Result" : "Result: " + nw + (nw == 1 ? " new report" : " new reports")
-          + (plotSet.isEmpty() ? "" : ", " + plotSet.size() + (plotSet.size() == 1 ? " plot" : " plots")));
       List<String> s = new ArrayList<>();
-      if (present > 0) s.add(present + " present");
-      if (skipped > 0) s.add(skipped + " skipped: " + String.join("; ", why));
-      info.setText(s.isEmpty() ? " " : String.join("  ·  ", s));
+      if (!rows.isEmpty() || skipped > 0) {
+        s.add(nw + " new");
+        if (present > 0) s.add(present + " present");
+        if (skipped > 0) s.add(skipped + " skipped");
+      }
+      summary.setText(s.isEmpty() ? " " : String.join("  ·  ", s));
+      summary.setToolTipText(why.isEmpty() ? null : "<html>Skipped:<br>" + Html.esc(String.join("\n", why)).replace("\n", "<br>") + "</html>");
       changed.run();
     };
     plots.addActionListener(e -> refresh[0].run());
@@ -6292,72 +6488,75 @@ public class SimKit extends StarMacro {
     left.add(javax.swing.Box.createVerticalStrut(4));
     qChips.setAlignmentX(0f);
     left.add(qChips);
-    left.add(javax.swing.Box.createVerticalStrut(12));
+    left.add(javax.swing.Box.createVerticalStrut(4));
+    other.setAlignmentX(0f);
+    other.setMaximumSize(new java.awt.Dimension(200, other.getPreferredSize().height));
+    left.add(other);
+    left.add(javax.swing.Box.createVerticalStrut(16));
     left.add(step("2", "Statistics"));
     left.add(javax.swing.Box.createVerticalStrut(4));
     sChips.setAlignmentX(0f);
     left.add(sChips);
-    left.add(javax.swing.Box.createVerticalStrut(8));
-    JLabel ro = Ui.muted("Report on");
-    ro.setAlignmentX(0f);
-    left.add(ro);
-    modeChips.setAlignmentX(0f);
-    left.add(modeChips);
     left.add(javax.swing.Box.createVerticalGlue());
     JPanel right = new JPanel(new BorderLayout(0, 6));
-    JPanel rhead = new JPanel();
-    rhead.setLayout(new javax.swing.BoxLayout(rhead, javax.swing.BoxLayout.Y_AXIS));
-    JPanel t3 = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
-    t3.add(step("3", "Objects"));
-    t3.add(javax.swing.Box.createHorizontalStrut(8));
-    t3.add(objCount);
-    t3.setAlignmentX(0f);
-    rhead.add(t3);
-    rhead.add(javax.swing.Box.createVerticalStrut(4));
-    gChips.setAlignmentX(0f);
-    rhead.add(gChips);
-    JPanel srow = new JPanel(new BorderLayout(6, 0));
-    srow.add(search, BorderLayout.CENTER);
-    srow.add(clear, BorderLayout.EAST);
-    srow.setAlignmentX(0f);
-    srow.setMaximumSize(new java.awt.Dimension(470, search.getPreferredSize().height));
-    rhead.add(srow);
+    JPanel t3 = new JPanel(new BorderLayout());
+    JPanel t3l = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+    t3l.add(step("3", "Objects"));
+    t3l.add(javax.swing.Box.createHorizontalStrut(10));
+    t3l.add(objCount);
+    t3.add(t3l, BorderLayout.WEST);
+    t3.add(clear, BorderLayout.EAST);
+    JPanel rhead = new JPanel(new BorderLayout(0, 4));
+    rhead.add(t3, BorderLayout.NORTH);
+    rhead.add(gChips, BorderLayout.CENTER);
+    rhead.add(search, BorderLayout.SOUTH);
     right.add(rhead, BorderLayout.NORTH);
-    right.add(plainScroll(ot, 470, 170), BorderLayout.CENTER);
+    right.add(plainScroll(ot, 500, 6 * ot.getRowHeight() + ot.getRowHeight() + 6), BorderLayout.CENTER);
+    JPanel mode = new JPanel();
+    mode.setLayout(new javax.swing.BoxLayout(mode, javax.swing.BoxLayout.Y_AXIS));
+    each.setAlignmentX(0f);
+    mode.add(each);
+    JPanel allRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+    allRow.add(all);
+    allRow.add(javax.swing.Box.createHorizontalStrut(10));
+    allRow.add(new JLabel("Name"));
+    allRow.add(javax.swing.Box.createHorizontalStrut(6));
+    allRow.add(label);
+    allRow.setAlignmentX(0f);
+    mode.add(allRow);
+    right.add(mode, BorderLayout.SOUTH);
     JPanel topRow = new JPanel(new BorderLayout(24, 0));
     topRow.add(left, BorderLayout.WEST);
     topRow.add(right, BorderLayout.CENTER);
-    JPanel bottom = new JPanel(new BorderLayout(0, 4));
+    JPanel bottom = new JPanel(new BorderLayout(0, 6));
     JPanel rh = new JPanel(new BorderLayout());
-    rh.add(result, BorderLayout.WEST);
+    JPanel rhl = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+    rhl.add(step("4", "Reports to create"));
+    rhl.add(javax.swing.Box.createHorizontalStrut(12));
+    rhl.add(summary);
+    rh.add(rhl, BorderLayout.WEST);
     JPanel pr = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 6, 0));
-    pr.add(Ui.muted("Plots"));
+    pr.add(new JLabel("Plots"));
     pr.add(plots);
     rh.add(pr, BorderLayout.EAST);
     bottom.add(rh, BorderLayout.NORTH);
-    JPanel list = new JPanel(new BorderLayout());
-    list.add(plainScroll(pt, 980, 150), BorderLayout.CENTER);
-    bottom.add(list, BorderLayout.CENTER);
-    JPanel foot = new JPanel(new java.awt.GridLayout(2, 1, 0, 2));
-    foot.add(info);
-    foot.add(Ui.muted("Names: " + names.pattern + " (config/report_names.csv). A monitor per report; reports, monitors and plots in folders \"Per object\"."));
-    bottom.add(foot, BorderLayout.SOUTH);
-    JPanel emptyRow = new JPanel(new BorderLayout());
-    emptyRow.add(empty, BorderLayout.CENTER);
-    rh.add(emptyRow, BorderLayout.SOUTH);
-    p.panel.setLayout(new BorderLayout(0, 14));
-    p.panel.add(topRow, BorderLayout.CENTER);
-    p.panel.add(bottom, BorderLayout.SOUTH);
+    bottom.add(plainScroll(pt, 940, 5 * pt.getRowHeight() + pt.getRowHeight() + 6), BorderLayout.CENTER);
+    bottom.add(Ui.muted("<html>Names follow " + Html.esc(names.pattern) + " (config/report_names.csv). Each report gets a monitor. Reports, monitors "
+        + "and plots are stored in folders \"Per object\".</html>"), BorderLayout.SOUTH);
+    p.panel.setLayout(new BorderLayout(0, 16));
+    p.panel.add(topRow, BorderLayout.NORTH);
+    p.panel.add(bottom, BorderLayout.CENTER);
+    p.focus = ot;
     p.label = () -> {
       int k = 0;
       for (ObjRow r : rows) if (r.pick && r.action.equals("create")) k++;
-      return k == 0 ? null : k == 1 ? "Create 1 report" : "Create " + k + " reports";
+      return k == 0 ? null : "Create " + plural(k, "report", "reports");
     };
     p.job = () -> {
       final List<ObjRow> todo = new ArrayList<>();
       for (ObjRow r : rows) if (r.pick && r.action.equals("create")) todo.add(r);
-      final String mode = plotKeys[plots.getSelectedIndex()];
-      return todo.isEmpty() ? null : () -> reportsAct.run("obj", todo, mode);
+      final String mode0 = plotKeys[plots.getSelectedIndex()];
+      return todo.isEmpty() ? null : () -> reportsAct.run("obj", todo, mode0);
     };
     p.reload = () -> { picks.clear(); refresh[0].run(); };
     refresh[0].run();
@@ -7856,7 +8055,22 @@ public class SimKit extends StarMacro {
     static final java.awt.Color BLUE = new java.awt.Color(0x1F, 0x5F, 0xAF), MUTED = new java.awt.Color(0x6B, 0x75, 0x80),
         RED = new java.awt.Color(0xB0, 0x20, 0x20), LINE = new java.awt.Color(0xD5, 0xD9, 0xDE), PALE = new java.awt.Color(0xF0, 0xF6, 0xFD);
 
-    /** A toggle drawn as a rounded chip: pale blue with a blue frame when on, white with a grey frame when off. */
+    /** Text of rows that cannot be made, frame and row lines, selected row, group rows and table headers. */
+    static final java.awt.Color FAINT = new java.awt.Color(0x8A, 0x93, 0x9E), RULE = new java.awt.Color(0xE3, 0xE7, 0xEC),
+        SEL = new java.awt.Color(0xE3, 0xEE, 0xFB), BAND = new java.awt.Color(0xF5, 0xF6, 0xF8), AMBER = new java.awt.Color(0x8A, 0x5A, 0x00),
+        GREEN = new java.awt.Color(0x2E, 0x6B, 0x2E);
+    /** Status pills: fill and text. */
+    static final java.awt.Color[] PILL_GREEN = {new java.awt.Color(0xDD, 0xF2, 0xDF), GREEN},
+        PILL_BLUE = {new java.awt.Color(0xDC, 0xEB, 0xFF), new java.awt.Color(0x1F, 0x4E, 0x9A)},
+        PILL_AMBER = {new java.awt.Color(0xFF, 0xF1, 0xD6), AMBER};
+
+    /** First letter upper case (display of keys such as "area average"). */
+    static String cap(String s) {
+      return s == null || s.isEmpty() ? "" : Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    /** A toggle drawn as a rounded chip: pale blue with a blue frame when on, white with a grey frame when off; a second
+     *  frame shows the keyboard focus. */
     static javax.swing.JToggleButton chip(String text) {
       final javax.swing.JToggleButton b = new javax.swing.JToggleButton(text) {
         private static final long serialVersionUID = 1L;
@@ -7866,8 +8080,12 @@ public class SimKit extends StarMacro {
           boolean on = isSelected();
           g2.setColor(on ? PALE : java.awt.Color.WHITE);
           g2.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 12, 12);
-          g2.setColor(on ? BLUE : getModel().isRollover() ? new java.awt.Color(0xA8, 0xB0, 0xBA) : LINE);
+          g2.setColor(on ? BLUE : getModel().isRollover() ? FAINT : LINE);
           g2.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 12, 12);
+          if (isFocusOwner()) {
+            g2.setColor(BLUE);
+            g2.drawRoundRect(2, 2, getWidth() - 5, getHeight() - 5, 9, 9);
+          }
           g2.dispose();
           super.paintComponent(g);
         }
@@ -7878,10 +8096,14 @@ public class SimKit extends StarMacro {
       b.setOpaque(false);
       b.setRolloverEnabled(true);
       b.setMargin(new java.awt.Insets(3, 10, 3, 10));
-      b.setFont(b.getFont().deriveFont(Font.PLAIN, 12f));
+      b.setFont(b.getFont().deriveFont(Font.PLAIN));
       b.setForeground(new java.awt.Color(0x33, 0x3A, 0x44));
       b.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
       b.addItemListener(e -> b.setForeground(b.isSelected() ? BLUE : new java.awt.Color(0x33, 0x3A, 0x44)));
+      b.addFocusListener(new java.awt.event.FocusAdapter() {
+        @Override public void focusGained(java.awt.event.FocusEvent e) { b.repaint(); }
+        @Override public void focusLost(java.awt.event.FocusEvent e) { b.repaint(); }
+      });
       return b;
     }
 
@@ -7908,8 +8130,8 @@ public class SimKit extends StarMacro {
     static JButton tab(String text) {
       JButton b = new JButton(text);
       b.setContentAreaFilled(false);
-      b.setFocusPainted(false);
-      b.setFont(b.getFont().deriveFont(13f));
+      b.setFocusPainted(true);
+      b.setFont(b.getFont().deriveFont(b.getFont().getSize2D() + 1f));
       b.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
       tabOn(b, false);
       return b;
@@ -7922,17 +8144,35 @@ public class SimKit extends StarMacro {
           BorderFactory.createEmptyBorder(6, 12, 6, 12)));
     }
 
-    /** A table cell drawn as a small rounded label (a status); fill null: plain text. */
+    /** The second button of a window (Close, Cancel): white, grey frame, plain text. */
+    static JButton secondary(String text) {
+      JButton b = new JButton(text);
+      b.setFont(b.getFont().deriveFont(Font.PLAIN));
+      b.setForeground(java.awt.Color.BLACK);
+      b.setBackground(java.awt.Color.WHITE);
+      b.setOpaque(true);
+      b.setContentAreaFilled(false);
+      b.setFocusPainted(true);
+      b.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(LINE), BorderFactory.createEmptyBorder(5, 16, 5, 16)));
+      return b;
+    }
+
+    /** A table cell drawn as a small rounded label (a status), then a detail text; pill null: detail only. The cell
+     *  background is the row background (selection shows). */
     static final class PillCell extends JLabel {
       private static final long serialVersionUID = 1L;
-      java.awt.Color fill;
+      String pill, detail;
+      java.awt.Color fill, pillFg, detailFg;
 
-      PillCell() { setFont(getFont().deriveFont(Font.PLAIN, 11f)); }
+      PillCell() { setOpaque(true); }
 
-      PillCell set(String text, java.awt.Color bg, java.awt.Color fg) {
-        setText(text);
-        fill = bg;
-        setForeground(fg);
+      PillCell set(String pill, java.awt.Color[] colours, String detail, java.awt.Color detailFg) {
+        this.pill = pill;
+        this.fill = colours == null ? null : colours[0];
+        this.pillFg = colours == null ? null : colours[1];
+        this.detail = detail;
+        this.detailFg = detailFg;
+        setToolTipText(null);
         return this;
       }
 
@@ -7940,21 +8180,37 @@ public class SimKit extends StarMacro {
         java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
         g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        g2.setColor(java.awt.Color.WHITE);
+        g2.setColor(getBackground());
         g2.fillRect(0, 0, getWidth(), getHeight());
-        g2.setFont(getFont());
-        java.awt.FontMetrics fm = g2.getFontMetrics();
-        String t = getText() == null ? "" : getText();
         int x = 8;
-        if (fill != null) {
+        if (pill != null) {
+          java.awt.Font f = getFont().deriveFont(Font.PLAIN, getFont().getSize2D() - 1f);
+          g2.setFont(f);
+          java.awt.FontMetrics fm = g2.getFontMetrics();
+          int h = fm.getHeight() + 4, w = fm.stringWidth(pill) + 16;
           g2.setColor(fill);
-          g2.fillRoundRect(6, (getHeight() - 18) / 2, Math.min(fm.stringWidth(t) + 16, getWidth() - 8), 18, 10, 10);
-          x = 14;
+          g2.fillRoundRect(x, (getHeight() - h) / 2, w, h, h - 4, h - 4);
+          g2.setColor(pillFg);
+          g2.drawString(pill, x + 8, (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
+          x += w + 6;
         }
-        g2.setColor(getForeground());
-        g2.drawString(t, x, (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
+        if (detail != null && !detail.isEmpty()) {
+          g2.setFont(getFont().deriveFont(Font.PLAIN));
+          java.awt.FontMetrics fm = g2.getFontMetrics();
+          g2.setColor(detailFg == null ? MUTED : detailFg);
+          g2.drawString(detail, x, (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
+        }
         g2.dispose();
       }
+    }
+
+    /** A check mark cell (a row already in the simulation). */
+    static JLabel doneCell() {
+      JLabel l = new JLabel("✓", javax.swing.SwingConstants.CENTER);
+      l.setOpaque(true);
+      l.setForeground(GREEN);
+      l.setFont(l.getFont().deriveFont(Font.BOLD));
+      return l;
     }
 
     /** The one main button of a window: blue, white bold text. */
@@ -8042,7 +8298,7 @@ public class SimKit extends StarMacro {
         final JLabel msg = new JLabel(" ");
         msg.setForeground(RED);
         final boolean stay = Boolean.TRUE.equals(ok.getClientProperty("simkit.stay"));   // acts, the window stays open
-        JButton cancel = new JButton(stay ? "Close" : "Cancel");
+        JButton cancel = secondary(stay ? "Close" : "Cancel");
         cancel.addActionListener(e -> d.dispose());
         if (!stay) {
           ok.addActionListener(e -> {
@@ -8067,7 +8323,8 @@ public class SimKit extends StarMacro {
           bottom.add(btns, BorderLayout.EAST);
           root.add(col, BorderLayout.SOUTH);
         } else {
-          bottom.add(msg, BorderLayout.CENTER);
+          Object status = ok.getClientProperty("simkit.status");
+          bottom.add(status instanceof JLabel ? (JLabel) status : msg, BorderLayout.CENTER);
           bottom.add(btns, BorderLayout.EAST);
         }
         if (extra == null) root.add(bottom, BorderLayout.SOUTH);
@@ -8075,7 +8332,11 @@ public class SimKit extends StarMacro {
         root.setBackground(java.awt.Color.WHITE);
         d.setContentPane(root);
         if (!stay) d.getRootPane().setDefaultButton(ok);
-        d.getRootPane().registerKeyboardAction(e -> d.dispose(), javax.swing.KeyStroke.getKeyStroke("ESCAPE"),
+        d.getRootPane().registerKeyboardAction(e -> {   // Esc: clears a search field first, else closes
+          java.awt.Component f = d.getFocusOwner();
+          if (f instanceof JTextField && !((JTextField) f).getText().isEmpty()) ((JTextField) f).setText("");
+          else d.dispose();
+        }, javax.swing.KeyStroke.getKeyStroke("ESCAPE"),
             javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW);
         d.pack();
         d.setLocationRelativeTo(owner());
