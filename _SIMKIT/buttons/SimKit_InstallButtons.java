@@ -34,7 +34,7 @@ public class SimKit_InstallButtons extends StarMacro {
   /** Toolbar order: file in buttons/ (without .java), tooltip. Icons: buttons/icons/<file>.png. */
   static final String[][] BUTTONS = {
       {"SimKit_Menu", "SimKit (all tools)"},
-      {"SimKit_SaveNewVersion", "SimKit: Save run"},
+      {"SimKit_SaveNewVersion", "SimKit: Save as new run"},
       {"SimKit_RunOnCluster", "SimKit: Run on cluster"},
       {"SimKit_CaseTracker", "SimKit: Tracker"},
       {"SimKit_Calculators", "SimKit: Calculators"},

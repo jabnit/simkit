@@ -1,7 +1,7 @@
 // SimKit.java -- SimKit 0.3 (2026-11-11) -- STAR-CCM+ 2402 and later, Windows 10/11 and Linux RHEL 7/9.
 //
 // Team helper for STAR-CCM+ work. It keeps the native STAR-CCM+ workflow; it only adds:
-//   * Save run: a study = one folder (any name, anywhere); each run = one folder R<nnn>_<name>/ holding
+//   * Save as new run: a study = one folder (any name, anywhere); each run = one folder R<nnn>_<name>/ holding
 //     R<nnn>_<name>.sim, run.txt (name, based on, comment, status), submit/ (scripts, logs) and what the cluster
 //     sends back. The run number also lives inside the simulation (p_simkit_run). Runs may be grouped in sub-folders.
 //   * Run on cluster, Tracker (runs, family tree), Calculators (lib/generic/SimKitCalc.java), Standard reports,
@@ -107,7 +107,7 @@ public class SimKit extends StarMacro {
 
   static final String[][] DEFAULT_PROJECTS = {{"ISO", "ISO 2685 burner", ""}};
 
-  static final String[] TOOL_NAMES = {"", "New case", "Save run", "", "",
+  static final String[] TOOL_NAMES = {"", "New case", "Save as new run…", "", "",
       "Calculators", "", "Case tracker", "Guideline", "About", "Standard reports", "",
       "Mesh study", "Standard scenes", "", "Run on cluster"};
   static final String[] TOOL_HELP = {"",
@@ -335,7 +335,7 @@ public class SimKit extends StarMacro {
       {"Set-up", new int[] {10, 13, 12}},
       {"Tools", new int[] {5, 8, 9}}};
   static final String[] TOOL_SHORT = {"",
-      "", "New run from this one", "", "",
+      "", "Copy as the next run, from this one", "", "",
       "y+, Re, time step, GCI ...", "", "Runs, status, comments",
       "Team guideline", "Version, kit location", "Mass balance, p, T, y+ ...", "",
       "Mesh levels", "Same views every run", "", "Submit with bsub"};
@@ -425,11 +425,6 @@ public class SimKit extends StarMacro {
     statusLine.setForeground(java.awt.Color.GRAY);
     JButton close = new JButton("Close");
     close.addActionListener(e -> d.dispose());
-    javax.swing.JCheckBox onTop = new javax.swing.JCheckBox("Keep in front of other apps", Env.onTop());
-    onTop.setOpaque(false);
-    onTop.setToolTipText("Keep the SimKit windows above every other window (remembered for next time). "
-        + "Off: they stay above STAR-CCM+ only.");
-    onTop.addActionListener(e -> Env.setOnTop(onTop.isSelected()));
     JPanel right = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
     right.setOpaque(false);
     detailsButton = new JButton("Details");
@@ -437,7 +432,6 @@ public class SimKit extends StarMacro {
     detailsButton.setEnabled(lastText != null);
     detailsButton.addActionListener(e -> { if (lastText != null) Ui.showText(lastTitle, lastText); });
     right.add(detailsButton);
-    right.add(onTop);
     right.add(close);
     JPanel south = new JPanel(new BorderLayout());
     south.setOpaque(false);
@@ -475,14 +469,14 @@ public class SimKit extends StarMacro {
     } else {
       headTitle.setText("No project");
       headTitle.setForeground(new java.awt.Color(0x8A, 0x5A, 0x00));
-      headSub.setText("Save run creates one (this simulation becomes R001).");
+      headSub.setText("Save as new run creates one (this simulation becomes R001).");
       headPath.setText(path.isEmpty() ? "(simulation not saved yet)" : path);
     }
     for (int id : NEEDS_CASE) {   // greyed until the sim is a case
       JButton b = buttonById.get(id);
       if (b == null) continue;
       b.setEnabled(c != null && !busy);
-      b.setToolTipText(c != null ? TOOL_HELP[id] : "Needs a run of a project: use Save run first. (" + TOOL_HELP[id] + ")");
+      b.setToolTipText(c != null ? TOOL_HELP[id] : "Needs a run of a project: use Save as new run first. (" + TOOL_HELP[id] + ")");
     }
   }
 
@@ -610,7 +604,7 @@ public class SimKit extends StarMacro {
     try {
       return parseCase(sessionPath());
     } catch (IllegalStateException e) {
-      throw new Cancel("this needs a run of a project: use Save run first (" + e.getMessage() + ")");
+      throw new Cancel("this needs a run of a project: use Save as new run first (" + e.getMessage() + ")");
     }
   }
 
@@ -755,7 +749,7 @@ public class SimKit extends StarMacro {
   }
 
   /** A small label on every scene: "Run R007  baseline" (images in reports then name their run), next to the
-   *  iteration (or physical time) annotation of STAR-CCM+. Scenes made later get it at the next Save run or Export. */
+   *  iteration (or physical time) annotation of STAR-CCM+. Scenes made later get it at the next Save as new run or Export. */
   void runLabels(String text) {
     try {
       star.vis.AnnotationManager am = sim.getAnnotationManager();
@@ -813,6 +807,7 @@ public class SimKit extends StarMacro {
     setParam(P_RUN, n);
     setParam(P_FROM, from == null ? 0 : from.nnn);
     setParam(P_FROM_IT, it);
+    groupTracking();
     iterSeparator();
     runLabels("Run " + id + (name.isEmpty() ? "" : "  " + name));
     sim.saveState(Fs.guard(f).toString());
@@ -859,6 +854,16 @@ public class SimKit extends StarMacro {
     startStudy(dir, "base", "test study");
     CaseInfo r1 = requireCase();
     log.line("open run " + r1.caseId + " (" + P_RUN + " = " + findParam(P_RUN).getQuantity().getValue() + "), file " + r1.simFile.getFileName());
+    try {
+      GlobalParameterManager pm = sim.get(GlobalParameterManager.class);
+      List<String> fold = new ArrayList<>();
+      for (Object gr : pm.getGroupsManager().getObjects()) {
+        List<String> in = new ArrayList<>();
+        for (Object o : ((star.base.neo.ClientServerObjectManager<?>) gr).getObjects()) in.add(nm(o));
+        fold.add(nm(gr) + " " + in);
+      }
+      log.line("parameter folders: " + fold + "; top level: " + pm.getObjects().size() + " object(s)");
+    } catch (Throwable t) { log.na("parameter folders", t); }
     saveRun(dir, "finer", "test: second run");
     CaseInfo r2 = requireCase();
     log.line("open run " + r2.caseId + ", based on " + readIdentity(r2).get("based_on") + " at iteration "
@@ -884,7 +889,7 @@ public class SimKit extends StarMacro {
     log.line("study row label of the returned file: " + fileLabel(back.getFileName().toString()));
     writeTrackerCsv(dir, trackerRows(dir));
     log.line("study tracker csv: " + dir.resolve(TRACKER_CSV));
-    // Save run > "Root of a new study instead": the open run becomes R001 of a new study
+    // Save as new run > "Root of a new study instead": the open run becomes R001 of a new study
     CaseInfo before = requireCase();
     Path dir2 = dir.resolveSibling(dir.getFileName() + "_branch");
     startStudy(dir2, "branch", "test: new study from " + before.caseId);
@@ -1190,14 +1195,14 @@ public class SimKit extends StarMacro {
     id.put("last_saved", Fmt.iso());
   }
 
-  /** Save run (one button): the next run of this study, based on this one at its current iteration; not in a study
+  /** Save as new run (one button): the next run of this study, based on this one at its current iteration; not in a study
    *  yet: starts one (a folder you name) with this simulation as R001. The open file stays as it is on disk. */
   void toolSave() throws IOException {
     final CaseInfo r = runOrNull();
     final String p = sessionPath();
     final Path study = r != null ? r.caseDir : null;
     if (!gui) {
-      if (study == null) throw new Cancel("not in a project yet: start one with Save run in the STAR-CCM+ window");
+      if (study == null) throw new Cancel("not in a project yet: start one with Save as new run in the STAR-CCM+ window");
       saveRun(study, r.label.isEmpty() ? "next" : r.label, "");
       return;
     }
@@ -1207,7 +1212,7 @@ public class SimKit extends StarMacro {
         : !p.isEmpty() && Paths.get(p).getParent() != null ? Paths.get(p).toAbsolutePath().getParent() : Paths.get(System.getProperty("user.home"));
     Object[] res = Ui.edt(() -> runWindow(r, study, it, parent0));
     if (res == null) throw new Cancel(null);
-    if ("newstudy".equals(res[0])) {   // ticked in Save run: this run becomes R001 of a new study, next to this one
+    if ("newstudy".equals(res[0])) {   // ticked in Save as new run: this run becomes R001 of a new study, next to this one
       final Path p1 = study.getParent() == null ? parent0 : study.getParent();
       res = Ui.edt(() -> runWindow(r, null, it, p1));
       if (res == null) throw new Cancel(null);
@@ -1218,7 +1223,7 @@ public class SimKit extends StarMacro {
     else saveRun(study, (String) res[0], (String) res[1], r, null, (String) res[2]);
   }
 
-  /** The Save run window (Swing thread). In a study: {name, comment}; not yet: {name, description, study folder}. */
+  /** The Save as new run window (Swing thread). In a study: {name, comment}; not yet: {name, description, study folder}. */
   Object[] runWindow(final CaseInfo r, final Path study, final int it, Path parent0) {
     final boolean first = study == null;
     final JTextField name = Ui.hintField("", first ? "e.g. baseline" : "e.g. finer_mesh", 22);
@@ -1347,7 +1352,7 @@ public class SimKit extends StarMacro {
     List<javax.swing.JComponent> parts = new ArrayList<>();
     if (treeView != null) parts.add(treeView);
     final boolean[] toNew = {false};
-    final JButton okB = Ui.primary(first ? "Create" : "Save run");
+    final JButton okB = Ui.primary(first ? "Create" : "Save");
     final JButton newRoot = first ? null : Ui.link("New project from this run…");
     if (newRoot != null) {
       newRoot.setToolTipText("R001 of a new project, coming from " + r.caseId);
@@ -1370,7 +1375,7 @@ public class SimKit extends StarMacro {
       body.add(javax.swing.Box.createVerticalStrut(k == formRow || k == treeView ? 10 : 6));
     }
     upd.run();
-    String title = first ? "New project" : "Save run";
+    String title = first ? "New project" : "Save as new run";
     String sub = first ? "" : study.getFileName() + "  \u00B7  from " + r.caseId + (r.label.isEmpty() ? "" : " " + r.label) + "  \u00B7  it " + it;
     boolean go = Ui.sheet(title, sub, body, okB, () -> {
       if (toNew[0]) return null;
@@ -2065,7 +2070,7 @@ public class SimKit extends StarMacro {
   }
 
   /** Runs drawn as a family tree: generations left to right, each card to the right of the run it is based on, soft
-   *  curved links. Used by the tracker (Family tree) and by Save run, where a dashed blue card shows the run about to
+   *  curved links. Used by the tracker (Family tree) and by Save as new run, where a dashed blue card shows the run about to
    *  be saved (ghost = {id, name, parent id}). */
   static final class RunTree extends javax.swing.JComponent {
     private static final long serialVersionUID = 1L;
@@ -4564,6 +4569,7 @@ public class SimKit extends StarMacro {
   static final class StdReport {
     String[] def;
     List<Object> target = new ArrayList<>();
+    List<Object> deflt;   // the surfaces found from the names (Default)
     String why;
     boolean on;
   }
@@ -4647,16 +4653,27 @@ public class SimKit extends StarMacro {
         log.na("report " + r[0], t);
       }
     }
-    for (Map.Entry<String, List<Object>> g : groups.entrySet()) monitorsAndPlot(g.getValue(), "pl_" + g.getKey());
+    List<Object> plots = new ArrayList<>();
+    for (Map.Entry<String, List<Object>> g : groups.entrySet()) {
+      Object[] mp = monitorsAndPlot(g.getValue(), "pl_" + g.getKey());
+      // in the tree: reports and monitors in one folder per purpose, the plots together in one folder
+      String folder = groupTitle(g.getKey());
+      toFolder(sim.getReportManager(), folder, g.getValue());
+      toFolder(sim.getMonitorManager(), folder, (List<?>) mp[0]);
+      if (mp[1] != null) plots.add(mp[1]);
+    }
+    toFolder(sim.getPlotManager(), "Standard reports", plots);   // one call: adding to a folder later makes a second one
     result(n + " report(s) with monitors and " + groups.size() + " plot(s) created");
   }
 
-  /** The Standard reports window (Swing thread): rows grouped, tick to create, double-click the surfaces to change
-   *  them; rows that cannot be made are grey with the reason. True on Create. */
+  /** The Standard reports window (Swing thread): the reports grouped by purpose on the left (tick to create); the
+   *  surfaces of the selected report on the right (defaults ticked from the surface names; change them freely).
+   *  Rows that cannot be made are grey with the reason. True on Create. */
   boolean reportsWindow(final List<StdReport> all, final List<Object> every) {
     final List<Object> rows = new ArrayList<>();   // a String = a group title, else a StdReport
     String last = null;
     for (StdReport x : all) {
+      if (x.deflt == null) x.deflt = new ArrayList<>(x.target);
       if (!x.def[1].equals(last)) { rows.add(groupTitle(x.def[1])); last = x.def[1]; }
       rows.add(x);
     }
@@ -4667,11 +4684,13 @@ public class SimKit extends StarMacro {
       ok.setText(k == 1 ? "Create 1 report" : "Create " + k + " reports");
       ok.setEnabled(k > 0);
     };
+    final java.util.function.Function<StdReport, Boolean> surf = x -> x.why == null && !x.def[2].equalsIgnoreCase("expression") && !x.def[4].equals("REGIONS");
+    final java.util.function.Function<StdReport, Boolean> edited = x -> !new HashSet<>(x.target).equals(new HashSet<>(x.deflt));
     final javax.swing.table.AbstractTableModel model = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
       @Override public int getRowCount() { return rows.size(); }
       @Override public int getColumnCount() { return 4; }
-      @Override public String getColumnName(int c) { return new String[] {"", "report", "gives", "computed on"}[c]; }
+      @Override public String getColumnName(int c) { return new String[] {"", "report", "gives", "on"}[c]; }
       @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
       @Override public boolean isCellEditable(int r, int c) { return c == 0 && rows.get(r) instanceof StdReport && ((StdReport) rows.get(r)).why == null; }
       @Override public Object getValueAt(int r, int c) {
@@ -4684,10 +4703,10 @@ public class SimKit extends StarMacro {
           case 2: return x.def[6];
           default:
             if (x.why != null) return x.why;
-            if (x.def[2].equalsIgnoreCase("expression")) return x.def[3];
-            List<String> ns = new ArrayList<>();
-            for (Object t : x.target) ns.add(nm(t));
-            return ns.size() <= 3 ? String.join(", ", ns) : ns.get(0) + ", " + ns.get(1) + " and " + (ns.size() - 2) + " more";
+            if (x.def[2].equalsIgnoreCase("expression")) return "formula";
+            if (x.def[4].equals("REGIONS")) return "all regions";
+            int n = x.target.size();
+            return (edited.apply(x) ? "● " : "") + n + (n == 1 ? " surface" : " surfaces");
         }
       }
       @Override public void setValueAt(Object v, int r, int c) {
@@ -4695,19 +4714,17 @@ public class SimKit extends StarMacro {
         count.run();
       }
     };
-    final javax.swing.JTable table = new javax.swing.JTable(model) {
+    final JTable table = new JTable(model) {
       private static final long serialVersionUID = 1L;
       @Override public java.awt.Component prepareRenderer(javax.swing.table.TableCellRenderer rr, int r, int c) {
         java.awt.Component k = super.prepareRenderer(rr, r, c);
         Object o = rows.get(r);
         boolean head = o instanceof String, off = !head && ((StdReport) o).why != null;
+        boolean ed = !head && !off && edited.apply((StdReport) o);
         k.setBackground(head ? new java.awt.Color(0xF2, 0xF4, 0xF7) : isRowSelected(r) && !off ? Ui.PALE : java.awt.Color.WHITE);
-        k.setForeground(off ? new java.awt.Color(0xA8, 0xB0, 0xBA) : head ? Ui.MUTED : c == 3 ? Ui.MUTED : java.awt.Color.BLACK);
+        k.setForeground(off ? new java.awt.Color(0xA8, 0xB0, 0xBA) : head ? Ui.MUTED : c == 3 && ed ? Ui.BLUE : c >= 2 ? Ui.MUTED : java.awt.Color.BLACK);
         k.setFont(k.getFont().deriveFont(head ? Font.BOLD : Font.PLAIN));
         if (k instanceof javax.swing.JCheckBox) k.setEnabled(!off && !head);
-        if (k instanceof javax.swing.JComponent && c == 3 && !head && !off) {
-          ((javax.swing.JComponent) k).setToolTipText(((StdReport) o).def[2].equalsIgnoreCase("expression") ? null : "Double-click to choose the surfaces");
-        }
         return k;
       }
     };
@@ -4716,6 +4733,7 @@ public class SimKit extends StarMacro {
       if (rows.get(r) instanceof String) {
         JLabel l = new JLabel();
         l.setOpaque(true);
+        l.setBackground(new java.awt.Color(0xF2, 0xF4, 0xF7));
         return l;
       }
       return boxes.getTableCellRendererComponent(t, v, sel, foc, r, c);
@@ -4723,50 +4741,176 @@ public class SimKit extends StarMacro {
     table.setRowHeight(24);
     table.setShowVerticalLines(false);
     table.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
+    table.setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
     table.getColumnModel().getColumn(0).setMaxWidth(30);
     table.getColumnModel().getColumn(1).setPreferredWidth(150);
-    table.getColumnModel().getColumn(2).setPreferredWidth(300);
-    table.getColumnModel().getColumn(3).setPreferredWidth(230);
-    table.addMouseListener(new java.awt.event.MouseAdapter() {
-      @Override public void mouseClicked(java.awt.event.MouseEvent e) {
-        int r = table.rowAtPoint(e.getPoint());
-        if (e.getClickCount() != 2 || r < 0 || !(rows.get(r) instanceof StdReport)) return;
-        StdReport x = (StdReport) rows.get(r);
-        if (x.why != null || x.def[2].equalsIgnoreCase("expression") || x.def[4].equals("REGIONS") || every.isEmpty()) return;
-        String[] labels = new String[every.size()];
-        List<Integer> pre = new ArrayList<>();
-        for (int i = 0; i < labels.length; i++) {
-          Object b = every.get(i);
-          String reg = "";
-          try { reg = nm(((Boundary) b).getRegion()) + ": "; } catch (Throwable t) { /* no region name */ }
-          labels[i] = reg + nm(b);
-          if (x.target.contains(b)) pre.add(i);
-        }
-        javax.swing.JList<String> list = new javax.swing.JList<>(labels);
-        int[] sel = new int[pre.size()];
-        for (int i = 0; i < sel.length; i++) sel[i] = pre.get(i);
-        list.setSelectedIndices(sel);
-        JScrollPane sp = new JScrollPane(list);
-        sp.setPreferredSize(new java.awt.Dimension(420, 280));
-        JPanel p = new JPanel(new BorderLayout(0, 6));
-        p.add(Ui.muted("Ctrl+click to add or remove"), BorderLayout.NORTH);
-        p.add(sp, BorderLayout.CENTER);
-        if (JOptionPane.showConfirmDialog(table, p, x.def[0], JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
-        if (list.getSelectedIndices().length == 0) return;
-        x.target.clear();
-        for (int i : list.getSelectedIndices()) x.target.add(every.get(i));
-        model.fireTableRowsUpdated(r, r);
+    table.getColumnModel().getColumn(2).setPreferredWidth(270);
+    table.getColumnModel().getColumn(3).setPreferredWidth(110);
+
+    // ----- the right pane: the surfaces of the selected report -----
+    final JLabel title = new JLabel(" "), meaning = Ui.muted(" "), countLbl = Ui.muted(" ");
+    title.setFont(title.getFont().deriveFont(Font.BOLD, 14f));
+    final JTextField search = Ui.hintField("", "Search surfaces", 18);
+    final JPanel list = new JPanel();
+    list.setLayout(new javax.swing.BoxLayout(list, javax.swing.BoxLayout.Y_AXIS));
+    list.setBackground(java.awt.Color.WHITE);
+    final JLabel note = Ui.muted(" ");
+    final JButton dflt = Ui.link("Default"), allB = Ui.link("All"), none = Ui.link("None");
+    final StdReport[] cur = {null};
+    final Runnable[] fill = {null};
+    final Runnable refreshRow = () -> {
+      model.fireTableDataChanged();
+      if (cur[0] != null) {
+        int i = rows.indexOf(cur[0]);
+        if (i >= 0) table.setRowSelectionInterval(i, i);
       }
+    };
+    fill[0] = () -> {
+      list.removeAll();
+      StdReport x = cur[0];
+      boolean can = x != null && surf.apply(x);
+      search.setEnabled(can);
+      dflt.setEnabled(can);
+      allB.setEnabled(can);
+      none.setEnabled(can);
+      if (x == null) {
+        title.setText("Select a report");
+        meaning.setText(" ");
+        note.setText(" ");
+        countLbl.setText(" ");
+      } else {
+        title.setText(x.def[0]);
+        meaning.setText(x.def[6]);
+        if (x.why != null) note.setText("Not possible here: " + x.why);
+        else if (x.def[2].equalsIgnoreCase("expression")) note.setText("<html>Formula: " + Html.esc(x.def[3])
+            + (x.def[5].startsWith("needs ") ? "<br>Uses: " + Html.esc(x.def[5].substring(6).trim().replace(" ", ", ")) : "") + "</html>");
+        else if (x.def[4].equals("REGIONS")) note.setText("All regions");
+        else note.setText(" ");
+        if (can) {
+          String q = search.getText().trim().toLowerCase(Locale.ROOT);
+          String region = null;
+          for (final Object b : every) {
+            String n = nm(b), reg = "";
+            try { reg = nm(((Boundary) b).getRegion()); } catch (Throwable t) { /* no region (offline) */ }
+            if (!q.isEmpty() && !n.toLowerCase(Locale.ROOT).contains(q) && !reg.toLowerCase(Locale.ROOT).contains(q)) continue;
+            if (!reg.equals(region)) {
+              JLabel h = new JLabel(reg.isEmpty() ? "Surfaces" : reg);
+              h.setFont(h.getFont().deriveFont(Font.BOLD, 11f));
+              h.setForeground(Ui.MUTED);
+              h.setBorder(BorderFactory.createEmptyBorder(region == null ? 2 : 8, 2, 2, 0));
+              h.setAlignmentX(0f);
+              list.add(h);
+              region = reg;
+            }
+            String tok = bcToken(n);
+            final javax.swing.JCheckBox cb = new javax.swing.JCheckBox(n.substring(n.lastIndexOf('.') + 1), x.target.contains(b));
+            cb.setBackground(java.awt.Color.WHITE);
+            cb.setFocusPainted(false);
+            cb.setIcon(null);
+            cb.setAlignmentX(0f);
+            cb.setToolTipText(n);
+            final JLabel tag = new JLabel(tok == null ? "" : tok);
+            tag.setFont(tag.getFont().deriveFont(Font.BOLD, 10f));
+            java.awt.Color[] tc = tagColors(tok);
+            tag.setOpaque(tok != null);
+            tag.setBackground(tc[0]);
+            tag.setForeground(tc[1]);
+            tag.setBorder(BorderFactory.createEmptyBorder(1, 5, 1, 5));
+            JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+            row.setBackground(java.awt.Color.WHITE);
+            row.add(cb);
+            row.add(tag);
+            row.setAlignmentX(0f);
+            row.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, cb.getPreferredSize().height + 2));
+            cb.addActionListener(e -> {
+              if (cb.isSelected()) {   // keep the order of the model's surfaces
+                List<Object> nt = new ArrayList<>();
+                for (Object o : every) if (o == b || x.target.contains(o)) nt.add(o);
+                x.target.clear();
+                x.target.addAll(nt);
+              } else {
+                x.target.remove(b);
+              }
+              countLbl.setText(x.target.size() + " of " + every.size() + " surfaces");
+              refreshRow.run();
+            });
+            list.add(row);
+          }
+          countLbl.setText(x.target.size() + " of " + every.size() + " surfaces");
+        } else {
+          countLbl.setText(" ");
+        }
+      }
+      list.revalidate();
+      list.repaint();
+    };
+    dflt.addActionListener(e -> { if (cur[0] != null) { cur[0].target.clear(); cur[0].target.addAll(cur[0].deflt); fill[0].run(); refreshRow.run(); } });
+    allB.addActionListener(e -> { if (cur[0] != null) { cur[0].target.clear(); cur[0].target.addAll(every); fill[0].run(); refreshRow.run(); } });
+    none.addActionListener(e -> { if (cur[0] != null) { cur[0].target.clear(); fill[0].run(); refreshRow.run(); } });
+    search.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { fill[0].run(); }
+      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { fill[0].run(); }
+      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { fill[0].run(); }
     });
+    table.getSelectionModel().addListSelectionListener(e -> {
+      if (e.getValueIsAdjusting()) return;
+      int r = table.getSelectedRow();
+      StdReport x = r >= 0 && rows.get(r) instanceof StdReport ? (StdReport) rows.get(r) : null;
+      if (x == cur[0]) return;
+      cur[0] = x;
+      search.setText("");
+      fill[0].run();
+    });
+    JPanel quick = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));
+    quick.add(Ui.muted("Select:"));
+    quick.add(dflt);
+    quick.add(allB);
+    quick.add(none);
+    JPanel head = new JPanel();
+    head.setLayout(new javax.swing.BoxLayout(head, javax.swing.BoxLayout.Y_AXIS));
+    for (javax.swing.JComponent k : new javax.swing.JComponent[] {title, meaning, note, search, quick}) {
+      k.setAlignmentX(0f);
+      head.add(k);
+      head.add(javax.swing.Box.createVerticalStrut(k == meaning || k == note ? 6 : 4));
+    }
+    search.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, search.getPreferredSize().height));
+    JScrollPane ls = new JScrollPane(list);
+    ls.getViewport().setBackground(java.awt.Color.WHITE);
+    ls.getVerticalScrollBar().setUnitIncrement(16);
+    ls.setBorder(BorderFactory.createLineBorder(new java.awt.Color(0xE3, 0xE7, 0xEC)));
+    JPanel right = new JPanel(new BorderLayout(0, 6));
+    right.add(head, BorderLayout.NORTH);
+    right.add(ls, BorderLayout.CENTER);
+    right.add(countLbl, BorderLayout.SOUTH);
+    right.setPreferredSize(new java.awt.Dimension(300, 10));
+
     count.run();
     JScrollPane sp = new JScrollPane(table);
-    sp.setPreferredSize(new java.awt.Dimension(740, Math.min(24 * rows.size() + 28, 560)));
+    int h = Math.min(24 * rows.size() + 28, 520);
+    sp.setPreferredSize(new java.awt.Dimension(600, h));
     sp.getViewport().setBackground(java.awt.Color.WHITE);
+    JPanel center = new JPanel(new BorderLayout(14, 0));
+    center.add(sp, BorderLayout.CENTER);
+    center.add(right, BorderLayout.EAST);
     JPanel body = new JPanel(new BorderLayout(0, 8));
-    body.add(sp, BorderLayout.CENTER);
-    body.add(Ui.muted("One monitor per report, one plot per group  \u00B7  double-click surfaces to change  \u00B7  config/standard_reports.csv"),
+    body.add(center, BorderLayout.CENTER);
+    body.add(Ui.muted("One monitor per report, one plot per group, in folders by purpose  ·  ● surfaces changed  ·  config/standard_reports.csv"),
         BorderLayout.SOUTH);
+    for (int i = 0; i < rows.size(); i++) {   // the first report that can be made, selected
+      if (rows.get(i) instanceof StdReport && ((StdReport) rows.get(i)).why == null) { table.setRowSelectionInterval(i, i); break; }
+    }
     return Ui.sheet("Standard reports", "", body, ok, null);
+  }
+
+  /** Colours of a surface type tag: IN green, OUT / OPEN amber, WALL grey, SYM / IF blue. */
+  static java.awt.Color[] tagColors(String tok) {
+    if (tok == null) return new java.awt.Color[] {java.awt.Color.WHITE, java.awt.Color.GRAY};
+    switch (tok) {
+      case "IN": return new java.awt.Color[] {new java.awt.Color(0xDD, 0xF2, 0xDF), new java.awt.Color(0x2E, 0x6B, 0x2E)};
+      case "OUT": case "OPEN": return new java.awt.Color[] {new java.awt.Color(0xFF, 0xF1, 0xD6), new java.awt.Color(0x8A, 0x5A, 0x00)};
+      case "WALL": return new java.awt.Color[] {new java.awt.Color(0xEC, 0xEF, 0xF3), new java.awt.Color(0x4A, 0x55, 0x63)};
+      default: return new java.awt.Color[] {new java.awt.Color(0xDC, 0xEB, 0xFF), new java.awt.Color(0x1F, 0x4E, 0x9A)};
+    }
   }
 
   static int[] allIndices(int n) {
@@ -4788,7 +4932,38 @@ public class SimKit extends StarMacro {
 
   /** One monitor per report (Report.createMonitor) and ONE plot named 'plot' showing them all; plot == null:
    *  monitors only. [U24] */
-  void monitorsAndPlot(List<Object> reports, String plot) {
+  /** Puts objects in a folder (group) of their node in the tree; objects already in a folder stay where they are.
+   *  Three ways are tried (the API differs between nodes and releases); the log says what was done. */
+  void toFolder(Object manager, String folder, List<?> objs) {
+    try {
+      final star.base.neo.ClientServerObjectGroupManager gm = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(manager, "getGroupsManager");
+      List<star.base.neo.ClientServerObject> loose = new ArrayList<>();
+      for (Object o : objs) {
+        if (o instanceof star.base.neo.ClientServerObject && !gm.findGroup((star.base.neo.ClientServerObject) o).isPresent()) {
+          loose.add((star.base.neo.ClientServerObject) o);
+        }
+      }
+      if (loose.isEmpty()) return;
+      boolean exists = false;
+      for (Object g0 : gm.getObjects()) exists |= folder.equals(nm(g0));
+      String how;
+      if (exists) {   // the folder is there already: add to it (no "Standard reports 2")
+        for (star.base.neo.ClientServerObject o : loose) Reflect.invoke(manager, "addToGroup", folder, o);
+        how = "added";
+      } else {
+        gm.groupObjects(folder, loose);
+        how = "new";
+      }
+      java.util.Optional<star.base.neo.ClientServerObjectGroup> g = gm.findGroup(loose.get(0));
+      log.line("  folder \"" + folder + "\" (" + nm(manager) + "): " + (g.isPresent() ? loose.size() + " object(s) in " + nm(g.get()) + " (" + how + ")"
+          : "NOT made (the objects stay where they are)"));
+    } catch (Throwable t) {
+      log.na("folder " + folder, t);
+    }
+  }
+
+  /** One monitor per report and one plot showing them all; returns {monitors, plot or null}. */
+  Object[] monitorsAndPlot(List<Object> reports, String plot) {
     List<Monitor> monitors = new ArrayList<>();
     for (Object r : reports) {
       try { monitors.add(((Report) r).createMonitor()); }                                                // [U24]
@@ -4796,14 +4971,16 @@ public class SimKit extends StarMacro {
     }
     if (plot == null || monitors.isEmpty()) {
       log.line("  monitors for " + monitors.size() + " report(s)");
-      return;
+      return new Object[] {monitors, null};
     }
     try {
       MonitorPlot p = sim.getPlotManager().createMonitorPlot(monitors, plot);                             // [U24]
       if (!plot.equals(nm(p))) p.setPresentationName(plot);
       log.line("  monitors + plot " + plot + " (" + monitors.size() + " report(s))");
+      return new Object[] {monitors, p};
     } catch (Throwable t) {
       log.na("plot " + plot + " (monitors were created)", t);
+      return new Object[] {monitors, null};
     }
   }
 
@@ -5417,10 +5594,36 @@ public class SimKit extends StarMacro {
   }
 
   ScalarGlobalParameter findParam(String name) {
-    for (Object o : sim.get(GlobalParameterManager.class).getObjects()) {
+    GlobalParameterManager m = sim.get(GlobalParameterManager.class);
+    ScalarGlobalParameter p = findParamIn(m.getObjects(), name, 0);
+    if (p == null) {   // inside a parameter folder (group), e.g. "SimKit run tracking"
+      try { p = findParamIn(m.getGroupsManager().getObjects(), name, 0); } catch (Throwable t) { /* no folders */ }
+    }
+    return p;
+  }
+
+  static ScalarGlobalParameter findParamIn(Collection<?> objs, String name, int depth) {
+    for (Object o : objs) {
       if (o instanceof ScalarGlobalParameter && name.equals(nm(o))) return (ScalarGlobalParameter) o;
+      if (depth < 5 && o instanceof star.base.neo.ClientServerObjectManager) {
+        ScalarGlobalParameter p = findParamIn(((star.base.neo.ClientServerObjectManager<?>) o).getObjects(), name, depth + 1);
+        if (p != null) return p;
+      }
     }
     return null;
+  }
+
+  static final String PARAM_FOLDER = "SimKit run tracking";
+
+  /** SimKit's own parameters (run number, based on, iteration) in one folder of the Parameters node, apart from the
+   *  simulation's own. */
+  void groupTracking() {
+    List<Object> ps = new ArrayList<>();
+    for (String n : new String[] {P_RUN, P_FROM, P_FROM_IT}) {
+      ScalarGlobalParameter p = findParam(n);
+      if (p != null) ps.add(p);
+    }
+    toFolder(sim.get(GlobalParameterManager.class), PARAM_FOLDER, ps);
   }
 
   /** New scalar parameter: dimensionless (dim == null) or a length with the given units. [U10][U30][U31] */
@@ -5669,24 +5872,10 @@ public class SimKit extends StarMacro {
       }
     }
 
-    /** "Always on top" preference (per user, shared with the calculator; default off). */
-    static boolean onTop() { return "true".equals(pref("alwaysOnTop")); }
-
-    /** Saves the preference and applies it at once to every open SimKit / calculator window. */
-    static void setOnTop(boolean on) {
-      setPref("alwaysOnTop", String.valueOf(on));
-      for (java.awt.Window w : java.awt.Window.getWindows()) {
-        if (w.isDisplayable() && w instanceof javax.swing.RootPaneContainer
-            && Boolean.TRUE.equals(((javax.swing.RootPaneContainer) w).getRootPane().getClientProperty("simkit.window"))) {
-          try { w.setAlwaysOnTop(on); } catch (Throwable t) { /* not supported by this window system */ }
-        }
-      }
-    }
-
     /** Marks a window as a SimKit window and applies the preference to it. */
     static void track(java.awt.Window w) {
       if (w instanceof javax.swing.RootPaneContainer) ((javax.swing.RootPaneContainer) w).getRootPane().putClientProperty("simkit.window", Boolean.TRUE);
-      try { w.setAlwaysOnTop(onTop()); } catch (Throwable t) { /* not supported by this window system */ }
+      try { w.setAlwaysOnTop(false); } catch (Throwable t) { /* not supported by this window system */ }   // above STAR-CCM+ only (owner)
     }
 
     /** Per-user remembered value (last cases folder); null if not available. */

@@ -15,7 +15,7 @@ tree, standard reports and scenes, a mesh study helper and engineering calculato
 | Path | Content |
 |---|---|
 | `_SIMKIT/` | **The kit.** Copy this folder as-is to the team share. Its inner layout must be kept: every macro finds the kit root from its own location. |
-| `_SIMKIT/SimKit.java` | The macro users play: Save run, Run on cluster, Tracker and the other tools. |
+| `_SIMKIT/SimKit.java` | The macro users play: Save as new run, Run on cluster, Tracker and the other tools. |
 | `_SIMKIT/buttons/` | One small macro per toolbar button, their icons and `SimKit_InstallButtons.java` (see `_SIMKIT/buttons/README.txt`). |
 | `_SIMKIT/config/` | Projects, naming rules, Guideline links and MatML material folders (CSV, edited by the owner). |
 | `_SIMKIT/lib/generic/` | `SimKitCalc.java` (Calculators window) and its property tables in `data/`. |

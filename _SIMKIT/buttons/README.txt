@@ -4,7 +4,7 @@ One small macro per button. Each one finds the SimKit root from its own location
 and runs the current version of the tool, so the buttons never need updating when the kit changes.
 
   SimKit_Menu.java             the SimKit window (all tools)
-  SimKit_SaveNewVersion.java   Save run (the next run of the project; starts the project the first time)
+  SimKit_SaveNewVersion.java   Save as new run (the next run of the project; starts the project the first time)
   SimKit_RunOnCluster.java     Run on cluster (saves, then submits with the team's command)
   SimKit_StandardReports.java  Standard reports
   SimKit_MeshStudy.java        Mesh study
@@ -28,4 +28,4 @@ SimKit toolbar itself: <same config folder>/Toolbars/SimKit/, one link file per 
 is dragged onto a toolbar. In the STAR-CCM+ window both are set through STAR-CCM+ itself, so the toolbar appears at once.
 The buttons point at THESE files on the share (<SimKit root>/buttons/...). Do not copy them elsewhere: each button
 finds the root from its own location and always runs the current kit. No environment variable and no path to set.
-Projects are not stored in the SimKit root: the first Save run of a sim asks the user for the project folder.
+Projects are not stored in the SimKit root: the first Save as new run of a sim asks the user for the project folder.

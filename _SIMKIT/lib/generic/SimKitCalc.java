@@ -161,23 +161,6 @@ public class SimKitCalc extends StarMacro {
 
   static final String WINDOW_KEY = "simkit.calc.window";
 
-  /** "Always on top" preference, shared with SimKit.java (per user; default off). */
-  static boolean onTopPref() {
-    try { return "true".equals(java.util.prefs.Preferences.userRoot().node("simkit").get("alwaysOnTop", null)); }
-    catch (Throwable t) { return false; }
-  }
-
-  /** Saves the preference and applies it to every open SimKit / calculator window. */
-  static void setOnTopPref(boolean on) {
-    try { java.util.prefs.Preferences.userRoot().node("simkit").put("alwaysOnTop", String.valueOf(on)); } catch (Throwable t) { /* not kept */ }
-    for (java.awt.Window w : java.awt.Window.getWindows()) {
-      if (w.isDisplayable() && w instanceof javax.swing.RootPaneContainer
-          && Boolean.TRUE.equals(((javax.swing.RootPaneContainer) w).getRootPane().getClientProperty("simkit.window"))) {
-        w.setAlwaysOnTop(on);
-      }
-    }
-  }
-
   /** The STAR-CCM+ main window (largest visible frame), so the calculator floats over it. */
   static java.awt.Frame starFrame() {
     java.awt.Frame best = null;
@@ -544,11 +527,6 @@ public class SimKitCalc extends StarMacro {
     left.add(button("Value for STAR-CCM+...", e -> copyValue(currentTab())));
     left.add(button("All results", e -> copyResults(currentTab())));
     JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 2));
-    javax.swing.JCheckBox onTop = new javax.swing.JCheckBox("Keep in front of other apps", onTopPref());
-    onTop.setToolTipText("Keep the SimKit windows above every other window (remembered for next time). "
-        + "Off: they stay above STAR-CCM+ only.");
-    onTop.addActionListener(e -> setOnTopPref(onTop.isSelected()));
-    right.add(onTop);
     right.add(button("Close", e -> dlg.dispose()));
     JPanel south = new JPanel(new BorderLayout());
     south.add(left, BorderLayout.WEST);
@@ -558,7 +536,7 @@ public class SimKitCalc extends StarMacro {
     dlg.setSize(1180, 820);
     dlg.setLocationRelativeTo(starFrame());
     dlg.getRootPane().putClientProperty("simkit.window", Boolean.TRUE);
-    try { dlg.setAlwaysOnTop(onTopPref()); } catch (Throwable t) { /* not supported */ }
+
   }
 
   static JLabel groupLabel(String s) {
