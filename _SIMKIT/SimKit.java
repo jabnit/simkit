@@ -6695,7 +6695,36 @@ public class SimKit extends StarMacro {
         log.na(m.op + " " + m.what, t);
       }
     }
+    meshFolders();
     return done;
+  }
+
+  /** Parameters > Mesh study: p_meshScale on its own (the factor to change), the sizes p_mesh_* in Mesh study > Mesh
+   *  sizes. Parameters already in another folder stay there. */
+  void meshFolders() {
+    try {
+      GlobalParameterManager gpm = sim.get(GlobalParameterManager.class);
+      List<Object> all = new ArrayList<>();
+      ScalarGlobalParameter scale = findParam(MESH_SCALE);
+      if (scale != null) all.add(scale);
+      List<Object> sizes = new ArrayList<Object>(meshParams().values());
+      all.addAll(sizes);
+      if (all.isEmpty()) return;
+      toFolder(gpm, "Mesh study", all);
+      star.base.neo.ClientServerObjectGroupManager gm = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(gpm, "getGroupsManager");
+      Object group = null;
+      for (Object g : gm.getObjects()) if ("Mesh study".equals(nm(g))) group = g;
+      if (group != null && !sizes.isEmpty()) toFolder(group, "Mesh sizes", sizes);
+      if (group != null) {   // what the folder holds, for the log
+        List<String> top = new ArrayList<>(), sub = new ArrayList<>();
+        for (Object o : (Collection<?>) Reflect.invoke(group, "getObjects")) top.add(nm(o));
+        star.base.neo.ClientServerObjectGroupManager sg = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(group, "getGroupsManager");
+        for (Object g : sg.getObjects()) for (Object o : (Collection<?>) Reflect.invoke(g, "getObjects")) sub.add(nm(g) + "/" + nm(o));
+        log.line("  Parameters > Mesh study: " + top + "; " + sub.size() + " in subfolders " + (sub.size() > 4 ? sub.subList(0, 4) + " ..." : sub));
+      }
+    } catch (Throwable t) {
+      log.na("parameter folder Mesh study", t);
+    }
   }
 
   /** One level of a mesh study (saved as a case of its own). */

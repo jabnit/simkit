@@ -578,3 +578,8 @@ C. RESULTS SO FAR
   for the tree: the window's Swing trees (JTree, NetBeans Outline) are searched 0.3 / 1 / 2.5 s after the creation and
   the nodes with the plot names are collapsed; GUI only, never fails the tool. Offline: CollapseTest (JTree) ok.
   Not run: in the STAR-CCM+ window (which tree component it uses is not known).
+  Reports: the new plots show closed in the tree (confirmed by the user in the STAR-CCM+ window, 2026-11-14).
+  Mesh study: parameters in Parameters > Mesh study (p_meshScale) and Mesh study > Mesh sizes (p_mesh_*); also applied
+  when a parametrized sim is parametrized again (parameters already in another folder stay there). SKT88: exit codes 0
+  (08b/08c skipped: STAR-CCM+ window open); 07c: Mesh study 2 objects, Mesh sizes 1 (p_mesh_MO30autoMesh_baseSize).
+  Not run: the tree view in the GUI.
