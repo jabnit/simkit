@@ -593,3 +593,6 @@ C. RESULTS SO FAR
   SKT89: exit codes 0 (08b/08c skipped: STAR-CCM+ window open); mesh_study.csv: medium R003 14655 cells, coarse R002
   7962 cells. Offline: window rendered (MeshShot). Not run: the window in the STAR-CCM+ GUI. Not done (reviewer
   options): keep the solution as starting field (needs a check of the solution mapping), GCI from a finished study.
+  Mesh study fix (user report: after Remove / Add the levels were level3, level4 and no level had factor 1): "Current
+  mesh is the <level> level" lists the level names; factors set again from the ratio after Add / Remove; names by
+  position unless typed; ratio <= 1: amber note, factors unchanged. Offline: the user's sequence rendered (MeshShot).

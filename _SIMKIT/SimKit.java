@@ -6851,6 +6851,8 @@ public class SimKit extends StarMacro {
     final List<String> names = new ArrayList<>();
     final List<Double> factors = new ArrayList<>();
     names.addAll(Arrays.asList("coarse", "medium", "fine"));
+    final List<Boolean> named = new ArrayList<>(Arrays.asList(false, false, false));   // true: name typed by the user
+    final Runnable[] renamed = {null};
     factors.addAll(Arrays.asList(1.41, 1.0, 1 / 1.41));
     final java.util.function.IntFunction<Integer> rank = i -> {   // place of the row once sorted coarse to fine
       int k = 0;
@@ -6884,7 +6886,7 @@ public class SimKit extends StarMacro {
         }
       }
       @Override public void setValueAt(Object v, int r, int col) {
-        if (col == 0) names.set(r, String.valueOf(v).trim());
+        if (col == 0) { names.set(r, String.valueOf(v).trim()); named.set(r, true); if (renamed[0] != null) renamed[0].run(); }
         else factors.set(r, Fmt.parse(String.valueOf(v)));
         fireTableDataChanged();
       }
@@ -6908,9 +6910,21 @@ public class SimKit extends StarMacro {
     ratio.setSelectedItem("1.41");
     ratio.setPreferredSize(new java.awt.Dimension(80, ratio.getPreferredSize().height));
     ratio.setToolTipText("Size ratio between two neighbouring levels. 1.3 or more is recommended for GCI. 1.41 gives about 2.8 times the cells in 3-D.");
-    final JComboBox<String> ref = new JComboBox<>(new String[] {"coarsest", "middle", "finest"});
+    final JComboBox<String> ref = new JComboBox<>(names.toArray(new String[0]));
     ref.setSelectedIndex(1);
-    ref.setToolTipText("The level that keeps the current sizes (factor 1).");
+    ref.setToolTipText("The level that keeps the current sizes (factor 1). The other factors follow from the refinement ratio.");
+    final boolean[] quiet = {false};
+    final Runnable fillRef = () -> {   // the level names in the list, the same level kept
+      quiet[0] = true;
+      int idx = ref.getSelectedIndex();
+      ref.removeAllItems();
+      for (String n : names) ref.addItem(n.isEmpty() ? "(no name)" : n);
+      int n = names.size();
+      if (idx < 0 || idx >= n) idx = (n - 1) / 2;
+      if (n > 0) ref.setSelectedIndex(idx);
+      quiet[0] = false;
+    };
+    renamed[0] = fillRef;
     final java.util.function.DoubleSupplier rr = () -> {
       double x = Fmt.parse(String.valueOf(ratio.getEditor().getItem()));
       return x > 1 ? x : 1.41;
@@ -6918,36 +6932,43 @@ public class SimKit extends StarMacro {
     final Runnable applyRatio = () -> {
       if (table.isEditing()) table.getCellEditor().stopCellEditing();
       double x = Fmt.parse(String.valueOf(ratio.getEditor().getItem()));
-      if (!(x > 1)) return;
-      int n = factors.size(), r0 = ref.getSelectedIndex() == 0 ? 0 : ref.getSelectedIndex() == 2 ? n - 1 : (n - 1) / 2;
+      if (!(x > 1)) { lm.fireTableDataChanged(); return; }   // the note says why nothing changed
+      int n = factors.size(), r0 = Math.max(0, Math.min(n - 1, ref.getSelectedIndex()));
       for (int i = 0; i < n; i++) factors.set(i, Math.pow(x, r0 - i));
       lm.fireTableDataChanged();
     };
     ratio.addActionListener(e -> applyRatio.run());
-    ref.addActionListener(e -> applyRatio.run());
+    ref.addActionListener(e -> { if (!quiet[0]) applyRatio.run(); });
+    final Runnable restructure = () -> {   // after add / remove: names by position (unless typed), factors from the ratio
+      int n = names.size();
+      String[] auto = n == 1 ? new String[] {"medium"} : n == 2 ? new String[] {"coarse", "fine"} : n == 3 ? new String[] {"coarse", "medium", "fine"}
+          : n == 4 ? new String[] {"coarse", "medium", "fine", "finer"} : n == 5 ? new String[] {"coarser", "coarse", "medium", "fine", "finer"} : null;
+      for (int i = 0; i < n; i++) if (!named.get(i)) names.set(i, auto != null ? auto[i] : "level" + (i + 1));
+      fillRef.run();
+      applyRatio.run();
+      lm.fireTableDataChanged();
+    };
     final JButton add = Ui.link("+ Add level"), del = Ui.link("Remove level");
     del.setEnabled(false);
     table.getSelectionModel().addListSelectionListener(e -> del.setEnabled(table.getSelectedRow() >= 0));
     add.addActionListener(e -> {
       if (table.isEditing()) table.getCellEditor().stopCellEditing();
-      String n = "level" + (names.size() + 1);
-      if (ref.getSelectedIndex() == 2 && !factors.isEmpty()) {   // current = finest: a coarser level at the top
-        names.add(0, n);
-        factors.add(0, factors.get(0) * rr.getAsDouble());
-      } else {
-        double last = factors.isEmpty() || Double.isNaN(factors.get(factors.size() - 1)) ? rr.getAsDouble() : factors.get(factors.size() - 1);
-        names.add(n);
-        factors.add(last / rr.getAsDouble());
-      }
-      lm.fireTableDataChanged();
+      names.add("");   // a finer level at the end
+      factors.add(Double.NaN);
+      named.add(false);
+      restructure.run();
     });
     del.addActionListener(e -> {
       int i = table.getSelectedRow();
       if (i < 0) return;
       if (table.isEditing()) table.getCellEditor().cancelCellEditing();
+      int keep = ref.getSelectedIndex();
       names.remove(i);
       factors.remove(i);
-      lm.fireTableDataChanged();
+      named.remove(i);
+      if (i == keep) { quiet[0] = true; ref.setSelectedIndex(-1); quiet[0] = false; }   // the current level went: the middle one takes factor 1
+      else if (i < keep) { quiet[0] = true; ref.setSelectedIndex(keep - 1); quiet[0] = false; }
+      restructure.run();
     });
 
     // ----- mesh sizes -----
@@ -7040,7 +7061,9 @@ public class SimKit extends StarMacro {
         if (q < 1.3 && q > 1 + 1e-9) low = "Ratio " + num4(q) + " between factors " + num4(sorted.get(i)) + " and " + num4(sorted.get(i + 1))
             + ": below 1.3, GCI is sensitive to solver noise.";
       }
-      if (Math.abs(scale0 - 1) > 1e-9) t = MESH_SCALE + " is " + num4(scale0) + " in this run: factor 1 is the parametrized mesh, not the current one.";
+      double rx = Fmt.parse(String.valueOf(ratio.getEditor().getItem()));
+      if (!(rx > 1)) t = "Refinement ratio: enter a number above 1 (1.41 is usual).";
+      else if (Math.abs(scale0 - 1) > 1e-9) t = MESH_SCALE + " is " + num4(scale0) + " in this run: factor 1 is the parametrized mesh, not the current one.";
       else if (exprCount > 0) t = exprCount + (exprCount == 1 ? " size set by an expression will not scale" : " sizes set by an expression will not scale")
           + ": the refinement is not uniform.";
       else if (low != null) t = low;
