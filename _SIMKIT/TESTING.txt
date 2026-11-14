@@ -596,3 +596,12 @@ C. RESULTS SO FAR
   Mesh study fix (user report: after Remove / Add the levels were level3, level4 and no level had factor 1): "Current
   mesh is the <level> level" lists the level names; factors set again from the ratio after Add / Remove; names by
   position unless typed; ratio <= 1: amber note, factors unchanged. Offline: the user's sequence rendered (MeshShot).
+  Mesh study levels as a ladder (user idea, design by a Fable 5.2 review): one table coarse to fine with a rail column;
+  the open run is the reference (solid node, Current pill, factor 1), counted as a level and not saved again; the
+  other levels (hollow nodes) are new runs. "Current mesh is the ... level" removed. + Add coarser / + Add finer level
+  (one ratio step beyond the outermost), Remove level / Delete (not the open run), a typed factor re-sorts the row,
+  names by position unless typed, ratio sets all factors. Button "Create n runs". The open run: listed in
+  mesh_study.csv with its run id and cell count, its run.txt gets mesh_study / mesh_level / mesh_scale / mesh_cells
+  (the .sim is not touched). Batch: coarse 1.41 (07e) / 2.0 (11c) + the open run as medium. SKT90: exit codes 0
+  (08b/08c skipped: STAR-CCM+ window open); 07e: "2 level(s), 1 new run(s)", mesh_study.csv medium R001 18090 cells,
+  coarse R002 7962 cells; R001 run.txt mesh_level=medium. Offline: ladder rendered (MeshShot). Not run: GUI.
