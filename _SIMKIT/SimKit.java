@@ -5,7 +5,7 @@
 //     R<nnn>_<name>.sim, run.txt (name, based on, comment, status), submit/ (scripts, logs) and what the cluster
 //     sends back. The run number also lives inside the simulation (p_simkit_run). Runs may be grouped in sub-folders.
 //   * Run on cluster, Tracker (runs, family tree), Calculators (lib/generic/SimKitCalc.java), Standard reports,
-//     Standard scenes, Mesh study.
+//     Mesh study.
 //   The normal STAR-CCM+ Save (Ctrl+S) keeps saving the open file.
 // Where things are: this file sits at the SimKit ROOT (one shared folder; lib/, config/, buttons/ below it). The
 //   root is found from this file's own location (STAR-CCM+ resolvePath), so no environment variable or path has
@@ -83,38 +83,62 @@ import star.vis.*;
 public class SimKit extends StarMacro {
 
   // =====================================================================================================
-  // Constants (edit here)
+  // Constants and tools
   // =====================================================================================================
 
   static final String VERSION = "SimKit 0.3 (2026-11-14)";
+
   /** Kit files used by SimKit, relative to the SimKit root ('/' on every OS). */
   static final String CONFIG_DIR = "config", VERSION_FILE = "VERSION.txt", CALC_MACRO = "lib/generic/SimKitCalc.java";
 
-  static final String[] TOOL_NAMES = {"", "", "Save as new run…", "", "",
-      "Calculators", "", "Tracker", "", "", "Standard reports", "",
-      "Mesh study", "Standard scenes", "", "Run on cluster"};
-  static final String[] TOOL_HELP = {"",
-      "",
-      "Saves the next run of the project (R008_<name>.sim) from this one; the open file is kept. No project yet: creates one",
-      "",
-      "",
-      "Boundary values, y+ and prism layers, time step, dimensionless numbers, materials, GCI",
-      "",
-      "Runs of the project: status, comments, based on, family tree",
-      "", "",
-      "Mass balance, pressures, temperatures, wall heat, y+, Courant: reports, monitors, plots (from IN_ / OUT_ / WALL_ names)",
-      "",
-      "Coarse / medium / fine levels as runs, for a mesh sensitivity check (GCI)",
-      "Same views every run: walls (y+, T), mid-plane (U, p, T, mesh)",
-      "",
-      "Saves the file and submits it (config/cluster.csv); Linux: in a terminal"};
+  /** The tools: title (button), the line under the button, tooltip. Toolbar buttons pass the enum name (simkit.tool). */
+  enum Tool {
+    SAVE("Save as new run\u2026", "Copy as the next run, from this one",
+        "Saves the next run of the project (R008_<name>.sim) from this one; the open file is kept. No project yet: creates one"),
+    CLUSTER("Run on cluster", "Submit with bsub",
+        "Saves the file and submits it with the team's bsub command (config/cluster.csv), in a terminal. Linux only"),
+    TRACKER("Tracker", "Runs, status, comments", "Runs of the project: status, comments, based on, family tree"),
+    NAMES("Names", "Prefixes, default names",
+        "Type prefixes (IN_, OUT_, WALL_ ...) on boundaries and part surfaces, default names, prefix vs boundary type; renames on request"),
+    REPORTS("Standard reports", "Mass balance, p, T, y+ ...",
+        "Mass balance, pressures, temperatures, wall heat, y+, Courant: reports, monitors, plots (from IN_ / OUT_ / WALL_ names)"),
+    MESH("Mesh study", "Mesh levels", "Coarse / medium / fine levels as runs, for a mesh sensitivity check (GCI)"),
+    CALC("Calculators", "y+, Re, time step, GCI ...", "Boundary values, y+ and prism layers, time step, dimensionless numbers, materials, GCI");
+
+    final String title, sub, help;
+
+    Tool(String title, String sub, String help) {
+      this.title = title;
+      this.sub = sub;
+      this.help = help;
+    }
+
+    /** The tool a toolbar button asks for: its enum name, or the number of the buttons of SimKit 0.3 before 2026-11-14. */
+    static Tool of(String t) {
+      if (t == null) return null;
+      String k = t.trim().toUpperCase(Locale.ROOT);
+      switch (k) {
+        case "2": return SAVE;
+        case "5": return CALC;
+        case "7": return TRACKER;
+        case "10": return REPORTS;
+        case "12": return MESH;
+        case "15": return CLUSTER;
+        default:
+          for (Tool x : values()) if (x.name().equals(k)) return x;
+          return null;
+      }
+    }
+  }
 
   // =====================================================================================================
-  // State and entry point
+  // State, entry point, batch actions
   // =====================================================================================================
 
   Simulation sim;
+
   Log log;
+
   boolean gui;
 
   @Override
@@ -127,8 +151,8 @@ public class SimKit extends StarMacro {
     gui = batchReason == null;
     log.line(VERSION + " | kit " + Fs.kit() + " | " + (gui ? "interactive" : "batch: " + batchReason)
         + " | classes preloaded: " + preloaded);
-    int direct = Env.directTool();   // set by a toolbar button macro (buttons/SimKit_<Tool>.java)
-    if (direct > 0) {
+    Tool direct = Env.directTool();   // set by a toolbar button macro (buttons/SimKit_<Tool>.java)
+    if (direct != null) {
       if (gui) runTool(direct);
       else runBatchTool(direct);
       return;
@@ -179,13 +203,8 @@ public class SimKit extends StarMacro {
           log.line("saved " + c.simFile);
           break;
         }
-        case "scenes": {   // test action: create the standard scenes and save the sim in place
-          CaseInfo c = requireCase();
-          toolStandardScenes();
-          sim.saveState(Fs.guard(c.simFile).toString());
-          log.line("saved " + c.simFile);
-          break;
-        }
+        case "names": logNames(); break;   // test: the Names table, written to the log (nothing renamed)
+        case "presubmit": for (String[] k : preSubmitChecks()) log.line("pre-submit " + k[0] + "  " + k[1]); break;
         case "tracker": toolTracker(); break;
         case "opensim": testOpenSim(); break;   // test: the tracker's Open in STAR-CCM+
         case "saverun": toolSave(); break;   // Save as new run in batch: next run, same name (asks nothing)
@@ -209,11 +228,11 @@ public class SimKit extends StarMacro {
   }
 
   /** A toolbar button in batch: only the tools without dialogs can run. */
-  void runBatchTool(int id) {
-    log.line("button " + TOOL_NAMES[id] + " (batch)");
+  void runBatchTool(Tool id) {
+    log.line("button " + id.title + " (batch)");
     try {
-      if (id == 7) toolTracker();
-      else log.line(TOOL_NAMES[id] + " needs the STAR-CCM+ window: nothing done in batch");
+      if (id == Tool.TRACKER) toolTracker();
+      else log.line(id.title + " needs the STAR-CCM+ window: nothing done in batch");
     } catch (Cancel c) {
       log.line("stopped: " + c.getMessage());
     } catch (Throwable t) {
@@ -226,24 +245,25 @@ public class SimKit extends StarMacro {
   volatile String summary;                         // one-line outcome of the tool (set by the tool)
   volatile String lastText, lastTitle;             // full text of the last tool, for Details...
   volatile String lastStatus;
+
   volatile int lastLevel;                          // 0 done, 1 cancelled / skipped items, 2 error
 
   /** Runs one tool; any failure is logged, never thrown into the session. */
-  void runTool(int id) {
+  void runTool(Tool id) {
     log.take();
     summary = null;
-    log.line("=== " + TOOL_NAMES[id] + " ===");
+    log.line("=== " + id.title + " ===");
     String stop = null;
     boolean error = false;
     try {
       switch (id) {
-        case 2: toolSave(); break;
-        case 5: toolCalc(); break;
-        case 7: toolTracker(); break;
-        case 10: toolStandardReports(); break;
-        case 12: toolMeshStudy(); break;
-        case 13: toolStandardScenes(); break;
-        case 15: toolSubmit(); break;
+        case SAVE: toolSave(); break;
+        case CLUSTER: toolSubmit(); break;
+        case TRACKER: toolTracker(); break;
+        case NAMES: toolNames(); break;
+        case REPORTS: toolStandardReports(); break;
+        case MESH: toolMeshStudy(); break;
+        case CALC: toolCalc(); break;
         default: log.line("unknown tool " + id);
       }
     } catch (Cancel c) {
@@ -255,20 +275,20 @@ public class SimKit extends StarMacro {
       log.line("ERROR: " + stop + "  (tool stopped; see the lines above for what was done)");
     }
     String text = log.take();
-    lastTitle = TOOL_NAMES[id] + "  -  " + simName();
+    lastTitle = id.title + "  -  " + simName();
     lastText = text;
     boolean skipped = text.contains(": n/a (");
     if (error) {
       lastLevel = 2;
-      lastStatus = TOOL_NAMES[id] + " stopped: " + Fmt.cut(stop, 90);
+      lastStatus = id.title + " stopped: " + Fmt.cut(stop, 90);
     } else if (stop != null) {
       lastLevel = 1;
-      lastStatus = "Cancelled: " + TOOL_NAMES[id] + (stop.isEmpty() ? "" : "  -  " + Fmt.cut(stop, 90));
+      lastStatus = "Cancelled: " + id.title + (stop.isEmpty() ? "" : "  -  " + Fmt.cut(stop, 90));
     } else {
       lastLevel = skipped ? 1 : 0;
-      lastStatus = "Done: " + (summary != null ? summary : TOOL_NAMES[id]) + (skipped ? "  (some items skipped: Details)" : "");
+      lastStatus = "Done: " + (summary != null ? summary : id.title) + (skipped ? "  (some items skipped: Details)" : "");
     }
-    if (id != 5 && error) Ui.showText(lastTitle, text);
+    if (id != Tool.CALC && error) Ui.showText(lastTitle, text);
   }
 
   /** Shows the outcome of the last tool on the status line (amber: cancelled or items skipped, red: error). */
@@ -292,25 +312,24 @@ public class SimKit extends StarMacro {
 
   /** Key under which the open SimKit window is kept for this STAR-CCM+ session (one window at a time). */
   static final String WINDOW_KEY = "simkit.window";
+
   final List<JButton> toolButtons = new ArrayList<>();
+
   volatile boolean busy;
 
   /** Opens the floating SimKit window (non-modal, attached to the STAR-CCM+ window) and returns at once.
    *  A window left open by an earlier play is closed first (it may belong to another simulation). */
   /** Main window layout: one column per stage of the work; each button with a one-line explanation under it. */
   static final Object[][] SECTIONS = {
-      {"Runs", new int[] {2, 15, 7}},
-      {"Set-up", new int[] {10, 13, 12}},
-      {"Tools", new int[] {5}}};
-  static final String[] TOOL_SHORT = {"",
-      "", "Copy as the next run, from this one", "", "",
-      "y+, Re, time step, GCI ...", "", "Runs, status, comments",
-      "", "", "Mass balance, p, T, y+ ...", "",
-      "Mesh levels", "Same views every run", "", "Submit with bsub"};
+      {"Runs", new Tool[] {Tool.SAVE, Tool.CLUSTER, Tool.TRACKER}},
+      {"Set-up", new Tool[] {Tool.NAMES, Tool.REPORTS, Tool.MESH}},
+      {"Tools", new Tool[] {Tool.CALC}}};
 
   JLabel headTitle, headSub, headPath, statusLine;
+
   JButton detailsButton;
-  final Map<Integer, JButton> buttonById = new HashMap<>();
+
+  final Map<Tool, JButton> buttonById = new HashMap<>();
 
   void openWindow() {
     Object old = System.getProperties().get(WINDOW_KEY);
@@ -366,16 +385,16 @@ public class SimKit extends StarMacro {
       line.setAlignmentX(0f);
       line.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, 2));
       col.add(line);
-      for (int id : (int[]) sec[1]) {
+      for (Tool id : (Tool[]) sec[1]) {
         col.add(javax.swing.Box.createVerticalStrut(8));
-        JButton b = new JButton(TOOL_NAMES[id]);
+        JButton b = new JButton(id.title);
         b.setFont(b.getFont().deriveFont(Font.BOLD, 13f));
         b.setAlignmentX(0f);
         b.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, 32));
         b.setPreferredSize(new java.awt.Dimension(190, 32));
         wire(b, id);
         col.add(b);
-        JLabel sub = new JLabel(TOOL_SHORT[id]);
+        JLabel sub = new JLabel(id.sub);
         sub.setFont(sub.getFont().deriveFont(Font.PLAIN, 11f));
         sub.setForeground(java.awt.Color.GRAY);
         sub.setAlignmentX(0f);
@@ -434,19 +453,19 @@ public class SimKit extends StarMacro {
     }
   }
 
-  void wire(JButton b, int id) {
+  void wire(JButton b, Tool id) {
     buttonById.put(id, b);
-    b.setToolTipText(TOOL_HELP[id]);
+    b.setToolTipText(id.help);
     b.addActionListener(e -> startTool(id));
     toolButtons.add(b);
   }
 
   /** Runs a tool in a background thread (STAR-CCM+ stays responsive); one tool at a time. */
-  void startTool(int id) {
+  void startTool(Tool id) {
     if (busy) return;
     busy = true;
     for (JButton b : toolButtons) b.setEnabled(false);
-    if (statusLine != null) statusLine.setText("Running: " + TOOL_NAMES[id] + " ...  (STAR-CCM+ stays usable)");
+    if (statusLine != null) statusLine.setText("Running: " + id.title + " ...  (STAR-CCM+ stays usable)");
     Thread t = new Thread(() -> {
       try {
         runTool(id);
@@ -458,7 +477,7 @@ public class SimKit extends StarMacro {
           showStatus();
         });
       }
-    }, "SimKit " + TOOL_NAMES[id]);
+    }, "SimKit " + id.title);
     t.setDaemon(true);
     t.start();
   }
@@ -477,7 +496,9 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // The open run
+  // Project and runs: a project is a folder (any name, anywhere) holding simkit_project.txt and one folder per run.
+  // Each saved run is R<nnn>[_<name>].sim; its number also lives INSIDE the simulation (p_simkit_run), so every copy
+  // that comes back from the cluster, whatever its name, still says which run it is and what it was based on.
   // =====================================================================================================
 
   /** A run of a project: caseDir = the project folder, caseId = R007, nnn = 7, label = the run name, simFile = the
@@ -501,14 +522,9 @@ public class SimKit extends StarMacro {
 
   CaseInfo caseOrNull() { return runOrNull(); }
 
-  // =====================================================================================================
-  // Studies and runs: a study is a folder (any name, anywhere) holding simkit_study.txt and one folder per run.
-  // Each saved run is R<nnn>[_<name>].sim; its number also lives INSIDE the simulation (p_simkit_run), so every copy
-  // that comes back from the cluster, whatever its name, still says which run it is and what it was based on.
-  // =====================================================================================================
-
   static final String STUDY_FILE = "simkit_project.txt", OLD_STUDY_FILE = "simkit_study.txt", P_RUN = "p_simkit_run", P_FROM = "p_simkit_from",
       P_FROM_IT = "p_simkit_from_iteration", ITER_SEP = "_iter_";
+
   static final Pattern RUN_FILE = Pattern.compile("^R([0-9]{3,4})(?:_([A-Za-z0-9][A-Za-z0-9_-]{0,39}?))?(?:(?:_iter_|@)[^/\\\\]*)?\\.sim$");
 
   /** A run name as it goes in the file name: spaces become _, then letters, digits, _ and - (up to 40). */
@@ -567,7 +583,18 @@ public class SimKit extends StarMacro {
   }
 
   static final Pattern RUN_DIR = Pattern.compile("^R([0-9]{3,4})(?:_.*)?$");
+
   static final String RUN_TXT = "run.txt";
+
+  static boolean isStudy(Path dir) {
+    return dir != null && (Files.isRegularFile(dir.resolve(STUDY_FILE)) || Files.isRegularFile(dir.resolve(OLD_STUDY_FILE)));
+  }
+
+  /** The project's own file (simkit_project.txt, or simkit_study.txt of the first projects). */
+  static Path studyFile(Path dir) {
+    return Files.isRegularFile(dir.resolve(OLD_STUDY_FILE)) && !Files.isRegularFile(dir.resolve(STUDY_FILE)) ? dir.resolve(OLD_STUDY_FILE)
+        : dir.resolve(STUDY_FILE);
+  }
 
   /** The record of every run of a project: <run folder>/run.txt (anywhere below the project, so runs can be grouped in
    *  folders), or record/R<nnn>.txt of the first projects. */
@@ -579,6 +606,12 @@ public class SimKit extends StarMacro {
     }
     out.putAll(Scan.of(study).records);
     return out;
+  }
+
+  /** The record of the run of key "<what>_v<nnn>" of a study, and the key in it ("comment", "status", "hidden"). */
+  static Path runRecord(Path study, int run) {
+    Path f = runRecords(study).get(run);
+    return f != null ? f : study.resolve("record").resolve(runId(run) + ".txt");
   }
 
   /** One walk of a project (run.txt and .sim files), kept a few seconds: the tracker asks for the records and the files
@@ -681,330 +714,47 @@ public class SimKit extends StarMacro {
     return study.relativize(d.getParent()).toString().replace('\\', '/');
   }
 
-  int currentIteration() {
-    try { return sim.getSimulationIterator().getCurrentIteration(); } catch (Throwable t) { return 0; }
+  /** Run number of a tracker row of a study (the part after .v). */
+  static int runOf(String versionId) {
+    try { return Integer.parseInt(verOf(versionId)); } catch (NumberFormatException e) { return -1; }
   }
 
-  double physicalTime() {
-    try { return sim.getSolution().getPhysicalTime(); } catch (Throwable t) { return 0; }
-  }
-
-  void setParam(String name, double v) {
-    ScalarGlobalParameter p = findParam(name);
-    if (p == null) p = newParam(name, null, v, null);
-    p.getQuantity().setValue(v);
-  }
-
-  /** Files written by STAR-CCM+ during and at the end of a run get "_iter_" instead of "@" (R007_base_iter_05000.sim). */
-  void iterSeparator() {
-    try {
-      star.common.AutoSave a = sim.getSimulationIterator().getAutoSave();
-      if (!ITER_SEP.equals(a.getSeparator())) a.setSeparator(ITER_SEP);
-    } catch (Throwable t) {
-      log.na("auto-save name separator", t);
-    }
-  }
-
-  /** A small label on every scene: "Run R007  baseline" (images in reports then name their run), next to the
-   *  iteration (or physical time) annotation of STAR-CCM+. Scenes made later get it at the next Save as new run or Export. */
-  void runLabels(String text) {
-    try {
-      star.vis.AnnotationManager am = sim.getAnnotationManager();
-      star.vis.SimpleAnnotation lab = null;
-      Object it = null;
-      for (Object a : am.getObjects()) {
-        if (a instanceof star.vis.SimpleAnnotation && nm(a).equals("simkit_run")) lab = (star.vis.SimpleAnnotation) a;
-        if (it == null && (a instanceof star.vis.PhysicalTimeAnnotation && unsteadySolver() != null
-            || a instanceof star.vis.IterationAnnotation && unsteadySolver() == null)) it = a;
-      }
-      if (lab == null) {
-        lab = am.createSimpleAnnotation();
-        lab.setPresentationName("simkit_run");
-      }
-      lab.setText(text);
-      int n = 0;
-      for (Object sc : sim.getSceneManager().getObjects()) {
-        try {
-          Object pm = Reflect.invoke(sc, "getAnnotationPropManager");
-          if (!(Boolean) Reflect.invoke(pm, "hasPropForAnnotation", lab)) {
-            Object prop = Reflect.invoke(pm, "createPropForAnnotation", lab);
-            try { Reflect.invoke(prop, "setPosition", new star.base.neo.DoubleVector(new double[] {0.02, 0.95, 0.0})); }
-            catch (Throwable t) { /* default place */ }
-          }
-          if (it != null && !(Boolean) Reflect.invoke(pm, "hasPropForAnnotation", it)) Reflect.invoke(pm, "createPropForAnnotation", it);
-          n++;
-        } catch (Throwable t) {
-          log.na("run label on " + nm(sc), t);
-        }
-      }
-      log.line("  run label \"" + text + "\" on " + n + " scene(s)");
-    } catch (Throwable t) {
-      log.na("run labels", t);
-    }
-  }
-
-  /** Saves the open simulation as the next run of a study: R<nnn>[_name].sim in sims/, numbers inside the sim, the
-   *  run record (record/R<nnn>.txt), the run label on the scenes. The open file stays as it is on disk. */
-  CaseInfo saveRun(Path study, String name, String comment) throws IOException {
-    CaseInfo from = runOrNull();
-    return saveRun(study, name, comment, from, null, from == null ? "" : groupOf(study, from.simFile));
-  }
-
-  CaseInfo saveRun(Path study, String name, String comment, CaseInfo from, Map<String, String> extra, String group) throws IOException {
-    int it = currentIteration();
-    double time = physicalTime();
-    String source = from != null ? from.simFile.toString() : sessionPath();
-    Fs.allow(study);
-    int n = takeRun(study);
-    String id = runId(n);
-    String base = id + (name.isEmpty() ? "" : "_" + name);
-    Path parent = group == null || group.isEmpty() ? study : study.resolve(group);
-    Path f = parent.resolve(base).resolve(base + ".sim");   // its own folder: R008_name/R008_name.sim
-    Fs.mkdirs(parent);
-    try {
-      Files.createDirectory(Fs.guard(f.getParent()));   // new: a folder of that name already there is not reused
-    } catch (FileAlreadyExistsException e) {
-      throw new Cancel(f.getParent().getFileName() + " already exists in " + parent + ": nothing saved");
-    }
-    setParam(P_RUN, n);
-    setParam(P_FROM, from == null ? 0 : from.nnn);
-    setParam(P_FROM_IT, it);
-    groupTracking();
-    iterSeparator();
-    runLabels("Run " + id + (name.isEmpty() ? "" : "  " + name));
-    sim.saveState(Fs.guard(f).toString());
-    Map<String, String> r = new LinkedHashMap<>();
-    r.put("run", id);
-    r.put("name", name);
-    r.put("comment", comment);
-    boolean other = from != null && !Fs.same(from.caseDir, study);   // a run of another study: <study>/R004
-    r.put("based_on", from != null ? (other ? from.caseDir.getFileName() + "/" + from.caseId : from.caseId)
-        : source.isEmpty() ? "" : Paths.get(source).getFileName().toString());
-    r.put("based_on_file", source);
-    r.put("from_iteration", String.valueOf(it));
-    if (unsteadySolver() != null) r.put("from_time", Fmt.num(time));
-    r.put("created", Fmt.iso());
-    r.put("created_by", Env.user());
-    r.put("file", study.relativize(f).toString().replace('\\', '/'));
-    if (extra != null) r.putAll(extra);
-    Fs.write(f.getParent().resolve(RUN_TXT), identityText(r));
-    Scan.clear(study);
-    log.line("saved " + f + "\n" + id + (from == null ? "" : " is based on " + from.caseId + " at iteration " + it)
-        + "; the file you came from is unchanged. Ctrl+S keeps saving " + f.getFileName() + ".");
-    result("saved " + f.getFileName() + (from == null ? "" : "  (based on " + from.caseId + ", iteration " + it + ")"));
-    return runOrNull();
-  }
-
-  /** Starts a study: the folder, its sub-folders and simkit_study.txt; then saves the open simulation as R001. */
-  void startStudy(Path dir, String name, String desc) throws IOException {
-    Fs.allow(dir);
-    Fs.mkdirs(dir);
-    Map<String, String> m = new LinkedHashMap<>();
-    m.put("project", dir.getFileName().toString());
-    m.put("description", desc);
-    m.put("created", Fmt.iso());
-    m.put("created_by", Env.user());
-    Fs.write(dir.resolve(STUDY_FILE), identityText(m));
-    Env.setPref("studyParent", dir.getParent() == null ? "" : dir.getParent().toString());
-    log.line("project " + dir);
-    saveRun(dir, name, "", runOrNull(), null, "");
-  }
-
-  /** Batch test: a study next to the case of the test sim, R001 and R002 saved, a submission prepared (no bsub). */
-  void testStudy() throws IOException {
-    if (sessionPath().isEmpty()) throw new Cancel("the simulation has not been saved yet");
-    CaseInfo c = runOrNull();
-    Path base = c != null && c.caseDir.getParent() != null ? c.caseDir.getParent() : Paths.get(sessionPath()).toAbsolutePath().getParent();
-    Path dir = base.resolve("STUDY_TEST_" + new SimpleDateFormat("HHmmss").format(new Date()));
-    startStudy(dir, "base", "test study");
-    CaseInfo r1 = requireCase();
-    log.line("open run " + r1.caseId + " (" + P_RUN + " = " + findParam(P_RUN).getQuantity().getValue() + "), file " + r1.simFile.getFileName());
-    try {
-      GlobalParameterManager pm = sim.get(GlobalParameterManager.class);
-      List<String> fold = new ArrayList<>();
-      for (Object gr : pm.getGroupsManager().getObjects()) {
-        List<String> in = new ArrayList<>();
-        for (Object o : ((star.base.neo.ClientServerObjectManager<?>) gr).getObjects()) in.add(nm(o));
-        fold.add(nm(gr) + " " + in);
-      }
-      log.line("parameter folders: " + fold + "; top level: " + pm.getObjects().size() + " object(s)");
-    } catch (Throwable t) { log.na("parameter folders", t); }
-    saveRun(dir, "finer", "test: second run");
-    CaseInfo r2 = requireCase();
-    log.line("open run " + r2.caseId + ", based on " + readIdentity(r2).get("based_on") + " at iteration "
-        + readIdentity(r2).get("from_iteration") + "; auto-save separator "
-        + sim.getSimulationIterator().getAutoSave().getSeparator());
-    String[] cmd = submitCommand(r2.simFile, 4);
-    log.line("submit command (not run): " + cmd[0]);
-    log.line("submit script: " + writeSubmitScript(r2.simFile, cmd[0]));
-    // a copy as the cluster sends it back: a job folder, the file renamed with _iter_
-    Path back = r2.simFile.getParent().resolve("job_12345_host_07").resolve(r2.simFile.getFileName().toString().replace(".sim", ITER_SEP + "00050.sim"));
-    Fs.mkdirs(back.getParent());
-    Files.copy(r2.simFile, back, StandardCopyOption.REPLACE_EXISTING);
-    setIdentityKey(dir, dir.getFileName().toString(), "comment_v002", "**finer** mesh near the liner");
-    // mesh study inside the study: runs coarse and medium, based on R002
-    if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) toolParametrizeMesh();
-    if (!meshParams().isEmpty() && findParam(MESH_SCALE) != null) {
-      createMeshRuns(r2, meshParams(), new ArrayList<>(Arrays.asList(new MeshLevel("coarse", 2.0), new MeshLevel("medium", 1.0))), true);
-    }
-    for (String[] r : trackerRows(dir)) {
-      log.line(String.format("study row %s  file %-40s based on %-8s comment %s", runId(runOf(r[COL_ID])), r[COL_FILE],
-          r[COL_BASED].isEmpty() ? "-" : runOf(r[COL_BASED]) > 0 ? runId(runOf(r[COL_BASED])) : r[COL_BASED], r[COL_COMMENT].replace("\n", " | ")));
-    }
-    log.line("study row label of the returned file: " + fileLabel(back.getFileName().toString()));
-    writeTrackerCsv(dir, trackerRows(dir));
-    log.line("study tracker csv: " + dir.resolve(TRACKER_CSV));
-    // Save as new run > "Root of a new study instead": the open run becomes R001 of a new study
-    CaseInfo before = requireCase();
-    Path dir2 = dir.resolveSibling(dir.getFileName() + "_branch");
-    startStudy(dir2, "branch", "test: new study from " + before.caseId);
-    log.line("new study from a run: " + requireCase().caseId + " based on " + readIdentity(requireCase()).get("based_on"));
-  }
-
-  // ----- Run on cluster -----
-
-  /** The team's cluster settings (config/cluster.csv: key, value). */
-  Map<String, String> clusterConfig() {
-    Map<String, String> m = new LinkedHashMap<>();
-    m.put("command", "bsubs.starccmp --input={sim} --ncpus={ncpus} --queue={queue}");
-    m.put("queue_serial", "A");
-    m.put("queue_parallel", "B");
-    m.put("terminal", "konsole");
-    for (String[] r : config("cluster.csv", new String[] {"key", "value"}, null)) {
-      if (r[0] != null && !r[0].trim().isEmpty() && r[1] != null) m.put(r[0].trim(), r[1].trim());
+  /** The identity of a case, or for a study: the study's file plus each run's comment_v / status_v / hidden_v. */
+  static Map<String, String> identityOf(Path dir, String caseId) {
+    Map<String, String> m = readIdentity(studyFile(dir));
+    for (Map.Entry<Integer, Path> rf : runRecords(dir).entrySet()) {
+      String v = String.format(Locale.ROOT, "%03d", rf.getKey());
+      for (Map.Entry<String, String> e : readIdentity(rf.getValue()).entrySet()) m.put(e.getKey() + "_v" + v, e.getValue());
     }
     return m;
   }
 
-  /** {command, queue} for a file and a number of CPUs (1 = the serial queue). */
-  String[] submitCommand(Path simFile, int ncpus) {
-    Map<String, String> m = clusterConfig();
-    String q = ncpus <= 1 ? m.get("queue_serial") : m.get("queue_parallel");
-    String path = simFile.toString().replace('\\', '/');
-    if (path.contains(" ")) path = "'" + path + "'";
-    return new String[] {m.get("command").replace("{sim}", path).replace("{ncpus}", String.valueOf(ncpus)).replace("{queue}", q), q};
+  /** Every .sim of a project by run number (the saved run and the copies that came back, anywhere below the project),
+   *  oldest first. */
+  static Map<Integer, List<Path>> studyFiles(Path study) {
+    Map<Integer, List<Path>> out = new TreeMap<>();
+    for (Map.Entry<Integer, List<Path>> e : Scan.of(study).files.entrySet()) out.put(e.getKey(), new ArrayList<>(e.getValue()));
+    return out;
   }
 
-  /** A small script next to the file: goes to its folder, runs the command, keeps what it printed (job number). */
-  Path writeSubmitScript(Path simFile, String cmd) throws IOException {
-    Path dir = simFile.getParent();
-    String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-    String base = simFile.getFileName().toString().replaceFirst("\\.sim$", "");
-    Path sd = Files.isRegularFile(dir.resolve(RUN_TXT)) ? dir.resolve("submit") : dir.resolve(".simkit");   // a run folder: submit/
-    Path script = sd.resolve("submit_" + base + "_" + stamp + ".sh");
-    Path out = sd.resolve("submit_" + base + "_" + stamp + ".log");
-    Fs.allow(dir);
-    Fs.write(script, "#!/bin/bash\n# SimKit: " + base + " submitted by " + Env.user() + " on " + Fmt.iso() + "\ncd '"
-        + dir.toString().replace('\\', '/') + "' || exit 1\necho \"$ " + cmd.replace("\"", "\\\"") + "\"\n" + cmd + " 2>&1 | tee '"
-        + out.toString().replace('\\', '/') + "'\n");
-    return script;
+  static long mtime(Path p) {
+    try { return Files.getLastModifiedTime(p).toMillis(); } catch (IOException e) { return 0; }
   }
 
-  /** Run on cluster: saves the file in place (with the _iter_ naming), shows the team's command for the CPUs chosen,
-   *  then copies it, or on Linux runs it in a terminal opened in the file's folder. */
-  void toolSubmit() throws IOException {
-    final CaseInfo c = requireCase();
-    final Path f = Paths.get(sessionPath()).toAbsolutePath().normalize();
-    String pc = Env.pref("ncpus");
-    final int cpus0 = pc != null && pc.matches("[0-9]+") ? Integer.parseInt(pc) : 1;
-    final boolean linux = !Fs.WINDOWS;
-    final int[] cpus = {cpus0};
-    final boolean[] run = {false};
-    Boolean ok = Ui.edt(() -> {
-      final JTextField n = new JTextField(String.valueOf(cpus0), 5);
-      final JLabel queue = Ui.muted(" "), cmd = new JLabel(" ");
-      cmd.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-      cmd.setForeground(new java.awt.Color(0x33, 0x3B, 0x45));
-      final Runnable upd = () -> {
-        String t = n.getText().trim();
-        int k = t.matches("[0-9]{1,5}") ? Integer.parseInt(t) : 0;
-        String[] sc = submitCommand(f, Math.max(1, k));
-        queue.setText(k <= 0 ? "whole number" : (k == 1 ? "serial" : "parallel") + "  \u00B7  queue " + sc[1]);
-        cmd.setText("<html><div style='width:520px'>" + Html.esc(sc[0]) + "</div></html>");
-      };
-      n.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-        @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
-        @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
-        @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
-      });
-      upd.run();
-      JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
-      row.add(new JLabel("CPUs"));
-      row.add(n);
-      row.add(queue);
-      JPanel body = new JPanel();
-      body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
-      JButton copy = Ui.link("Copy");
-      JButton go = Ui.primary(linux ? "Submit" : "Copy command");
-      copy.addActionListener(e -> {
-        String t = n.getText().trim();
-        if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return;
-        copyText(submitCommand(f, Integer.parseInt(t))[0]);
-        copy.setText("Copied");
-      });
-      String base = f.getFileName().toString().replaceFirst("\\.sim$", "");
-      JPanel cmdRow = new JPanel(new BorderLayout(10, 0));
-      cmdRow.add(cmd, BorderLayout.CENTER);
-      cmdRow.add(copy, BorderLayout.EAST);
-      for (javax.swing.JComponent k : new javax.swing.JComponent[] {row, cmdRow,
-          Ui.muted("Returns as " + base + ITER_SEP + "<n>.sim")}) {
-        k.setAlignmentX(0f);
-        body.add(k);
-        body.add(javax.swing.Box.createVerticalStrut(6));
-      }
-      return Ui.sheet("Run on cluster", f.getFileName().toString(), body, go, () -> {
-        String t = n.getText().trim();
-        if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return "CPUs: 1 or more.";
-        cpus[0] = Integer.parseInt(t);
-        run[0] = linux;
-        return null;
-      });
-    });
-    if (!Boolean.TRUE.equals(ok)) throw new Cancel(null);
-    Env.setPref("ncpus", String.valueOf(cpus[0]));
-    iterSeparator();
-    sim.saveState(Fs.guard(f).toString());
-    String[] sc = submitCommand(f, cpus[0]);
-    Path script = writeSubmitScript(f, sc[0]);
-    Path subs = script.getParent().resolve("submissions.csv");
-    boolean fresh = !Files.isRegularFile(subs);
-    try (java.io.Writer w = Files.newBufferedWriter(Fs.guard(subs), StandardCharsets.UTF_8,
-        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)) {
-      if (fresh) w.write(Csv.row(new String[] {"submitted", "by", "run", "file", "ncpus", "queue", "command", "script"}));
-      w.write(Csv.row(new String[] {Fmt.iso(), Env.user(), c.caseId, f.toString(), String.valueOf(cpus[0]), sc[1], sc[0],
-          script.toString()}));
-    } catch (Throwable t) {
-      log.na("submission record", t);
-    }
-    if (!run[0]) {
-      copyText(sc[0]);
-      result("command copied: " + sc[0]);
-      return;
-    }
-    String term = clusterConfig().get("terminal");
-    String inner = "bash '" + script + "'; echo; echo 'SimKit: this window can be closed.'; exec bash";
-    List<String[]> tries = new ArrayList<>();
-    tries.add(term.equals("konsole") ? new String[] {"konsole", "--workdir", f.getParent().toString(), "-e", "bash", "-c", inner}
-        : new String[] {term, "-e", "bash", "-c", inner});
-    tries.add(new String[] {"konsole", "--workdir", f.getParent().toString(), "-e", "bash", "-c", inner});
-    tries.add(new String[] {"gnome-terminal", "--working-directory=" + f.getParent(), "--", "bash", "-c", inner});
-    tries.add(new String[] {"xterm", "-e", "bash", "-c", inner});
-    for (String[] t : tries) {
-      try {
-        new ProcessBuilder(t).directory(f.getParent().toFile()).start();
-        result("submitted in a " + t[0] + " window: " + sc[0]);
-        return;
-      } catch (IOException e) { /* the next terminal */ }
-    }
-    copyText(sc[0]);
-    result("no terminal found (konsole, gnome-terminal, xterm): the command is copied, paste it in a terminal");
+  static double iterNum(String file) {
+    String it = iterOf(file);
+    try { return it.isEmpty() ? -1 : Double.parseDouble(it); } catch (NumberFormatException e) { return -1; }
   }
 
-  static void copyText(String t) {
-    try {
-      java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(t), null);
-    } catch (Throwable x) { /* no clipboard (batch) */ }
+  /** Iteration (or time) in a file name written during or after a run: R007_x_iter_05000.sim, or STAR's @05000. */
+  static String iterOf(String file) {
+    Matcher m = Pattern.compile("(?:_iter_|@)([0-9.eE+-]+?)(?:-[0-9_]+)?\\.sim$").matcher(file);
+    return m.find() ? m.group(1).replaceFirst("^0+(?=[0-9])", "") : "";
   }
+
+  // =====================================================================================================
+  // Run records (run.txt, simkit_project.txt: key=value)
+  // =====================================================================================================
 
   /** Reads a run.txt or simkit_project.txt (key=value lines). Missing file -> empty map. */
   static Map<String, String> readIdentity(CaseInfo c) { return readIdentity(c.identityFile()); }
@@ -1055,8 +805,109 @@ public class SimKit extends StarMacro {
     return sb.toString();
   }
 
+  /** Sets one key of a run's run.txt ("comment_v007" -> comment of R007) or of the project file, read just before
+   *  writing so the other keys (a colleague's edits) are kept. */
+  static void setIdentityKey(Path dir, String caseId, String key, String value) throws IOException {
+    Matcher m = Pattern.compile("^([a-z]+)_v([0-9]+)$").matcher(key);
+    Path f = m.matches() ? runRecord(dir, Integer.parseInt(m.group(2))) : studyFile(dir);
+    Map<String, String> id = readIdentity(f);
+    id.put(m.matches() ? m.group(1) : key, value == null ? "" : value);
+    Fs.write(f, identityText(id));
+  }
+
   // =====================================================================================================
-  // New case / New version
+  // Simulation values and SimKit parameters
+  // =====================================================================================================
+
+  int currentIteration() {
+    try { return sim.getSimulationIterator().getCurrentIteration(); } catch (Throwable t) { return 0; }
+  }
+
+  double physicalTime() {
+    try { return sim.getSolution().getPhysicalTime(); } catch (Throwable t) { return 0; }
+  }
+
+  /** Implicit unsteady solver, or null (steady / unknown). */
+  ImplicitUnsteadySolver unsteadySolver() {
+    try {
+      for (Object s : sim.getSolverManager().getObjects()) if (s instanceof ImplicitUnsteadySolver) return (ImplicitUnsteadySolver) s;
+    } catch (Throwable t) { /* steady or unknown */ }
+    return null;
+  }
+
+  /** Number of cells of all regions, through a temporary cell-count report (removed again); null if n/a. */
+  String cellCount() {
+    ElementCountReport r = null;
+    try {
+      r = sim.getReportManager().createReport(ElementCountReport.class);
+      r.getParts().setObjects(sim.getRegionManager().getRegions());
+      return Fmt.num(r.getReportMonitorValue());
+    } catch (Throwable t) {
+      log.na("cell count", t);
+      return null;
+    } finally {
+      if (r != null) try { sim.getReportManager().removeObjects(r); } catch (Throwable t) { /* left in the tree */ }
+    }
+  }
+
+  void setParam(String name, double v) {
+    ScalarGlobalParameter p = findParam(name);
+    if (p == null) p = newParam(name, null, v, null);
+    p.getQuantity().setValue(v);
+  }
+
+  ScalarGlobalParameter findParam(String name) {
+    GlobalParameterManager m = sim.get(GlobalParameterManager.class);
+    ScalarGlobalParameter p = findParamIn(m.getObjects(), name, 0);
+    if (p == null) {   // inside a parameter folder (group), e.g. "SimKit run tracking"
+      try { p = findParamIn(m.getGroupsManager().getObjects(), name, 0); } catch (Throwable t) { /* no folders */ }
+    }
+    return p;
+  }
+
+  static ScalarGlobalParameter findParamIn(Collection<?> objs, String name, int depth) {
+    for (Object o : objs) {
+      if (o instanceof ScalarGlobalParameter && name.equals(nm(o))) return (ScalarGlobalParameter) o;
+      if (depth < 5 && o instanceof star.base.neo.ClientServerObjectManager) {
+        ScalarGlobalParameter p = findParamIn(((star.base.neo.ClientServerObjectManager<?>) o).getObjects(), name, depth + 1);
+        if (p != null) return p;
+      }
+    }
+    return null;
+  }
+
+  static final String PARAM_FOLDER = "SimKit run tracking";
+
+  /** SimKit's own parameters (run number, based on, iteration) in one folder of the Parameters node, apart from the
+   *  simulation's own. */
+  void groupTracking() {
+    List<Object> ps = new ArrayList<>();
+    for (String n : new String[] {P_RUN, P_FROM, P_FROM_IT}) {
+      ScalarGlobalParameter p = findParam(n);
+      if (p != null) ps.add(p);
+    }
+    toFolder(sim.get(GlobalParameterManager.class), PARAM_FOLDER, ps);
+  }
+
+  /** New scalar parameter: dimensionless (dim == null) or a length with the given units. [U10][U30][U31] */
+  ScalarGlobalParameter newParam(String name, String dim, double value, Object units) {
+    ScalarGlobalParameter p = (ScalarGlobalParameter) sim.get(GlobalParameterManager.class)
+        .createGlobalParameter(ScalarGlobalParameter.class, "Scalar");                                   // [U10]
+    p.setPresentationName(name);
+    if ("length".equals(dim)) {
+      try { p.setDimensions(Dimensions.Builder().length(1).build()); }                                   // [U30]
+      catch (Throwable t) { log.na("dimensions of " + name, t); }
+      if (units instanceof Units) {
+        try { p.getQuantity().setUnits((Units) units); }                                                 // [U31]
+        catch (Throwable t) { log.na("units of " + name, t); }
+      }
+    }
+    p.getQuantity().setValue(value);                                                                     // [U10]
+    return p;
+  }
+
+  // =====================================================================================================
+  // Save as new run
   // =====================================================================================================
 
   /** Save as new run (one button): the next run of this study, based on this one at its current iteration; not in a study
@@ -1301,9 +1152,324 @@ public class SimKit extends StarMacro {
     return l;
   }
 
+  /** Saves the open simulation as the next run of a study: R<nnn>[_name].sim in sims/, numbers inside the sim, the
+   *  run record (record/R<nnn>.txt), the run label on the scenes. The open file stays as it is on disk. */
+  CaseInfo saveRun(Path study, String name, String comment) throws IOException {
+    CaseInfo from = runOrNull();
+    return saveRun(study, name, comment, from, null, from == null ? "" : groupOf(study, from.simFile));
+  }
+
+  CaseInfo saveRun(Path study, String name, String comment, CaseInfo from, Map<String, String> extra, String group) throws IOException {
+    int it = currentIteration();
+    double time = physicalTime();
+    String source = from != null ? from.simFile.toString() : sessionPath();
+    Fs.allow(study);
+    int n = takeRun(study);
+    String id = runId(n);
+    String base = id + (name.isEmpty() ? "" : "_" + name);
+    Path parent = group == null || group.isEmpty() ? study : study.resolve(group);
+    Path f = parent.resolve(base).resolve(base + ".sim");   // its own folder: R008_name/R008_name.sim
+    Fs.mkdirs(parent);
+    try {
+      Files.createDirectory(Fs.guard(f.getParent()));   // new: a folder of that name already there is not reused
+    } catch (FileAlreadyExistsException e) {
+      throw new Cancel(f.getParent().getFileName() + " already exists in " + parent + ": nothing saved");
+    }
+    setParam(P_RUN, n);
+    setParam(P_FROM, from == null ? 0 : from.nnn);
+    setParam(P_FROM_IT, it);
+    groupTracking();
+    iterSeparator();
+    runLabels("Run " + id + (name.isEmpty() ? "" : "  " + name));
+    sim.saveState(Fs.guard(f).toString());
+    Map<String, String> r = new LinkedHashMap<>();
+    r.put("run", id);
+    r.put("name", name);
+    r.put("comment", comment);
+    boolean other = from != null && !Fs.same(from.caseDir, study);   // a run of another study: <study>/R004
+    r.put("based_on", from != null ? (other ? from.caseDir.getFileName() + "/" + from.caseId : from.caseId)
+        : source.isEmpty() ? "" : Paths.get(source).getFileName().toString());
+    r.put("based_on_file", source);
+    r.put("from_iteration", String.valueOf(it));
+    if (unsteadySolver() != null) r.put("from_time", Fmt.num(time));
+    r.put("created", Fmt.iso());
+    r.put("created_by", Env.user());
+    r.put("file", study.relativize(f).toString().replace('\\', '/'));
+    if (extra != null) r.putAll(extra);
+    Fs.write(f.getParent().resolve(RUN_TXT), identityText(r));
+    Scan.clear(study);
+    log.line("saved " + f + "\n" + id + (from == null ? "" : " is based on " + from.caseId + " at iteration " + it)
+        + "; the file you came from is unchanged. Ctrl+S keeps saving " + f.getFileName() + ".");
+    result("saved " + f.getFileName() + (from == null ? "" : "  (based on " + from.caseId + ", iteration " + it + ")"));
+    return runOrNull();
+  }
+
+  /** Starts a study: the folder, its sub-folders and simkit_study.txt; then saves the open simulation as R001. */
+  void startStudy(Path dir, String name, String desc) throws IOException {
+    Fs.allow(dir);
+    Fs.mkdirs(dir);
+    Map<String, String> m = new LinkedHashMap<>();
+    m.put("project", dir.getFileName().toString());
+    m.put("description", desc);
+    m.put("created", Fmt.iso());
+    m.put("created_by", Env.user());
+    Fs.write(dir.resolve(STUDY_FILE), identityText(m));
+    Env.setPref("studyParent", dir.getParent() == null ? "" : dir.getParent().toString());
+    log.line("project " + dir);
+    saveRun(dir, name, "", runOrNull(), null, "");
+  }
+
+  /** Files written by STAR-CCM+ during and at the end of a run get "_iter_" instead of "@" (R007_base_iter_05000.sim). */
+  void iterSeparator() {
+    try {
+      star.common.AutoSave a = sim.getSimulationIterator().getAutoSave();
+      if (!ITER_SEP.equals(a.getSeparator())) a.setSeparator(ITER_SEP);
+    } catch (Throwable t) {
+      log.na("auto-save name separator", t);
+    }
+  }
+
+  /** A small label on every scene: "Run R007  baseline" (images in reports then name their run), next to the
+   *  iteration (or physical time) annotation of STAR-CCM+. Scenes made later get it at the next Save as new run or Export. */
+  void runLabels(String text) {
+    try {
+      star.vis.AnnotationManager am = sim.getAnnotationManager();
+      star.vis.SimpleAnnotation lab = null;
+      Object it = null;
+      for (Object a : am.getObjects()) {
+        if (a instanceof star.vis.SimpleAnnotation && nm(a).equals("simkit_run")) lab = (star.vis.SimpleAnnotation) a;
+        if (it == null && (a instanceof star.vis.PhysicalTimeAnnotation && unsteadySolver() != null
+            || a instanceof star.vis.IterationAnnotation && unsteadySolver() == null)) it = a;
+      }
+      if (lab == null) {
+        lab = am.createSimpleAnnotation();
+        lab.setPresentationName("simkit_run");
+      }
+      lab.setText(text);
+      int n = 0;
+      for (Object sc : sim.getSceneManager().getObjects()) {
+        try {
+          Object pm = Reflect.invoke(sc, "getAnnotationPropManager");
+          if (!(Boolean) Reflect.invoke(pm, "hasPropForAnnotation", lab)) {
+            Object prop = Reflect.invoke(pm, "createPropForAnnotation", lab);
+            try { Reflect.invoke(prop, "setPosition", new star.base.neo.DoubleVector(new double[] {0.02, 0.95, 0.0})); }
+            catch (Throwable t) { /* default place */ }
+          }
+          if (it != null && !(Boolean) Reflect.invoke(pm, "hasPropForAnnotation", it)) Reflect.invoke(pm, "createPropForAnnotation", it);
+          n++;
+        } catch (Throwable t) {
+          log.na("run label on " + nm(sc), t);
+        }
+      }
+      log.line("  run label \"" + text + "\" on " + n + " scene(s)");
+    } catch (Throwable t) {
+      log.na("run labels", t);
+    }
+  }
+
   // =====================================================================================================
-  // Case list (one CSV per project, rebuilt from the case folders; import it in Google Sheets)
+  // Run on cluster (Linux only)
   // =====================================================================================================
+
+  /** The team's cluster settings (config/cluster.csv: key, value). */
+  Map<String, String> clusterConfig() {
+    Map<String, String> m = new LinkedHashMap<>();
+    m.put("command", "bsubs.starccmp --input={sim} --ncpus={ncpus} --queue={queue}");
+    m.put("queue_serial", "A");
+    m.put("queue_parallel", "B");
+    m.put("terminal", "konsole");
+    for (String[] r : config("cluster.csv", new String[] {"key", "value"}, null)) {
+      if (r[0] != null && !r[0].trim().isEmpty() && r[1] != null) m.put(r[0].trim(), r[1].trim());
+    }
+    return m;
+  }
+
+  /** {command, queue} for a file and a number of CPUs (1 = the serial queue). */
+  String[] submitCommand(Path simFile, int ncpus) {
+    Map<String, String> m = clusterConfig();
+    String q = ncpus <= 1 ? m.get("queue_serial") : m.get("queue_parallel");
+    String path = simFile.toString().replace('\\', '/');
+    if (path.contains(" ")) path = "'" + path + "'";
+    return new String[] {m.get("command").replace("{sim}", path).replace("{ncpus}", String.valueOf(ncpus)).replace("{queue}", q), q};
+  }
+
+  /** A small script in the run folder's submit/ (also for a returned copy in a job folder below it): goes to the
+   *  file's folder, runs the command, keeps what it printed (job number). Not in a run folder: .simkit/ next to it. */
+  Path writeSubmitScript(Path simFile, String cmd) throws IOException {
+    Path dir = simFile.getParent();
+    String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+    String base = simFile.getFileName().toString().replaceFirst("\\.sim$", "");
+    Path rd = runDirOf(simFile);
+    Path sd = rd != null ? rd.resolve("submit") : dir.resolve(".simkit");
+    Path script = sd.resolve("submit_" + base + "_" + stamp + ".sh");
+    Path out = sd.resolve("submit_" + base + "_" + stamp + ".log");
+    Fs.allow(dir);
+    Fs.write(script, "#!/bin/bash\n# SimKit: " + base + " submitted by " + Env.user() + " on " + Fmt.iso() + "\ncd '"
+        + dir.toString().replace('\\', '/') + "' || exit 1\necho \"$ " + cmd.replace("\"", "\\\"") + "\"\n" + cmd + " 2>&1 | tee '"
+        + out.toString().replace('\\', '/') + "'\n");
+    return script;
+  }
+
+  /** Run on cluster (Linux only: the cluster is reached from the Linux machines): saves the file in place (with the
+   *  _iter_ naming), shows the team's command for the CPUs chosen, then runs it in a terminal opened in the file's folder. */
+  void toolSubmit() throws IOException {
+    if (Fs.WINDOWS) throw new Cancel("Run on cluster works on the Linux machines only (bsub is not reachable from Windows). Nothing done.");
+    final CaseInfo c = requireCase();
+    final Path f = Paths.get(sessionPath()).toAbsolutePath().normalize();
+    String pc = Env.pref("ncpus");
+    final int cpus0 = pc != null && pc.matches("[0-9]+") ? Integer.parseInt(pc) : 1;
+    final int[] cpus = {cpus0};
+    final List<String[]> checks = preSubmitChecks();   // read here (STAR calls), shown in the window
+    for (String[] k : checks) log.line("  pre-submit " + k[0] + "  " + k[1]);
+    Boolean ok = Ui.edt(() -> {
+      final JTextField n = new JTextField(String.valueOf(cpus0), 5);
+      final JLabel queue = Ui.muted(" "), cmd = new JLabel(" ");
+      cmd.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+      cmd.setForeground(new java.awt.Color(0x33, 0x3B, 0x45));
+      final Runnable upd = () -> {
+        String t = n.getText().trim();
+        int k = t.matches("[0-9]{1,5}") ? Integer.parseInt(t) : 0;
+        String[] sc = submitCommand(f, Math.max(1, k));
+        queue.setText(k <= 0 ? "whole number" : (k == 1 ? "serial" : "parallel") + "  \u00B7  queue " + sc[1]);
+        cmd.setText("<html><div style='width:520px'>" + Html.esc(sc[0]) + "</div></html>");
+      };
+      n.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+        @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+        @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+      });
+      upd.run();
+      JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+      row.add(new JLabel("CPUs"));
+      row.add(n);
+      row.add(queue);
+      JPanel body = new JPanel();
+      body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
+      JButton copy = Ui.link("Copy");
+      JButton go = Ui.primary("Submit");
+      copy.addActionListener(e -> {
+        String t = n.getText().trim();
+        if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return;
+        copyText(submitCommand(f, Integer.parseInt(t))[0]);
+        copy.setText("Copied");
+      });
+      String base = f.getFileName().toString().replaceFirst("\\.sim$", "");
+      JPanel cmdRow = new JPanel(new BorderLayout(10, 0));
+      cmdRow.add(cmd, BorderLayout.CENTER);
+      cmdRow.add(copy, BorderLayout.EAST);
+      for (javax.swing.JComponent k : new javax.swing.JComponent[] {row, cmdRow,
+          Ui.muted("Returns as " + base + ITER_SEP + "<n>.sim")}) {
+        k.setAlignmentX(0f);
+        body.add(k);
+        body.add(javax.swing.Box.createVerticalStrut(6));
+      }
+      int warn = 0;
+      for (String[] k : checks) if (!"ok".equals(k[0])) warn++;
+      JLabel ch = new JLabel("Pre-submit check: " + (checks.size() - warn) + " ok, " + warn + " to look at (the job is submitted either way)");
+      ch.setFont(ch.getFont().deriveFont(Font.BOLD, 12f));
+      ch.setBorder(BorderFactory.createEmptyBorder(8, 0, 2, 0));
+      ch.setAlignmentX(0f);
+      body.add(ch);
+      for (String[] k : checks) {
+        JLabel l = new JLabel(("ok".equals(k[0]) ? "\u2713  " : "!  ") + k[1]);
+        l.setForeground("ok".equals(k[0]) ? new java.awt.Color(0x2E, 0x6B, 0x2E) : new java.awt.Color(0x8A, 0x5A, 0x00));
+        l.setAlignmentX(0f);
+        body.add(l);
+      }
+      return Ui.sheet("Run on cluster", f.getFileName().toString(), body, go, () -> {
+        String t = n.getText().trim();
+        if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return "CPUs: 1 or more.";
+        cpus[0] = Integer.parseInt(t);
+        return null;
+      });
+    });
+    if (!Boolean.TRUE.equals(ok)) throw new Cancel(null);
+    Env.setPref("ncpus", String.valueOf(cpus[0]));
+    iterSeparator();
+    sim.saveState(Fs.guard(f).toString());
+    String[] sc = submitCommand(f, cpus[0]);
+    Path script = writeSubmitScript(f, sc[0]);
+    Path subs = script.getParent().resolve("submissions.csv");
+    boolean fresh = !Files.isRegularFile(subs);
+    try (java.io.Writer w = Files.newBufferedWriter(Fs.guard(subs), StandardCharsets.UTF_8,
+        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)) {
+      if (fresh) w.write(Csv.row(new String[] {"submitted", "by", "run", "file", "ncpus", "queue", "command", "script"}));
+      w.write(Csv.row(new String[] {Fmt.iso(), Env.user(), c.caseId, f.toString(), String.valueOf(cpus[0]), sc[1], sc[0],
+          script.toString()}));
+    } catch (Throwable t) {
+      log.na("submission record", t);
+    }
+    String term = clusterConfig().get("terminal");
+    String inner = "bash '" + script + "'; echo; echo 'SimKit: this window can be closed.'; exec bash";
+    List<String[]> tries = new ArrayList<>();
+    tries.add(term.equals("konsole") ? new String[] {"konsole", "--workdir", f.getParent().toString(), "-e", "bash", "-c", inner}
+        : new String[] {term, "-e", "bash", "-c", inner});
+    tries.add(new String[] {"konsole", "--workdir", f.getParent().toString(), "-e", "bash", "-c", inner});
+    tries.add(new String[] {"gnome-terminal", "--working-directory=" + f.getParent(), "--", "bash", "-c", inner});
+    tries.add(new String[] {"xterm", "-e", "bash", "-c", inner});
+    for (String[] t : tries) {
+      try {
+        new ProcessBuilder(t).directory(f.getParent().toFile()).start();
+        result("submitted in a " + t[0] + " window: " + sc[0]);
+        return;
+      } catch (IOException e) { /* the next terminal */ }
+    }
+    copyText(sc[0]);
+    result("no terminal found (konsole, gnome-terminal, xterm): the command is copied, paste it in a terminal");
+  }
+
+  static void copyText(String t) {
+    try {
+      java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(t), null);
+    } catch (Throwable x) { /* no clipboard (batch) */ }
+  }
+
+  /** {"ok" | "!", text} lines: mesh, stopping criteria, auto-save, standard reports, names, run number. */
+  List<String[]> preSubmitChecks() {
+    List<String[]> out = new ArrayList<>();
+    try {
+      boolean mesh = false;
+      for (Object rep : sim.getRepresentationManager().getObjects()) if (rep instanceof FvRepresentation) mesh = true;
+      out.add(new String[] {mesh ? "ok" : "!", mesh ? "volume mesh present" : "no volume mesh: the job meshes first, or fails"});
+    } catch (Throwable t) { out.add(new String[] {"!", "volume mesh: n/a (" + reason(t) + ")"}); }
+    try {
+      List<String> used = new ArrayList<>();
+      for (Object c : sim.getSolverStoppingCriterionManager().getObjects()) {
+        if (Boolean.TRUE.equals(Reflect.tryCall(c, "getIsUsed"))) used.add(nm(c));
+      }
+      out.add(used.isEmpty() ? new String[] {"!", "no stopping criterion enabled: the job runs until killed"}
+          : new String[] {"ok", "stopping criteria: " + String.join(", ", used)});
+    } catch (Throwable t) { out.add(new String[] {"!", "stopping criteria: n/a (" + reason(t) + ")"}); }
+    try {
+      AutoSave as = sim.getSimulationIterator().getAutoSave();
+      Object on = Reflect.tryCall(as.getStarUpdate(), "getEnabled");
+      if (on == null) on = Reflect.tryCall(as.getStarUpdate(), "isEnabled");
+      Object max = Reflect.tryCall(as, "getMaxAutosavedFiles");
+      if (!Boolean.TRUE.equals(on)) out.add(new String[] {"!", "auto-save off: nothing is saved before the end of the job"});
+      else if (max instanceof Number && ((Number) max).intValue() == 0) out.add(new String[] {"!", "auto-save keeps every file (maximum files = 0)"});
+      else out.add(new String[] {"ok", "auto-save on" + (max instanceof Number ? ", keeps " + max + " file(s)" : "")});
+    } catch (Throwable t) { out.add(new String[] {"!", "auto-save: n/a (" + reason(t) + ")"}); }
+    try {
+      int n = 0;
+      for (Object r : sim.getReportManager().getObjects()) if (nm(r).startsWith("r_")) n++;
+      out.add(n > 0 ? new String[] {"ok", n + " standard report(s) (r_*)"} : new String[] {"!", "no standard reports (r_*): Standard reports adds them"});
+    } catch (Throwable t) { out.add(new String[] {"!", "standard reports: n/a (" + reason(t) + ")"}); }
+    try {
+      int def = 0, mism = 0, nopre = 0;
+      for (NameRow x : nameRows()) {
+        if (x.state.startsWith("default name")) def++;
+        else if (x.kind.equals("boundary") && x.state.startsWith("no type prefix")) nopre++;
+        else if (x.kind.equals("boundary") && x.problem) mism++;
+      }
+      out.add(mism > 0 ? new String[] {"!", mism + " boundary type(s) do not match the name prefix (Names)"}
+          : new String[] {"ok", "boundary types match the name prefixes"});
+      if (nopre > 0) out.add(new String[] {"!", nopre + " boundary(ies) without a type prefix (Names)"});
+      if (def > 0) out.add(new String[] {"!", def + " object(s) with a default name (Names)"});
+    } catch (Throwable t) { out.add(new String[] {"!", "names: n/a (" + reason(t) + ")"}); }
+    out.add(findParam(P_RUN) != null ? new String[] {"ok", "run number in the simulation (" + P_RUN + ")"}
+        : new String[] {"!", "no run number in the simulation: Save as new run first"});
+    return out;
+  }
 
   // =====================================================================================================
   // Tracker: one row per run of the project, read from the run folders; status and comments editable
@@ -1312,90 +1478,8 @@ public class SimKit extends StarMacro {
   /** Tracker columns. ID = <project>.v<nnn> (one per run, shown as R<nnn>; "based on" refers to it). comment and
    *  status are the user's (editable); everything else is read from the run folders. */
   static final String[] TRACKER_COLS = {"ID", "comment", "status", "based on", "description", "saved", "file"};
+
   static final int COL_ID = 0, COL_COMMENT = 1, COL_STATUS = 2, COL_BASED = 3, COL_DESC = 4, COL_SAVED = 5, COL_FILE = 6;
-
-  static String caseOf(String versionId) {
-    int i = versionId.lastIndexOf(".v");
-    return i < 0 ? versionId : versionId.substring(0, i);
-  }
-
-  static String verOf(String versionId) {
-    int i = versionId.lastIndexOf(".v");
-    return i < 0 ? "" : versionId.substring(i + 2);
-  }
-
-  /** Hidden in the tracker (files untouched): hidden_v<nnn>=yes, or hidden=yes on the project (older SimKit). */
-  static boolean isHidden(Map<String, String> id, String v) {
-    return "yes".equals(id.get("hidden")) || "yes".equals(id.get("hidden_v" + v));
-  }
-
-  /** File names (rows) currently hidden in a project. */
-  static Set<String> hiddenFiles(Path casesDir, List<String[]> rows) {
-    Set<String> out = new HashSet<>();
-    Map<String, Map<String, String>> ids = new HashMap<>();
-    for (String[] r : rows) {
-      String cid = caseOf(r[COL_ID]);
-      Map<String, String> id = ids.computeIfAbsent(cid, k -> identityOf(casesDir, k));
-      if (isHidden(id, verOf(r[COL_ID]))) out.add(r[COL_FILE]);
-    }
-    return out;
-  }
-
-  // ----- the project in the tracker: one group (the project) whose rows are its runs; ID <project>.v007, shown as R007 -----
-
-  static boolean isStudy(Path dir) {
-    return dir != null && (Files.isRegularFile(dir.resolve(STUDY_FILE)) || Files.isRegularFile(dir.resolve(OLD_STUDY_FILE)));
-  }
-
-  /** The project's own file (simkit_project.txt, or simkit_study.txt of the first projects). */
-  static Path studyFile(Path dir) {
-    return Files.isRegularFile(dir.resolve(OLD_STUDY_FILE)) && !Files.isRegularFile(dir.resolve(STUDY_FILE)) ? dir.resolve(OLD_STUDY_FILE)
-        : dir.resolve(STUDY_FILE);
-  }
-
-  /** Run number of a tracker row of a study (the part after .v). */
-  static int runOf(String versionId) {
-    try { return Integer.parseInt(verOf(versionId)); } catch (NumberFormatException e) { return -1; }
-  }
-
-  /** The record of the run of key "<what>_v<nnn>" of a study, and the key in it ("comment", "status", "hidden"). */
-  static Path runRecord(Path study, int run) {
-    Path f = runRecords(study).get(run);
-    return f != null ? f : study.resolve("record").resolve(runId(run) + ".txt");
-  }
-
-  /** The identity of a case, or for a study: the study's file plus each run's comment_v / status_v / hidden_v. */
-  static Map<String, String> identityOf(Path dir, String caseId) {
-    Map<String, String> m = readIdentity(studyFile(dir));
-    for (Map.Entry<Integer, Path> rf : runRecords(dir).entrySet()) {
-      String v = String.format(Locale.ROOT, "%03d", rf.getKey());
-      for (Map.Entry<String, String> e : readIdentity(rf.getValue()).entrySet()) m.put(e.getKey() + "_v" + v, e.getValue());
-    }
-    return m;
-  }
-
-  /** Every .sim of a project by run number (the saved run and the copies that came back, anywhere below the project),
-   *  oldest first. */
-  static Map<Integer, List<Path>> studyFiles(Path study) {
-    Map<Integer, List<Path>> out = new TreeMap<>();
-    for (Map.Entry<Integer, List<Path>> e : Scan.of(study).files.entrySet()) out.put(e.getKey(), new ArrayList<>(e.getValue()));
-    return out;
-  }
-
-  static long mtime(Path p) {
-    try { return Files.getLastModifiedTime(p).toMillis(); } catch (IOException e) { return 0; }
-  }
-
-  static double iterNum(String file) {
-    String it = iterOf(file);
-    try { return it.isEmpty() ? -1 : Double.parseDouble(it); } catch (NumberFormatException e) { return -1; }
-  }
-
-  /** Iteration (or time) in a file name written during or after a run: R007_x_iter_05000.sim, or STAR's @05000. */
-  static String iterOf(String file) {
-    Matcher m = Pattern.compile("(?:_iter_|@)([0-9.eE+-]+?)(?:-[0-9_]+)?\\.sim$").matcher(file);
-    return m.find() ? m.group(1).replaceFirst("^0+(?=[0-9])", "") : "";
-  }
 
   /** One row per run of a study: its latest file (what you continue from), comment, status, based on. */
   static List<String[]> studyRows(Path study) {
@@ -1430,6 +1514,33 @@ public class SimKit extends StarMacro {
     return rows;
   }
 
+  static String caseOf(String versionId) {
+    int i = versionId.lastIndexOf(".v");
+    return i < 0 ? versionId : versionId.substring(0, i);
+  }
+
+  static String verOf(String versionId) {
+    int i = versionId.lastIndexOf(".v");
+    return i < 0 ? "" : versionId.substring(i + 2);
+  }
+
+  /** Hidden in the tracker (files untouched): hidden_v<nnn>=yes, or hidden=yes on the project (older SimKit). */
+  static boolean isHidden(Map<String, String> id, String v) {
+    return "yes".equals(id.get("hidden")) || "yes".equals(id.get("hidden_v" + v));
+  }
+
+  /** File names (rows) currently hidden in a project. */
+  static Set<String> hiddenFiles(Path casesDir, List<String[]> rows) {
+    Set<String> out = new HashSet<>();
+    Map<String, Map<String, String>> ids = new HashMap<>();
+    for (String[] r : rows) {
+      String cid = caseOf(r[COL_ID]);
+      Map<String, String> id = ids.computeIfAbsent(cid, k -> identityOf(casesDir, k));
+      if (isHidden(id, verOf(r[COL_ID]))) out.add(r[COL_FILE]);
+    }
+    return out;
+  }
+
   /** The file of a tracker row (its path below the project folder). */
   static Path fileOf(Path dir, String[] r) {
     return dir.resolve(r[COL_FILE]);
@@ -1442,36 +1553,13 @@ public class SimKit extends StarMacro {
     if (hide) m.put("hidden", "yes"); else m.remove("hidden");
     Fs.write(f, identityText(m));
   }
+
   static final String[] STATUSES = {"", "planned", "meshing", "running", "diverged", "done", "dropped"};   // "reported" (older cases): still shown
   static final String TRACKER_CSV = "case_tracker.csv";
 
   /** One row per run of the project. Reads only files; never the simulation. */
   static List<String[]> trackerRows(Path dir) {
     return studyRows(dir);
-  }
-
-  /** Batch test of the tracker's Open in STAR-CCM+: the open file is reported as already open; another run of the
-   *  project is loaded, reported and closed again. */
-  void testOpenSim() {
-    CaseInfo c = requireCase();
-    log.line("open sim: " + c.simFile.getFileName() + " -> " + (openSim(c.simFile) == null ? "already open (not loaded twice)" : "LOADED AGAIN"));
-    try {
-      loadDialog(c.simFile, false);
-      log.line("open sim: STAR-CCM+ Load dialog found (OpenOptionsDialog, setSimFile, show)");
-    } catch (Throwable t) {
-      log.line("open sim: STAR-CCM+ Load dialog NOT found (" + reason(t) + "): the tracker loads with default options");
-    }
-    for (String[] r : trackerRows(c.caseDir)) {
-      Path f = fileOf(c.caseDir, r);
-      if (Fs.same(f, c.simFile)) continue;
-      Simulation s = openSim(f);
-      log.line("open sim: " + f.getFileName() + " -> " + (s == null ? "already open" : "loaded as '" + s.getPresentationName()
-          + "', simulations open: " + SimulationManager.getSingleton().simulations().size()));
-      if (s != null) s.close(star.base.neo.ServerConnection.CloseOption.Close);
-      log.line("open sim: closed again, simulations open: " + SimulationManager.getSingleton().simulations().size());
-      return;
-    }
-    log.line("open sim: no other run in " + c.caseDir + " to open");
   }
 
   /** Tracker: floating window of every run of the project; comment and status are saved as you edit. */
@@ -1523,16 +1611,6 @@ public class SimKit extends StarMacro {
       out.add(x);
     }
     Csv.write(dir.resolve(TRACKER_CSV), head, out);
-  }
-
-  /** Sets one key of a run's run.txt ("comment_v007" -> comment of R007) or of the project file, read just before
-   *  writing so the other keys (a colleague's edits) are kept. */
-  static void setIdentityKey(Path dir, String caseId, String key, String value) throws IOException {
-    Matcher m = Pattern.compile("^([a-z]+)_v([0-9]+)$").matcher(key);
-    Path f = m.matches() ? runRecord(dir, Integer.parseInt(m.group(2))) : studyFile(dir);
-    Map<String, String> id = readIdentity(f);
-    id.put(m.matches() ? m.group(1) : key, value == null ? "" : value);
-    Fs.write(f, identityText(id));
   }
 
   /** Opens a .sim in this STAR-CCM+ session (another simulation, with its own tab in the window). Returns null when it
@@ -2362,7 +2440,7 @@ public class SimKit extends StarMacro {
         }
       });
 
-      w = new JDialog(Ui.owner(), "Tracker", java.awt.Dialog.ModalityType.MODELESS);
+      w = new JDialog(Ui.owner(), "Case tracker", java.awt.Dialog.ModalityType.MODELESS);
       w.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
       JButton close = new JButton("Close");
       close.addActionListener(e -> w.dispose());
@@ -2545,7 +2623,7 @@ public class SimKit extends StarMacro {
       for (String[] r : rows) byCase.computeIfAbsent(caseOf(r[COL_ID]), k -> new ArrayList<>()).add(r);
       for (String cid : byCase.keySet()) ids.put(cid, identityOf(dir, cid));
       if (openId == null && expanded.isEmpty()) expanded.addAll(byCase.keySet());
-      w.setTitle("Tracker  -  " + dir);
+      w.setTitle("Case tracker  -  cases in " + dir);
       folderName.setText(dir.getFileName() == null ? dir.toString() : dir.getFileName().toString());
       folderName.setToolTipText(dir.toString());
       rebuild();
@@ -3429,15 +3507,15 @@ public class SimKit extends StarMacro {
       javax.swing.JMenuItem openSim = new javax.swing.JMenuItem("Open in STAR-CCM+...");
       openSim.addActionListener(a -> openSelected());
       openSim.setEnabled(row >= 0 && !opening);
-      javax.swing.JMenuItem open = new javax.swing.JMenuItem("Open folder");
+      javax.swing.JMenuItem open = new javax.swing.JMenuItem("Open case folder");
       open.addActionListener(a -> openFolder());
       javax.swing.JMenuItem hide = new javax.swing.JMenuItem(hideBtn.getText(), hideBtn.getIcon());
       hide.addActionListener(a -> hideOrShow());
       open.setEnabled(row >= 0);
       hide.setEnabled(row >= 0 && hideBtn.isEnabled());
-      javax.swing.JMenuItem ex = new javax.swing.JMenuItem("Unfold");
+      javax.swing.JMenuItem ex = new javax.swing.JMenuItem("Unfold all cases");
       ex.addActionListener(a -> { expanded.addAll(byCase.keySet()); rebuild(); });
-      javax.swing.JMenuItem co = new javax.swing.JMenuItem("Fold");
+      javax.swing.JMenuItem co = new javax.swing.JMenuItem("Fold all cases");
       co.addActionListener(a -> { expanded.clear(); rebuild(); });
       javax.swing.JMenuItem copy = new javax.swing.JMenuItem("Copy reference (ID and path)   Ctrl+C");
       copy.addActionListener(a -> copyLinks());
@@ -3619,37 +3697,63 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // STAR API wrappers (tagged; see TESTING.txt)
+  // Names (trial): type prefixes, default names, prefix vs boundary type; renames only ticked rows, on Apply
   // =====================================================================================================
 
-  static String nm(Object o) {
-    try { return ((ClientServerObject) o).getPresentationName(); } catch (Throwable t) { return String.valueOf(o); }
+  /** Type prefixes: prefix, boundary classes that fit it ("*Interface*" = any interface boundary), meaning.
+   *  config/naming.csv replaces this list (same columns); Standard reports and Names use it. */
+  static final String[][] DEFAULT_PREFIXES = {
+      {"IN", "InletBoundary MassFlowBoundary StagnationBoundary FreeStreamBoundary", "inlet (velocity, mass flow, stagnation or free stream)"},
+      {"OUT", "PressureBoundary OutletBoundary FreeStreamBoundary MassFlowBoundary", "outlet (pressure, flow-split, free stream or mass flow)"},
+      {"OPEN", "PressureBoundary StagnationBoundary FreeStreamBoundary", "open boundary (pressure, stagnation or free stream)"},
+      {"WALL", "WallBoundary", "wall"},
+      {"SYM", "SymmetryBoundary", "symmetry plane"},
+      {"IF", "*Interface*", "interface (contact between regions)"}};
+
+  static volatile List<String[]> prefixes = Arrays.asList(DEFAULT_PREFIXES);
+
+  static volatile Pattern prefixRx = Pattern.compile("^(IN|OUT|OPEN|WALL|SYM|IF)_");
+
+  /** Reads config/naming.csv (built-in list when absent) into prefixes / prefixRx. */
+  void loadPrefixes() {
+    List<String[]> rows = new ArrayList<>();
+    for (String[] r : config("naming.csv", new String[] {"prefix", "boundary_classes", "meaning"}, DEFAULT_PREFIXES)) {
+      if (r[0] != null && r[0].trim().matches("[A-Za-z][A-Za-z0-9]*")) {
+        rows.add(new String[] {r[0].trim(), r[1] == null ? "" : r[1].trim(), r[2] == null ? "" : r[2].trim()});
+      }
+    }
+    if (rows.isEmpty()) rows = Arrays.asList(DEFAULT_PREFIXES);
+    List<String> p = new ArrayList<>();
+    for (String[] r : rows) p.add(Pattern.quote(r[0]));
+    prefixes = rows;
+    prefixRx = Pattern.compile("^(" + String.join("|", p) + ")_");
   }
 
-  static String cls(Object o) { return o == null ? "none" : o.getClass().getSimpleName(); }
-
-  /** [U09] Plays another macro file inside this session. */
-  void runMacroFile(Path p) {
-    new StarScript(getActiveRootObject(), new java.io.File(p.toString())).play();                        // [U09]
+  /** Prefix of a boundary name (IN, OUT, ...) from its surface part ("Part.IN_air" -> IN); null if none. */
+  static String bcToken(String boundaryName) {
+    String n = boundaryName.substring(boundaryName.lastIndexOf('.') + 1);
+    Matcher m = prefixRx.matcher(n);
+    return m.find() ? m.group(1) : null;
   }
 
-  /** Implicit unsteady solver, or null (steady / unknown). */
-  ImplicitUnsteadySolver unsteadySolver() {
-    try {
-      for (Object s : sim.getSolverManager().getObjects()) if (s instanceof ImplicitUnsteadySolver) return (ImplicitUnsteadySolver) s;
-    } catch (Throwable t) { /* steady or unknown */ }
+  /** The prefix rule of a token, or null. */
+  static String[] prefixRule(String token) {
+    for (String[] r : prefixes) if (r[0].equals(token)) return r;
     return null;
   }
 
-  // =====================================================================================================
-  // Surfaces by name prefix (IN_, OUT_, OPEN_, WALL_, SYM_, IF_)
-  // =====================================================================================================
+  /** True when the boundary class fits the prefix rule. */
+  static boolean typeFits(String[] rule, String boundaryClass) {
+    if (rule == null || rule[1].isEmpty()) return true;
+    if (rule[1].startsWith("*")) return boundaryClass.contains(rule[1].replace("*", ""));
+    return Arrays.asList(rule[1].split("\\s+")).contains(boundaryClass);
+  }
 
-  /** Prefix of a boundary name (IN, OUT, OPEN, WALL, SYM, IF) from its surface part ("Part.IN_air" -> IN); null if none. */
-  static String bcToken(String boundaryName) {
-    String n = boundaryName.substring(boundaryName.lastIndexOf('.') + 1);
-    Matcher m = Pattern.compile("^(IN|OUT|OPEN|WALL|SYM|IF)_").matcher(n);
-    return m.find() ? m.group(1) : null;
+  /** The prefix a boundary class suggests (first rule that lists it), or null. */
+  static String prefixFor(String boundaryClass) {
+    for (String[] r : prefixes) if (!r[1].startsWith("*") && Arrays.asList(r[1].split("\\s+")).contains(boundaryClass)) return r[0];
+    for (String[] r : prefixes) if (r[1].startsWith("*") && boundaryClass.contains(r[1].replace("*", ""))) return r[0];
+    return null;
   }
 
   /** Boundaries of all regions grouped by prefix token. */
@@ -3664,7 +3768,235 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  // ---------------------------------------------------------------- audit
+  /** Default STAR-CCM+ names ("Report 3", "Plane Section 2", "Body 1", "Surface 12", "Default"). */
+  static final Pattern DEFAULT_NAME = Pattern.compile("^(Default|Body|Surface|Part|Region|Interface|Report|Plot|Scene|Monitor|"
+      + "Plane Section|Line Probe|Point Probe|Isosurface|Threshold|Block|Cylinder|Sphere|Cone)( [0-9]+)?$"
+      + "|^[A-Z][A-Za-z]*( [A-Z][A-Za-z]*)* [0-9]+$");
+
+  static boolean isDefaultName(String n) { return DEFAULT_NAME.matcher(n).find(); }
+
+  /** One row of the Names table. kind: boundary, part surface, or the object type (default names only). */
+  static final class NameRow {
+    Object o;
+    String kind, path, name, state, proposed = "", typeClass = "";
+    boolean pick, problem;
+  }
+
+  /** The name part a prefix goes on: the last dot-separated part of a boundary name ("Body 1.Surface 12" -> "Surface 12"). */
+  static String lastPart(String n) { return n.substring(n.lastIndexOf('.') + 1); }
+
+  /** n with the prefix p on its last part (an existing type prefix is replaced). */
+  static String withPrefix(String n, String p) {
+    int i = n.lastIndexOf('.');
+    String head = i < 0 ? "" : n.substring(0, i + 1), last = n.substring(i + 1);
+    Matcher m = prefixRx.matcher(last);
+    if (m.find()) last = last.substring(m.end());
+    return head + p + "_" + last.trim().replaceAll("\\s+", "_");
+  }
+
+  /** Boundaries, part surfaces, and every other object with a default name. Reads only. */
+  List<NameRow> nameRows() {
+    loadPrefixes();
+    List<NameRow> out = new ArrayList<>();
+    try {
+      for (Region r : sim.getRegionManager().getRegions()) {
+        for (Boundary b : r.getBoundaryManager().getBoundaries()) {
+          NameRow x = new NameRow();
+          x.o = b;
+          x.kind = "boundary";
+          x.name = nm(b);
+          x.path = nm(r) + " / " + x.name;
+          x.typeClass = cls(b.getBoundaryType());
+          String t = bcToken(x.name), sug = prefixFor(x.typeClass);
+          if (t == null) {
+            x.state = "no type prefix (" + nm(b.getBoundaryType()) + ")";
+            x.problem = true;
+            if (sug != null) x.proposed = withPrefix(x.name, sug);
+          } else if (!typeFits(prefixRule(t), x.typeClass)) {
+            x.state = t + "_ on a " + nm(b.getBoundaryType()) + " boundary";
+            x.problem = true;
+            if (sug != null) x.proposed = withPrefix(x.name, sug);
+          } else {
+            x.state = "ok";
+          }
+          out.add(x);
+        }
+      }
+    } catch (Throwable t) { log.na("boundaries", t); }
+    try {
+      for (Object o : sim.get(SimulationPartManager.class).getParts()) {
+        if (!(o instanceof GeometryPart)) continue;
+        if (isDefaultName(nm(o))) out.add(defaultRow(o, "part", "Parts / " + nm(o)));
+        try {
+          for (Object ps : ((GeometryPart) o).getPartSurfaces()) {
+            NameRow x = new NameRow();
+            x.o = ps;
+            x.kind = "part surface";
+            x.name = nm(ps);
+            x.path = nm(o) + " / " + x.name;
+            boolean def = isDefaultName(x.name);
+            x.state = bcToken(x.name) != null ? (def ? "default name" : "ok") : def ? "default name, no type prefix" : "no type prefix";
+            x.problem = !"ok".equals(x.state);
+            out.add(x);
+          }
+        } catch (Throwable t) { log.na("part surfaces of " + nm(o), t); }
+      }
+    } catch (Throwable t) { log.na("geometry parts", t); }
+    try { for (Region r : sim.getRegionManager().getRegions()) if (isDefaultName(nm(r))) out.add(defaultRow(r, "region", "Regions / " + nm(r))); }
+    catch (Throwable t) { log.na("regions", t); }
+    Object[][] more = {{"report", null}, {"monitor", null}, {"plot", null}, {"scene", null}, {"derived part", null}};
+    try { more[0][1] = sim.getReportManager().getObjects(); } catch (Throwable t) { log.na("reports", t); }
+    try { more[1][1] = sim.getMonitorManager().getObjects(); } catch (Throwable t) { log.na("monitors", t); }
+    try { more[2][1] = sim.getPlotManager().getObjects(); } catch (Throwable t) { log.na("plots", t); }
+    try { more[3][1] = sim.getSceneManager().getScenes(); } catch (Throwable t) { log.na("scenes", t); }
+    try { more[4][1] = sim.getPartManager().getObjects(); } catch (Throwable t) { log.na("derived parts", t); }
+    for (Object[] m : more) {
+      if (!(m[1] instanceof Collection)) continue;
+      for (Object o : (Collection<?>) m[1]) {
+        if (m[0].equals("plot") && "ResidualPlot".equals(cls(o))) continue;
+        if (isDefaultName(nm(o))) out.add(defaultRow(o, (String) m[0], m[0] + " / " + nm(o)));
+      }
+    }
+    return out;
+  }
+
+  NameRow defaultRow(Object o, String kind, String path) {
+    NameRow x = new NameRow();
+    x.o = o;
+    x.kind = kind;
+    x.name = nm(o);
+    x.path = path;
+    x.state = "default name";
+    x.problem = true;
+    return x;
+  }
+
+  /** Batch test: the Names table in the log. */
+  void logNames() {
+    List<NameRow> rows = nameRows();
+    int bad = 0;
+    for (NameRow x : rows) {
+      if (x.problem) bad++;
+      log.line(String.format(Locale.ROOT, "names: %-13s %-45s %-36s %s", x.kind, Fmt.cut(x.path, 45), x.state,
+          x.proposed.isEmpty() ? "" : "-> " + x.proposed));
+    }
+    log.line("names: " + rows.size() + " row(s), " + bad + " to look at; prefixes " + prefixRx.pattern());
+  }
+
+  /** Names: the table; Apply renames the ticked rows that have a new name. */
+  void toolNames() {
+    final List<NameRow> rows = nameRows();
+    final List<NameRow> done = new ArrayList<>();
+    Boolean ok = Ui.edt(() -> namesWindow(rows));
+    if (!Boolean.TRUE.equals(ok)) throw new Cancel(null);
+    for (NameRow x : rows) {
+      if (!x.pick || x.proposed.trim().isEmpty() || x.proposed.trim().equals(x.name)) continue;
+      try {
+        ((NamedObject) x.o).setPresentationName(x.proposed.trim());
+        log.line("  renamed " + x.kind + " " + x.path + " -> " + x.proposed.trim());
+        done.add(x);
+      } catch (Throwable t) {
+        log.na("rename " + x.path, t);
+      }
+    }
+    result(done.isEmpty() ? "names: nothing renamed" : "names: " + done.size() + " object(s) renamed (Ctrl+Z does not undo it: rename back by hand)");
+  }
+
+  /** The Names window (Swing thread). Rows to look at first; ok rows on "Show all". */
+  Boolean namesWindow(final List<NameRow> all) {
+    final List<NameRow> view = new ArrayList<>();
+    final javax.swing.JCheckBox showAll = new javax.swing.JCheckBox("Show the rows that are ok");
+    final String[] cols = {"", "Object", "Kind", "State", "New name"};
+    final javax.swing.table.AbstractTableModel model = new javax.swing.table.AbstractTableModel() {
+      private static final long serialVersionUID = 1L;
+      @Override public int getRowCount() { return view.size(); }
+      @Override public int getColumnCount() { return cols.length; }
+      @Override public String getColumnName(int c) { return cols[c]; }
+      @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
+      @Override public boolean isCellEditable(int r, int c) { return c == 0 || c == 4; }
+      @Override public Object getValueAt(int r, int c) {
+        NameRow x = view.get(r);
+        return c == 0 ? x.pick : c == 1 ? x.path : c == 2 ? x.kind : c == 3 ? x.state : x.proposed;
+      }
+      @Override public void setValueAt(Object v, int r, int c) {
+        NameRow x = view.get(r);
+        if (c == 0) x.pick = Boolean.TRUE.equals(v);
+        if (c == 4) { x.proposed = String.valueOf(v).trim(); if (!x.proposed.isEmpty()) x.pick = true; }
+        fireTableRowsUpdated(r, r);
+      }
+    };
+    final Runnable fill = () -> {
+      view.clear();
+      for (NameRow x : all) if (x.problem || showAll.isSelected()) view.add(x);
+      model.fireTableDataChanged();
+    };
+    final javax.swing.JTable t = new javax.swing.JTable(model);
+    t.setRowHeight(24);
+    t.setFillsViewportHeight(true);
+    t.getColumnModel().getColumn(0).setMaxWidth(30);
+    t.getColumnModel().getColumn(1).setPreferredWidth(320);
+    t.getColumnModel().getColumn(2).setPreferredWidth(90);
+    t.getColumnModel().getColumn(3).setPreferredWidth(260);
+    t.getColumnModel().getColumn(4).setPreferredWidth(260);
+    t.setDefaultRenderer(String.class, new javax.swing.table.DefaultTableCellRenderer() {
+      private static final long serialVersionUID = 1L;
+      @Override public java.awt.Component getTableCellRendererComponent(javax.swing.JTable tb, Object v, boolean sel, boolean f, int r, int c) {
+        super.getTableCellRendererComponent(tb, v, sel, f, r, c);
+        NameRow x = view.get(r);
+        setForeground(sel ? tb.getSelectionForeground() : c == 3 && x.problem ? new java.awt.Color(0x8A, 0x5A, 0x00)
+            : c == 4 ? Ui.BLUE : java.awt.Color.BLACK);
+        return this;
+      }
+    });
+    fill.run();
+    showAll.addActionListener(e -> fill.run());
+    JPanel typeBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+    typeBar.add(new JLabel("Type prefix on the selected rows:"));
+    for (String[] p : prefixes) {
+      JButton b = new JButton(p[0]);
+      b.setToolTipText(p[0] + "_ = " + p[2]);
+      b.setMargin(new java.awt.Insets(2, 8, 2, 8));
+      b.addActionListener(e -> {
+        if (t.isEditing()) t.getCellEditor().stopCellEditing();
+        int[] sel = t.getSelectedRows();
+        if (sel.length == 0) for (int i = 0; i < view.size(); i++) if (view.get(i).pick) sel = append(sel, i);
+        for (int i : sel) {
+          NameRow x = view.get(i);
+          if (!x.kind.equals("boundary") && !x.kind.equals("part surface")) continue;
+          x.proposed = withPrefix(x.name, p[0]);
+          x.pick = true;
+        }
+        model.fireTableDataChanged();
+        for (int i : sel) t.addRowSelectionInterval(i, i);
+      });
+      typeBar.add(b);
+    }
+    typeBar.add(javax.swing.Box.createHorizontalStrut(12));
+    typeBar.add(showAll);
+    javax.swing.JScrollPane sp = new javax.swing.JScrollPane(t);
+    sp.setPreferredSize(new java.awt.Dimension(980, 420));
+    int nb = 0;
+    for (NameRow x : all) if (x.problem) nb++;
+    JPanel body = new JPanel(new BorderLayout(0, 8));
+    body.add(Ui.muted("Ticked rows with a new name are renamed on Apply; nothing else changes. Prefixes: "
+        + (Files.isRegularFile(Fs.config("naming.csv")) ? "config/naming.csv" : "built-in list") + "."), BorderLayout.NORTH);
+    body.add(sp, BorderLayout.CENTER);
+    body.add(typeBar, BorderLayout.SOUTH);
+    final JButton apply = Ui.primary("Apply");
+    return Ui.sheet("Names", nb + " row(s) to look at, " + all.size() + " in all", body, apply, () -> {
+      if (t.isEditing()) t.getCellEditor().stopCellEditing();
+      for (NameRow x : all) {
+        if (x.pick && !x.proposed.isEmpty() && (x.proposed.contains("/") || x.proposed.contains("\\"))) return "Name '" + x.proposed + "': no / or \\.";
+      }
+      return null;
+    });
+  }
+
+  static int[] append(int[] a, int v) {
+    int[] b = Arrays.copyOf(a, a.length + 1);
+    b[a.length] = v;
+    return b;
+  }
 
   // =====================================================================================================
   // Standard reports (built from the surface prefixes)
@@ -3672,21 +4004,25 @@ public class SimKit extends StarMacro {
 
   /** The team's standard reports (config/standard_reports.csv, else these): name, group (one plot each), type,
    *  field (or the expression of an expression report), surfaces (prefixes joined by +, or REGIONS), condition
-   *  ("", energy, unsteady, "needs <report> <report>"), meaning. */
-  static final String[] STD_COLS = {"name", "group", "type", "field", "surfaces", "condition", "meaning"};
+   *  ("", energy, unsteady, "needs <report> <report>"), meaning, and two optional columns: criterion (a stopping
+   *  criterion on the report's monitor: "asymptotic <width> <samples>", "below <limit>" or "above <limit>"; created
+   *  off, "... on" creates it on) and mean ("last <n>": a report <name>_mean = mean of the monitor over the last n
+   *  samples). */
+  static final String[] STD_COLS = {"name", "group", "type", "field", "surfaces", "condition", "meaning", "criterion", "mean"};
+
   static final String[][] STANDARD_REPORTS = {
       {"r_mdot_in", "massBalance", "mass flow", "", "IN", "", "mass flow entering (IN_ surfaces)"},
       {"r_mdot_out", "massBalance", "mass flow", "", "OUT+OPEN", "", "mass flow leaving (OUT_ and OPEN_)"},
       {"r_mdot_net", "massBalance", "mass flow", "", "IN+OUT+OPEN", "", "net mass flow: tends to 0 when mass is conserved"},
-      {"r_mdot_imbalance_pct", "convergence", "expression", "abs(${r_mdot_net}) / abs(${r_mdot_in}) * 100", "", "needs r_mdot_net r_mdot_in", "mass imbalance in % of the inflow (converged: below 0.1)"},
+      {"r_mdot_imbalance_pct", "convergence", "expression", "abs(${r_mdot_net}) / abs(${r_mdot_in}) * 100", "", "needs r_mdot_net r_mdot_in", "mass imbalance in % of the inflow (converged: below 0.1)", "below 0.1", ""},
       {"r_p_in_avg", "pressure", "area average", "Pressure", "IN", "", "inlet static pressure (area average)"},
       {"r_p_out_avg", "pressure", "area average", "Pressure", "OUT", "", "outlet static pressure (area average)"},
       {"r_p0_in_avg", "pressure", "area average", "TotalPressure", "IN", "", "inlet total pressure (area average)"},
       {"r_dp_static", "pressure", "expression", "${r_p_in_avg} - ${r_p_out_avg}", "", "needs r_p_in_avg r_p_out_avg", "static pressure drop, inlet - outlet"},
       {"r_T_in_mfavg", "temperature", "mass-flow average", "Temperature", "IN", "energy", "inlet temperature (mass-flow average)"},
-      {"r_T_out_mfavg", "temperature", "mass-flow average", "Temperature", "OUT+OPEN", "energy", "outlet temperature (mass-flow average)"},
+      {"r_T_out_mfavg", "temperature", "mass-flow average", "Temperature", "OUT+OPEN", "energy", "outlet temperature (mass-flow average)", "asymptotic 0.5 200", "last 500"},
       {"r_T_wall_max", "temperature", "maximum", "Temperature", "WALL", "energy", "hottest wall temperature"},
-      {"r_Q_wall", "heat", "heat flow", "", "WALL", "energy", "heat flow through the walls"},
+      {"r_Q_wall", "heat", "heat flow", "", "WALL", "energy", "heat flow through the walls", "", "last 500"},
       {"r_yplus_wall_max", "yplus", "maximum", "WallYplus", "WALL", "", "maximum wall y+"},
       {"r_yplus_wall_avg", "yplus", "area average", "WallYplus", "WALL", "", "average wall y+"},
       {"r_Co_max", "courant", "maximum", "CourantNumber", "REGIONS", "unsteady", "maximum convective Courant number"}};
@@ -3725,16 +4061,30 @@ public class SimKit extends StarMacro {
     List<Object> deflt;   // the surfaces found from the names (Default)
     String why;
     boolean on;
+    Object existing;      // the report already in the simulation: on Create, the new surfaces are added to it
+    int added;            // surfaces it does not have yet
+  }
+
+  /** The surfaces a report is computed on (empty if not readable). */
+  static List<Object> partsOf(Object report) {
+    try {
+      Object objs = Reflect.invoke(Reflect.invoke(report, "getParts"), "getObjects");
+      return objs instanceof Collection ? new ArrayList<Object>((Collection<?>) objs) : new ArrayList<>();
+    } catch (Throwable t) {
+      return new ArrayList<>();
+    }
   }
 
   /** Standard reports (one window): the team's list grouped by purpose; each row shows the surfaces it is computed on
    *  (double-click to choose others) or why it cannot be made here. Creates the reports, a monitor each and one
    *  plot per group. Existing objects are never changed or replaced. */
   void toolStandardReports() {
+    loadPrefixes();
     Map<String, List<Boundary>> bc = boundariesByToken();
     List<Object> regions = new ArrayList<>(sim.getRegionManager().getRegions());
     Set<String> existing = new HashSet<>();
-    for (Object r : sim.getReportManager().getObjects()) existing.add(nm(r));
+    Map<String, Object> existingObj = new HashMap<>();
+    for (Object r : sim.getReportManager().getObjects()) { existing.add(nm(r)); existingObj.put(nm(r), r); }
     boolean unsteady = unsteadySolver() != null;
     boolean energy = fieldFunction("Temperature") != null;
     List<StdReport> all = new ArrayList<>();
@@ -3747,7 +4097,20 @@ public class SimKit extends StarMacro {
       boolean expr = r[2].equalsIgnoreCase("expression");
       if (r[4].equals("REGIONS")) x.target.addAll(regions);
       else if (!r[4].isEmpty()) for (String t : r[4].split("\\+")) x.target.addAll(bc.getOrDefault(t, Collections.emptyList()));
-      if (existing.contains(r[0])) x.why = "already in the simulation";
+      if (existing.contains(r[0])) {   // a standard report already there: new surfaces of its prefixes are added on request
+        x.why = "already in the simulation";
+        if (!expr && !r[4].equals("REGIONS") && !r[4].isEmpty()) {
+          List<Object> have = partsOf(existingObj.get(r[0]));
+          Set<Object> union = new LinkedHashSet<>(have);
+          union.addAll(x.target);
+          x.added = union.size() - have.size();
+          if (x.added > 0 && !have.isEmpty()) {
+            x.existing = existingObj.get(r[0]);
+            x.target = new ArrayList<>(union);
+            x.why = null;
+          }
+        }
+      }
       else if (!expr && x.target.isEmpty()) x.why = "no " + r[4].replace("+", "_ or ") + "_ surface";
       else if (r[5].equals("energy") && !energy) x.why = "no energy model";
       else if (r[5].equals("unsteady") && !unsteady) x.why = "steady simulation";
@@ -3780,10 +4143,22 @@ public class SimKit extends StarMacro {
     }
     Map<String, List<Object>> groups = new LinkedHashMap<>();
     Set<String> made = new LinkedHashSet<>(existing);
-    int n = 0;
+    Map<String, String[]> defs = new HashMap<>();
+    int n = 0, upd = 0;
     for (StdReport x : all) {
       if (!x.on || x.why != null) continue;
       String[] r = x.def;
+      defs.put(r[0], r);
+      if (x.existing != null) {
+        try {
+          Reflect.invoke(Reflect.invoke(x.existing, "getParts"), "setObjects", new NeoObjectVector(x.target.toArray()));
+          upd++;
+          log.line(String.format("  updated %-22s +%d surface(s), %d in all", r[0], x.added, x.target.size()));
+        } catch (Throwable t) {
+          log.na("update of " + r[0], t);
+        }
+        continue;
+      }
       if (r[5].startsWith("needs ")) {
         boolean ok = true;
         for (String q : r[5].substring(6).trim().split("\\s+")) ok &= made.contains(q);
@@ -3807,8 +4182,21 @@ public class SimKit extends StarMacro {
       }
     }
     List<Object> plots = new ArrayList<>();
+    int crit = 0, means = 0;
     for (Map.Entry<String, List<Object>> g : groups.entrySet()) {
       Object[] mp = monitorsAndPlot(g.getValue(), "pl_" + g.getKey());
+      List<Object> extra = new ArrayList<>();
+      for (Object m : (List<?>) mp[0]) {
+        String[] d;
+        try { d = defs.get(nm(((ReportMonitor) m).getReport())); } catch (Throwable t) { d = null; }
+        if (d == null) continue;
+        if (d.length > 7 && d[7] != null && !d[7].trim().isEmpty() && stoppingCriterion(m, d[0], d[7].trim())) crit++;
+        if (d.length > 8 && d[8] != null && !d[8].trim().isEmpty()) {
+          Object mean = meanReport(m, d[0], d[8].trim());
+          if (mean != null) { extra.add(mean); means++; }
+        }
+      }
+      g.getValue().addAll(extra);
       // in the tree: reports and monitors in one folder per purpose, the plots together in one folder
       String folder = groupTitle(g.getKey());
       toFolder(sim.getReportManager(), folder, g.getValue());
@@ -3816,7 +4204,61 @@ public class SimKit extends StarMacro {
       if (mp[1] != null) plots.add(mp[1]);
     }
     toFolder(sim.getPlotManager(), "Standard reports", plots);   // one call: adding to a folder later makes a second one
-    result(n + " report(s) with monitors and " + groups.size() + " plot(s) created");
+    result(n + " report(s) with monitors and " + groups.size() + " plot(s) created" + (upd > 0 ? ", " + upd + " updated" : "")
+        + (crit > 0 ? ", " + crit + " stopping criterion(a)" : "") + (means > 0 ? ", " + means + " mean report(s)" : ""));
+  }
+
+  /** A stopping criterion on a report monitor: "asymptotic <width> <samples>", "below <limit>", "above <limit>";
+   *  created off unless the text ends with " on". Returns true when made. */
+  boolean stoppingCriterion(Object monitor, String report, String spec) {
+    String[] w = spec.toLowerCase(Locale.ROOT).split("\\s+");
+    boolean on = w[w.length - 1].equals("on");
+    try {
+      MonitorIterationStoppingCriterion c = ((Monitor) monitor).createIterationStoppingCriterion();
+      if (w[0].equals("asymptotic") && w.length >= 3) {
+        c.getCriterionOption().setSelected(MonitorIterationStoppingCriterionOption.Type.ASYMPTOTIC);
+        MonitorIterationStoppingCriterionAsymptoticType a = (MonitorIterationStoppingCriterionAsymptoticType) c.getCriterionType();
+        a.getMaxWidth().setValue(Fmt.parse(w[1]));
+        a.setNumberSamples(Integer.parseInt(w[2]));
+      } else if ((w[0].equals("below") || w[0].equals("above")) && w.length >= 2) {
+        c.getCriterionOption().setSelected(w[0].equals("below") ? MonitorIterationStoppingCriterionOption.Type.MINIMUM
+            : MonitorIterationStoppingCriterionOption.Type.MAXIMUM);
+        ((MonitorIterationStoppingCriterionLimitType) c.getCriterionType()).getLimit().setValue(Fmt.parse(w[1]));
+      } else {
+        log.line("  criterion of " + report + ": '" + spec + "' not understood (asymptotic <width> <samples> | below <x> | above <x>)");
+        c.getSolverStoppingCriterionManager().remove(c);
+        return false;
+      }
+      c.setPresentationName("stop_" + report);
+      c.setIsUsed(on);
+      log.line("  stopping criterion stop_" + report + ": " + spec.replaceAll("\\s+on$", "") + (on ? " (on)" : " (off: tick it in Stopping Criteria to use it)"));
+      return true;
+    } catch (Throwable t) {
+      log.na("stopping criterion of " + report, t);
+      return false;
+    }
+  }
+
+  /** <report>_mean: mean of the monitor over the last n samples ("last <n>"); null if not made. */
+  Object meanReport(Object monitor, String report, String spec) {
+    String[] w = spec.toLowerCase(Locale.ROOT).split("\\s+");
+    if (w.length < 2 || !w[0].equals("last") || !w[1].matches("[0-9]+")) {
+      log.line("  mean of " + report + ": '" + spec + "' not understood (last <n>)");
+      return null;
+    }
+    try {
+      StatisticsReport s = sim.getReportManager().createReport(StatisticsReport.class);
+      s.setPresentationName(report + "_mean");
+      s.setMonitor((PlotableMonitor) monitor);
+      s.setStatisticOption(StatisticOption.Mean);
+      s.setSampleFilterOption(SampleFilterOption.LastNSamples);
+      ((LastNSamplesFilter) s.getSampleFilter()).setNSamples(Integer.parseInt(w[1]));
+      log.line("  mean report " + report + "_mean: last " + w[1] + " samples of the monitor");
+      return s;
+    } catch (Throwable t) {
+      log.na("mean of " + report, t);
+      return null;
+    }
   }
 
   /** The Standard reports window (Swing thread): the reports grouped by purpose on the left (tick to create); the
@@ -3853,9 +4295,10 @@ public class SimKit extends StarMacro {
         switch (c) {
           case 0: return x.why == null && x.on;
           case 1: return x.def[0];
-          case 2: return x.def[6];
+          case 2: return x.existing != null ? "update: " + x.def[6] : x.def[6];
           default:
             if (x.why != null) return x.why;
+            if (x.existing != null) return "+" + x.added + (x.added == 1 ? " new surface" : " new surfaces");
             if (x.def[2].equalsIgnoreCase("expression")) return "formula";
             if (x.def[4].equals("REGIONS")) return "all regions";
             int n = x.target.size();
@@ -4102,12 +4545,6 @@ public class SimKit extends StarMacro {
     }
   }
 
-  static int[] allIndices(int n) {
-    int[] a = new int[n];
-    for (int i = 0; i < n; i++) a[i] = i;
-    return a;
-  }
-
   /** Field function by its function name (e.g. WallYplus, CourantNumber), or null if this sim does not have it.
    *  (FieldFunctionManager.has() looks at display names, so it is not used.) */
   Object fieldFunction(String name) {
@@ -4174,126 +4611,7 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Standard scenes
-  // =====================================================================================================
-
-  /** Standard scenes: wall scenes on the WALL_ surfaces and mid-plane scenes on a plane through the domain centre.
-   *  Proposes only what fits (fields present), the user picks, existing scenes / planes are reused, never changed. */
-  void toolStandardScenes() {
-    List<Boundary> walls = boundariesByToken().getOrDefault("WALL", Collections.emptyList());
-    List<Region> regions = new ArrayList<>(sim.getRegionManager().getRegions());
-    Set<String> existing = new HashSet<>();
-    for (Scene s : sim.getSceneManager().getScenes()) existing.add(nm(s));
-    String axis = gui ? new String[] {"X", "Y", "Z"}[Ui.option("Standard scenes",
-        "Mid-plane through the centre of the domain, normal to:", new String[] {"X", "Y", "Z"})] : "Z";
-    String plane = "dp_plane_mid" + axis;
-    // name, field ("" = mesh), target (WALL / PLANE), condition, meaning
-    String[][] specs = {
-        {"sc_yplus_walls", "WallYplus", "WALL", "", "wall y+ on the WALL_ surfaces"},
-        {"sc_T_walls", "Temperature", "WALL", "energy", "temperature on the WALL_ surfaces"},
-        {"sc_U_" + plane.substring(3), "Velocity", "PLANE", "", "velocity magnitude on " + plane},
-        {"sc_p_" + plane.substring(3), "Pressure", "PLANE", "", "pressure on " + plane},
-        {"sc_T_" + plane.substring(3), "Temperature", "PLANE", "energy", "temperature on " + plane},
-        {"sc_mesh_" + plane.substring(3), "", "PLANE", "", "mesh cut by " + plane}};
-    boolean energy = fieldFunction("Temperature") != null;
-    List<String[]> plan = new ArrayList<>();
-    StringBuilder skipped = new StringBuilder();
-    for (String[] sp : specs) {
-      String why = existing.contains(sp[0]) ? "already exists"
-          : sp[2].equals("WALL") && walls.isEmpty() ? "no WALL_ surfaces"
-          : sp[3].equals("energy") && !energy ? "no energy model"
-          : !sp[1].isEmpty() && fieldFunction(sp[1]) == null ? "field " + sp[1] + " not available" : null;
-      if (why != null) skipped.append(String.format("  %-22s %s%n", sp[0], why));
-      else plan.add(sp);
-    }
-    if (plan.isEmpty()) {
-      log.line("nothing to add.\n" + skipped);
-      return;
-    }
-    String[] labels = new String[plan.size()];
-    for (int i = 0; i < labels.length; i++) labels[i] = String.format("%-22s %s", plan.get(i)[0], plan.get(i)[4]);
-    int[] pick = gui ? Ui.pick("Standard scenes", "Scenes to create:", labels, true)
-        : allIndices(labels.length);
-    Object planePart = null;
-    int made = 0;
-    for (int i : pick) {
-      String[] sp = plan.get(i);
-      try {
-        List<Object> parts = new ArrayList<>();
-        if (sp[2].equals("WALL")) parts.addAll(walls);
-        else {
-          if (planePart == null) planePart = midPlane(plane, axis, regions);
-          parts.add(planePart);
-        }
-        Scene sc = sim.getSceneManager().createScene();                                                  // [U27]
-        sc.setPresentationName(sp[0]);
-        List<Object> all = new ArrayList<>();
-        for (Region r : regions) all.addAll(r.getBoundaryManager().getBoundaries());
-        PartDisplayer outline = sc.getDisplayerManager().createPartDisplayer("Outline");                 // [U27]
-        outline.setOutline(true);
-        outline.setSurface(false);
-        outline.getInputParts().setObjects(named(all));
-        if (sp[1].isEmpty()) {
-          PartDisplayer mesh = sc.getDisplayerManager().createPartDisplayer("Mesh");
-          mesh.setMesh(true);
-          mesh.getInputParts().setObjects(named(parts));
-        } else {
-          ScalarDisplayer d = sc.getDisplayerManager().createScalarDisplayer("Scalar");                  // [U27]
-          d.getInputParts().setObjects(named(parts));
-          Object ff = fieldFunction(sp[1]);
-          Object type = Reflect.tryCall(ff, "getType");
-          boolean vector = (type != null && cls(type).contains("Vector")) || sp[1].equals("Velocity");
-          Object mag = vector ? Reflect.tryCall(ff, "getMagnitudeFunction") : null;   // only for vectors (Velocity)
-          d.getScalarDisplayQuantity().setFieldFunction((FieldFunction) (mag != null ? mag : ff));
-        }
-        made++;
-        log.line(String.format("  created %-22s %s", sp[0], sp[4]));
-      } catch (Throwable t) {
-        log.na("scene " + sp[0], t);
-      }
-    }
-    result(made + " scene(s) created");
-    log.line(made + " scene(s) created" + (skipped.length() == 0 ? "" : "; not proposed:\n" + skipped)
-        );
-  }
-
-  static List<NamedObject> named(List<?> objs) {
-    List<NamedObject> out = new ArrayList<>();
-    for (Object o : objs) if (o instanceof NamedObject) out.add((NamedObject) o);
-    return out;
-  }
-
-  /** Mid-plane section through the centre of the regions' bounding box (existing plane of that name is reused). */
-  Object midPlane(String name, String axis, List<Region> regions) {
-    for (Object p : sim.getPartManager().getObjects()) if (name.equals(nm(p))) return p;
-    double[] c = new double[3];
-    Object pos = fieldFunction("Position");
-    for (int k = 0; k < 3; k++) {
-      double lo = 0, hi = 0;
-      try {
-        Object comp = Reflect.invoke(pos, "getComponentFunction", k);
-        MinReport mn = sim.getReportManager().createReport(MinReport.class);
-        MaxReport mx = sim.getReportManager().createReport(MaxReport.class);
-        mn.setFieldFunction((FieldFunction) comp);
-        mx.setFieldFunction((FieldFunction) comp);
-        mn.getParts().setObjects(regions);
-        mx.getParts().setObjects(regions);
-        lo = mn.getReportMonitorValue();
-        hi = mx.getReportMonitorValue();
-        sim.getReportManager().removeObjects(mn, mx);
-      } catch (Throwable t) { log.na("domain extent " + "XYZ".charAt(k), t); }
-      c[k] = 0.5 * (lo + hi);
-    }
-    double[] n = {axis.equals("X") ? 1 : 0, axis.equals("Y") ? 1 : 0, axis.equals("Z") ? 1 : 0};
-    PlaneSection p = sim.getPartManager().createImplicitPart(new NeoObjectVector(regions.toArray()),
-        new DoubleVector(n), new DoubleVector(c), 0, 1, new DoubleVector(new double[] {0.0}));            // [U27]
-    p.setPresentationName(name);
-    log.line(String.format("  created %s (normal %s through %.4g %.4g %.4g m)", name, axis, c[0], c[1], c[2]));
-    return p;
-  }
-
-  // =====================================================================================================
-  // Parametrize mesh (mesh sensitivity with one factor)
+  // Mesh study (mesh sensitivity with one factor: parametrize, then one run per level)
   // =====================================================================================================
 
   static final String MESH_SCALE = "p_meshScale";
@@ -4384,8 +4702,6 @@ public class SimKit extends StarMacro {
     }
     return done;
   }
-
-  // ----- Mesh study: parametrize only, or one case per mesh level -----------------------------------------
 
   /** One level of a mesh study (saved as a case of its own). */
   static final class MeshLevel {
@@ -4714,73 +5030,8 @@ public class SimKit extends StarMacro {
     }
   }
 
-  ScalarGlobalParameter findParam(String name) {
-    GlobalParameterManager m = sim.get(GlobalParameterManager.class);
-    ScalarGlobalParameter p = findParamIn(m.getObjects(), name, 0);
-    if (p == null) {   // inside a parameter folder (group), e.g. "SimKit run tracking"
-      try { p = findParamIn(m.getGroupsManager().getObjects(), name, 0); } catch (Throwable t) { /* no folders */ }
-    }
-    return p;
-  }
-
-  static ScalarGlobalParameter findParamIn(Collection<?> objs, String name, int depth) {
-    for (Object o : objs) {
-      if (o instanceof ScalarGlobalParameter && name.equals(nm(o))) return (ScalarGlobalParameter) o;
-      if (depth < 5 && o instanceof star.base.neo.ClientServerObjectManager) {
-        ScalarGlobalParameter p = findParamIn(((star.base.neo.ClientServerObjectManager<?>) o).getObjects(), name, depth + 1);
-        if (p != null) return p;
-      }
-    }
-    return null;
-  }
-
-  static final String PARAM_FOLDER = "SimKit run tracking";
-
-  /** SimKit's own parameters (run number, based on, iteration) in one folder of the Parameters node, apart from the
-   *  simulation's own. */
-  void groupTracking() {
-    List<Object> ps = new ArrayList<>();
-    for (String n : new String[] {P_RUN, P_FROM, P_FROM_IT}) {
-      ScalarGlobalParameter p = findParam(n);
-      if (p != null) ps.add(p);
-    }
-    toFolder(sim.get(GlobalParameterManager.class), PARAM_FOLDER, ps);
-  }
-
-  /** New scalar parameter: dimensionless (dim == null) or a length with the given units. [U10][U30][U31] */
-  ScalarGlobalParameter newParam(String name, String dim, double value, Object units) {
-    ScalarGlobalParameter p = (ScalarGlobalParameter) sim.get(GlobalParameterManager.class)
-        .createGlobalParameter(ScalarGlobalParameter.class, "Scalar");                                   // [U10]
-    p.setPresentationName(name);
-    if ("length".equals(dim)) {
-      try { p.setDimensions(Dimensions.Builder().length(1).build()); }                                   // [U30]
-      catch (Throwable t) { log.na("dimensions of " + name, t); }
-      if (units instanceof Units) {
-        try { p.getQuantity().setUnits((Units) units); }                                                 // [U31]
-        catch (Throwable t) { log.na("units of " + name, t); }
-      }
-    }
-    p.getQuantity().setValue(value);                                                                     // [U10]
-    return p;
-  }
-
-  /** Number of cells of all regions, through a temporary cell-count report (removed again); null if n/a. */
-  String cellCount() {
-    ElementCountReport r = null;
-    try {
-      r = sim.getReportManager().createReport(ElementCountReport.class);
-      r.getParts().setObjects(sim.getRegionManager().getRegions());
-      return Fmt.num(r.getReportMonitorValue());
-    } catch (Throwable t) {
-      log.na("cell count", t);
-      return null;
-    } finally {
-      if (r != null) try { sim.getReportManager().removeObjects(r); } catch (Throwable t) { /* left in the tree */ }
-    }
-  }
-
   // =====================================================================================================
-  // Other tools
+  // Calculators (lib/generic/SimKitCalc.java)
   // =====================================================================================================
 
   /** Calculators = lib/generic/SimKitCalc.java (separate macro, played in this session). */
@@ -4804,7 +5055,7 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Configuration (three small CSV files in _SIMKIT/config, built-in defaults when missing)
+  // Configuration (small CSV files in _SIMKIT/config, built-in defaults when missing)
   // =====================================================================================================
 
   /** Reads config\<file> and returns its rows with the requested columns (by header name, in 'cols' order).
@@ -4849,14 +5100,104 @@ public class SimKit extends StarMacro {
     return out;
   }
 
+  // =====================================================================================================
+  // Batch tests (SIMKIT_ACTION studytest, opensim)
+  // =====================================================================================================
+
+  /** Batch test: a study next to the case of the test sim, R001 and R002 saved, a submission prepared (no bsub). */
+  void testStudy() throws IOException {
+    if (sessionPath().isEmpty()) throw new Cancel("the simulation has not been saved yet");
+    CaseInfo c = runOrNull();
+    Path base = c != null && c.caseDir.getParent() != null ? c.caseDir.getParent() : Paths.get(sessionPath()).toAbsolutePath().getParent();
+    Path dir = base.resolve("STUDY_TEST_" + new SimpleDateFormat("HHmmss").format(new Date()));
+    startStudy(dir, "base", "test study");
+    CaseInfo r1 = requireCase();
+    log.line("open run " + r1.caseId + " (" + P_RUN + " = " + findParam(P_RUN).getQuantity().getValue() + "), file " + r1.simFile.getFileName());
+    try {
+      GlobalParameterManager pm = sim.get(GlobalParameterManager.class);
+      List<String> fold = new ArrayList<>();
+      for (Object gr : pm.getGroupsManager().getObjects()) {
+        List<String> in = new ArrayList<>();
+        for (Object o : ((star.base.neo.ClientServerObjectManager<?>) gr).getObjects()) in.add(nm(o));
+        fold.add(nm(gr) + " " + in);
+      }
+      log.line("parameter folders: " + fold + "; top level: " + pm.getObjects().size() + " object(s)");
+    } catch (Throwable t) { log.na("parameter folders", t); }
+    saveRun(dir, "finer", "test: second run");
+    CaseInfo r2 = requireCase();
+    log.line("open run " + r2.caseId + ", based on " + readIdentity(r2).get("based_on") + " at iteration "
+        + readIdentity(r2).get("from_iteration") + "; auto-save separator "
+        + sim.getSimulationIterator().getAutoSave().getSeparator());
+    String[] cmd = submitCommand(r2.simFile, 4);
+    log.line("submit command (not run): " + cmd[0]);
+    log.line("submit script: " + writeSubmitScript(r2.simFile, cmd[0]));
+    // a copy as the cluster sends it back: a job folder, the file renamed with _iter_
+    Path back = r2.simFile.getParent().resolve("job_12345_host_07").resolve(r2.simFile.getFileName().toString().replace(".sim", ITER_SEP + "00050.sim"));
+    Fs.mkdirs(back.getParent());
+    Files.copy(r2.simFile, back, StandardCopyOption.REPLACE_EXISTING);
+    setIdentityKey(dir, dir.getFileName().toString(), "comment_v002", "**finer** mesh near the liner");
+    // mesh study inside the study: runs coarse and medium, based on R002
+    if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) toolParametrizeMesh();
+    if (!meshParams().isEmpty() && findParam(MESH_SCALE) != null) {
+      createMeshRuns(r2, meshParams(), new ArrayList<>(Arrays.asList(new MeshLevel("coarse", 2.0), new MeshLevel("medium", 1.0))), true);
+    }
+    for (String[] r : trackerRows(dir)) {
+      log.line(String.format("study row %s  file %-40s based on %-8s comment %s", runId(runOf(r[COL_ID])), r[COL_FILE],
+          r[COL_BASED].isEmpty() ? "-" : runOf(r[COL_BASED]) > 0 ? runId(runOf(r[COL_BASED])) : r[COL_BASED], r[COL_COMMENT].replace("\n", " | ")));
+    }
+    log.line("study row label of the returned file: " + fileLabel(back.getFileName().toString()));
+    writeTrackerCsv(dir, trackerRows(dir));
+    log.line("study tracker csv: " + dir.resolve(TRACKER_CSV));
+    // Save as new run > "Root of a new study instead": the open run becomes R001 of a new study
+    CaseInfo before = requireCase();
+    Path dir2 = dir.resolveSibling(dir.getFileName() + "_branch");
+    startStudy(dir2, "branch", "test: new study from " + before.caseId);
+    log.line("new study from a run: " + requireCase().caseId + " based on " + readIdentity(requireCase()).get("based_on"));
+  }
+
+  /** Batch test of the tracker's Open in STAR-CCM+: the open file is reported as already open; another run of the
+   *  project is loaded, reported and closed again. */
+  void testOpenSim() {
+    CaseInfo c = requireCase();
+    log.line("open sim: " + c.simFile.getFileName() + " -> " + (openSim(c.simFile) == null ? "already open (not loaded twice)" : "LOADED AGAIN"));
+    try {
+      loadDialog(c.simFile, false);
+      log.line("open sim: STAR-CCM+ Load dialog found (OpenOptionsDialog, setSimFile, show)");
+    } catch (Throwable t) {
+      log.line("open sim: STAR-CCM+ Load dialog NOT found (" + reason(t) + "): the tracker loads with default options");
+    }
+    for (String[] r : trackerRows(c.caseDir)) {
+      Path f = fileOf(c.caseDir, r);
+      if (Fs.same(f, c.simFile)) continue;
+      Simulation s = openSim(f);
+      log.line("open sim: " + f.getFileName() + " -> " + (s == null ? "already open" : "loaded as '" + s.getPresentationName()
+          + "', simulations open: " + SimulationManager.getSingleton().simulations().size()));
+      if (s != null) s.close(star.base.neo.ServerConnection.CloseOption.Close);
+      log.line("open sim: closed again, simulations open: " + SimulationManager.getSingleton().simulations().size());
+      return;
+    }
+    log.line("open sim: no other run in " + c.caseDir + " to open");
+  }
+
+  // =====================================================================================================
+  // Helpers
+  // =====================================================================================================
+
+  static String nm(Object o) {
+    try { return ((ClientServerObject) o).getPresentationName(); } catch (Throwable t) { return String.valueOf(o); }
+  }
+
+  static String cls(Object o) { return o == null ? "none" : o.getClass().getSimpleName(); }
+
+  /** [U09] Plays another macro file inside this session. */
+  void runMacroFile(Path p) {
+    new StarScript(getActiveRootObject(), new java.io.File(p.toString())).play();                        // [U09]
+  }
+
   static String reason(Throwable t) {
     String m = t.getMessage();
     return t.getClass().getSimpleName() + (m == null ? "" : ": " + Fmt.cut(m.split("\\r?\\n")[0], 160));
   }
-
-  // =====================================================================================================
-  // Helper classes
-  // =====================================================================================================
 
   /** Thrown to stop a tool quietly (user cancelled, or a precondition is not met). */
   static final class Cancel extends RuntimeException {
@@ -4916,16 +5257,11 @@ public class SimKit extends StarMacro {
     static String user() { return System.getProperty("user.name", "unknown"); }
 
     /** Tool number requested by a toolbar button macro (system property simkit.tool, cleared once read); 0 = menu. */
-    static int directTool() {
+    static Tool directTool() {
       String t = System.getProperty("simkit.tool");
-      if (t == null || t.trim().isEmpty()) return 0;
+      if (t == null || t.trim().isEmpty()) return null;
       System.clearProperty("simkit.tool");
-      try {
-        int id = Integer.parseInt(t.trim());
-        return id >= 1 && id < TOOL_NAMES.length ? id : 0;
-      } catch (NumberFormatException e) {
-        return 0;
-      }
+      return Tool.of(t);
     }
 
     /** Marks a window as a SimKit window and applies the preference to it. */

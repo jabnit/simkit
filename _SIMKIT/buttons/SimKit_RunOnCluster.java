@@ -13,7 +13,7 @@ import star.common.*;
 
 public class SimKit_RunOnCluster extends StarMacro {
 
-  static final int TOOL = 15;
+  static final String TOOL = "CLUSTER";
   /** Macro to play, relative to the SimKit root ('/' on every OS). */
   static final String MACRO = "SimKit.java";
 
@@ -27,7 +27,7 @@ public class SimKit_RunOnCluster extends StarMacro {
       sim.println("[SimKit] not found: " + f + " -- play this button from the buttons folder of the SimKit root");
       return;
     }
-    if (TOOL > 0) System.setProperty("simkit.tool", String.valueOf(TOOL));
+    if (!TOOL.isEmpty()) System.setProperty("simkit.tool", TOOL);
     try {
       new StarScript(getActiveRootObject(), f.toFile()).play();
     } finally {

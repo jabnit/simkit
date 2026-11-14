@@ -3,7 +3,7 @@
 # SimKit - automated batch validation on a licensed STAR-CCM+ installation, LINUX (RHEL 7 / RHEL 9).
 # Same steps and same PASTE_THIS.txt as tests/Run-SimKitTests.ps1 (Windows 10/11):
 #   00 version | 01 build test sim (tests/BuildSimKitTestSim.java) | 02 SimKitCalc self-check |
-#   07 reports, mesh, scenes, mesh study | 08 buttons | optional 09 short solver run | 10-11 runs, tracker.
+#   07 reports, mesh, mesh study | 08 buttons | optional 09 short solver run | 10-11 runs, tracker.
 # Needs only bash >= 4.2, GNU coreutils/grep/sed/awk, tar (all standard on RHEL 7 and 9).
 #
 # Usage:
@@ -144,8 +144,9 @@ invoke_star 02_SimKitCalc_selfcheck "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/
 invoke_star 07a_SimKit_reports reports ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[reports]=$RC
 invoke_star 07b_SimKit_reports_again reports ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[reports2]=$RC
 invoke_star 07c_SimKit_meshparams meshparams ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshpar]=$RC
-invoke_star 07d_SimKit_scenes scenes ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[scenes]=$RC
 invoke_star 07e_SimKit_meshstudy meshstudy ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshstudy]=$RC
+invoke_star 07f_SimKit_names names ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[names]=$RC
+invoke_star 07g_SimKit_presubmit presubmit ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[presubmit]=$RC
 invoke_star 08_button_Tracker "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_CaseTracker.java" "$CASE_SIM"; RCS[button]=$RC
 
 # Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence

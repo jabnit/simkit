@@ -39,7 +39,6 @@ public class SimKit_InstallButtons extends StarMacro {
       {"SimKit_CaseTracker", "SimKit: Tracker"},
       {"SimKit_Calculators", "SimKit: Calculators"},
       {"SimKit_StandardReports", "SimKit: Standard reports"},
-      {"SimKit_StandardScenes", "SimKit: Standard scenes"},
       {"SimKit_MeshStudy", "SimKit: Mesh study"},
   };
   static final int SLOTS = 10;

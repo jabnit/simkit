@@ -2,16 +2,18 @@ SimKit 0.3 (2026-11-14) -- TESTING (toolkit owner only; users never need this fi
 =====================================================================================
 
 What is in the kit
-  SimKit.java                 the macro users play: Save as new run, Run on cluster, Tracker, Standard reports,
-                              Standard scenes, Mesh study, Calculators
+  SimKit.java                 the macro users play: Save as new run, Run on cluster (Linux only), Tracker, Names,
+                              Standard reports, Mesh study, Calculators. One file, ordered by tool (sections in this
+                              order: constants and the Tool enum, entry point and batch actions, menu window, project
+                              and runs, run records, simulation values, Save as new run, Run on cluster, Tracker,
+                              Names, Standard reports, Mesh study, Calculators, configuration, batch tests, helpers)
   lib/generic/SimKitCalc.java calculators (opened by the Calculators button); data in lib/generic/data/*.csv
   config/cluster.csv          bsub command and options for Run on cluster
-  config/standard_reports.csv the reports, monitors and plots of Standard reports
+  config/standard_reports.csv the reports, monitors and plots of Standard reports (optional criterion and mean)
+  config/naming.csv           type prefixes (IN, OUT, OPEN, WALL, SYM, IF) and the boundary types that fit each
   config/material_folders.csv team folders of MatML material files (*.xml) for Calculators > Materials
   config/comment_template.txt optional: the comment template of the tracker (absent = built-in)
   buttons/                    one macro per toolbar button; see buttons/README.txt
-  templates/ISO/tools/        template-owner macros for the ISO template (written for SimKit 0.2 case folders; not
-                              part of the user workflow)
   tests/                      validation runners (this file)
 The kit lives in ONE shared folder (Windows and Linux mounts of the same share). Projects do not: the first Save as
 new run asks for the project folder (any local or network folder).
@@ -19,7 +21,7 @@ new run asks for the project folder (any local or network folder).
 Path map
   SimKit root = the folder that holds SimKit.java. Each macro finds it from its OWN location with the STAR-CCM+
   call resolvePath (no environment variable, no path written anywhere):
-    SimKit.java "."   buttons/*.java ".."   lib/generic/SimKitCalc.java "../.."   templates/ISO/tools/*.java "../../.."
+    SimKit.java "."   buttons/*.java ".."   lib/generic/SimKitCalc.java "../.."
   So the kit works wherever the folder is copied (any drive letter or mount point, Windows or Linux), as long as
   its inner layout is kept. Every kit file is reached from the root with a relative path written with '/'.
   Nothing is ever written inside the root.
@@ -53,7 +55,8 @@ A. BATCH VALIDATION (no GUI; about 15 min)
   of the project <TestRoot>/cases/SIMKIT_TEST (R001_base/R001_base.sim + run.txt) and run:
     02 calculator self-check
     07a standard reports (saves the sim) | 07b the same again (must add nothing) | 07c parametrize mesh
-    07d standard scenes | 07e mesh study (coarse and medium levels, meshed, saved as runs)
+    07e mesh study (coarse and medium levels, meshed, saved as runs) | 07f names (the Names table in the log,
+        nothing renamed) | 07g pre-submit check (the lines of Run on cluster, in the log)
     08 tracker button | 08b/08c toolbar buttons install / remove (the user's settings.props is restored)
     09 optional short solver run (-RunSolver)
     10b save as new run (batch: next run, same name) | 11 tracker (writes case_tracker.csv)
@@ -474,4 +477,23 @@ C. RESULTS SO FAR
   rewrites never sees a partial file; no temporary file left; cache and depth) ALL OK; HideTest 9/9 ok;
   ReportsTickTest ok. STAR regression SKT73: all 14 exit codes 0, no exception (saverun: R004; mesh study:
   R002, R003; tracker 4 runs; open sim loads R002 and closes it).
+  Review decisions (2026-11-14). Removed: Standard scenes (tool, button, batch action scenes), templates/ISO (ISO
+  template docx and tools), Google/SimKit_Case_List_ISO.xlsx. Kept: the rich-text comment editor; the tracker window
+  title "Case tracker - cases in ..." and the menu items "Open case folder", "Unfold all cases", "Fold all cases".
+  Run on cluster: Linux only (on Windows: message, nothing done); submit scripts in the run folder's submit/ also for
+  a returned copy; a pre-submit check (volume mesh, stopping criteria, auto-save, r_* reports, names, run number) is
+  shown in its window and logged, never blocking. Calculators: calc_log.csv written on "Log this" (one row per click,
+  same values twice = one row) instead of 2.5 s after each change. Trials, to keep or remove after use: Names (tool
+  NAMES: boundaries / part surfaces without a type prefix, prefix vs boundary type, default names; proposals from the
+  boundary type; type buttons; Apply renames ticked rows only; config/naming.csv also drives bcToken of Standard
+  reports) and Standard reports criterion / mean / update (columns criterion and mean of standard_reports.csv:
+  MonitorIterationStoppingCriterion asymptotic / min / max, created off unless "on"; StatisticsReport Mean over
+  LastNSamples; an existing standard report with new surfaces of its prefixes is offered as "update"). Structure:
+  tools are an enum (Tool: SAVE, CLUSTER, TRACKER, NAMES, REPORTS, MESH, CALC); buttons pass the name (old numbers
+  still accepted); SimKit.java ordered by tool (reorder script: every member placed once, member text unchanged).
+  Offline: R4Test ALL OK, HideTest 9/9, ReportsTickTest ok, menu and calculator renders checked. STAR regression
+  SKT74: all 14 exit codes 0, no exception; 07f names: 13 rows, 1 default name (Maximum 1); 07g pre-submit: 4 ok,
+  3 to look at (auto-save off, 1 default name, no run number in the test sim); 07a: 2 stopping criteria (off) and
+  2 mean reports created; 07b adds nothing. Not run: Names window and Apply in the GUI, the update of a report after
+  new surfaces, Run on cluster on Linux.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.

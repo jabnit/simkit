@@ -1,14 +1,15 @@
 SimKit toolbar buttons
 ======================
 One small macro per button. Each one finds the SimKit root from its own location (the folder above buttons/)
-and runs the current version of the tool, so the buttons never need updating when the kit changes.
+and runs the current version of the tool, so the buttons never need updating when the kit changes. A button names
+its tool (TOOL = "TRACKER" ...; empty = the SimKit window). The Standard scenes button was removed (2026-11-14):
+play SimKit_InstallButtons.java again to take it off the toolbar.
 
   SimKit_Menu.java             the SimKit window (all tools)
   SimKit_SaveNewVersion.java   Save as new run (the next run of the project; starts the project the first time)
   SimKit_RunOnCluster.java     Run on cluster (saves, then submits with the team's command)
   SimKit_StandardReports.java  Standard reports
   SimKit_MeshStudy.java        Mesh study
-  SimKit_StandardScenes.java   Standard scenes
   SimKit_CaseTracker.java      Tracker
   SimKit_Calculators.java      Calculators
 

@@ -160,8 +160,9 @@ $rc["calc"]     = Invoke-Star "02_SimKitCalc_selfcheck" ($common + @("-batch", (
 $rc["reports"]  = Invoke-Star "07a_SimKit_reports"      ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "reports"
 $rc["reports2"] = Invoke-Star "07b_SimKit_reports_again" ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "reports"
 $rc["meshpar"]  = Invoke-Star "07c_SimKit_meshparams"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "meshparams"
-$rc["scenes"]   = Invoke-Star "07d_SimKit_scenes"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "scenes"
 $rc["meshstudy"] = Invoke-Star "07e_SimKit_meshstudy"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "meshstudy"
+$rc["names"]    = Invoke-Star "07f_SimKit_names"         ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "names"
+$rc["presubmit"] = Invoke-Star "07g_SimKit_presubmit"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "presubmit"
 $rc["button"]   = Invoke-Star "08_button_Tracker"       ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_CaseTracker.java")), (& $q $caseSim))) ""
 
 # Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence

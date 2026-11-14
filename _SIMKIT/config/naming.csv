@@ -1,0 +1,9 @@
+prefix,boundary_classes,meaning
+# Type prefixes of boundary and part surface names (IN_air, WALL_liner ...). Used by Names and Standard reports.
+# boundary_classes: STAR-CCM+ boundary classes that fit the prefix, separated by spaces; *Interface* = any interface boundary.
+IN,InletBoundary MassFlowBoundary StagnationBoundary FreeStreamBoundary,inlet (velocity / mass flow / stagnation / free stream)
+OUT,PressureBoundary OutletBoundary FreeStreamBoundary MassFlowBoundary,outlet (pressure / flow-split / free stream / mass flow)
+OPEN,PressureBoundary StagnationBoundary FreeStreamBoundary,open boundary (pressure / stagnation / free stream)
+WALL,WallBoundary,wall
+SYM,SymmetryBoundary,symmetry plane
+IF,*Interface*,interface (contact between regions)

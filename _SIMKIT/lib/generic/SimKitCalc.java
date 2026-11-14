@@ -12,8 +12,8 @@
 //   Buttons: From parameter... / From report... (fill an input from the open sim), To parameter... (create/update a
 //   global parameter p_<name> from an output), Copy value for STAR-CCM+..., Copy all results, Close.
 //   The self-check of the reference examples runs in batch (starccm+ -batch SimKitCalc.java).
-//   Traceability: a row (timestamp, user, page, inputs, outputs) is appended to calc_log.csv of the project
-//   (2.5 s after the last change) and printed to the Output window. Without a project nothing is written to disk.
+//   Traceability: "Log this" next to the result appends a row (timestamp, user, page, inputs, outputs) to
+//   calc_log.csv of the project and prints it to the Output window. Without a project nothing is written to disk.
 //
 // Version 0.2 (2026-11-11). The physics (class Core) and the data loading (class Library) have NO STAR-CCM+
 // imports and were unit-tested with a plain JDK 11 compiler; the STAR-CCM+ calls are UNTESTED in STAR.
@@ -120,10 +120,7 @@ public class SimKitCalc extends StarMacro {
   JTextField filter;
   boolean moreOpen, sideSync;
   boolean filling;                 // true while SimKit writes a field (no new computation for that)
-  boolean logging = true;          // false during the first computation of every page
   boolean detailsOpen;             // "Formula and source" open (remembered)
-  javax.swing.Timer logTimer;
-  String[] pendingLog;             // page, inputs, outputs waiting for calc_log
   String lastLogged = "";
   final List<JComboBox<String>> mixedFluidCombos = new ArrayList<>();   // ENTERED + fluids
   final List<JComboBox<String>> fluidCombos = new ArrayList<>();        // fluids only
@@ -266,7 +263,7 @@ public class SimKitCalc extends StarMacro {
     final JTextArea out = new JTextArea();
     final javax.swing.JTextPane view = new javax.swing.JTextPane();
     final JLabel status = new JLabel(" ");
-    final JButton copyBtn = Styled.link("Copy"), moreBtn = Styled.link("");
+    final JButton copyBtn = Styled.link("Copy"), logBtn = Styled.link("Log this"), moreBtn = Styled.link("");
     Core.R last;
     String lastForm = "", lastInputs = "", error;
     boolean styledSet;   // true while showResult() writes 'out'
@@ -285,6 +282,8 @@ public class SimKitCalc extends StarMacro {
       status.setBorder(BorderFactory.createEmptyBorder(4, 2, 0, 2));
       copyBtn.setToolTipText("Copies the value as STAR-CCM+ fields accept it");
       copyBtn.addActionListener(e -> copyHead());
+      logBtn.setToolTipText("Adds the inputs and outputs of this page to calc_log.csv of the project (one row per click)");
+      logBtn.addActionListener(e -> logThis());
       moreBtn.addActionListener(e -> {
         detailsOpen = !detailsOpen;
         try { java.util.prefs.Preferences.userRoot().node("simkit").putBoolean("calcDetails", detailsOpen); } catch (Throwable x) { /* not kept */ }
@@ -346,6 +345,8 @@ public class SimKitCalc extends StarMacro {
       Styled.add(d, Core.g(h.v), Styled.style(26, true, Styled.INK, null));
       Styled.add(d, "  " + showUnit(h.unit) + "     ", Styled.style(15, false, Styled.MUTED, null));
       Styled.component(d, copyBtn);
+      Styled.add(d, "   ", Styled.style(12, false, Styled.MUTED, null));
+      Styled.component(d, logBtn);
       Styled.add(d, "\n\n", Styled.style(6, false, null, null));
       if (r.showFormula && !r.tex.isEmpty()) {
         Styled.formulas(d, r);
@@ -368,6 +369,18 @@ public class SimKitCalc extends StarMacro {
       if (detailsOpen) Styled.details(d, r, lastInputs, caseNote);
       view.setStyledDocument(d);
       view.setCaretPosition(0);
+    }
+
+    /** One row in calc_log.csv: this page, the inputs and outputs shown now. The same values twice: one row. */
+    void logThis() {
+      if (last == null || last.items.isEmpty()) return;
+      String key = name + "|" + lastInputs + "|" + last.outputs();
+      if (key.equals(lastLogged)) {
+        note("Already logged (same inputs and outputs).");
+        return;
+      }
+      lastLogged = key;
+      note(calcLog(name, lastInputs, last.outputs()));
     }
 
     void copyHead() {
@@ -611,7 +624,6 @@ public class SimKitCalc extends StarMacro {
     dlg.addWindowListener(new java.awt.event.WindowAdapter() {
       @Override public void windowClosed(java.awt.event.WindowEvent e) {
         if (System.getProperties().get(WINDOW_KEY) == dlg) System.getProperties().remove(WINDOW_KEY);
-        flushLog();
         log.line("SimKitCalc closed.");
       }
     });
@@ -631,14 +643,12 @@ public class SimKitCalc extends StarMacro {
     moreOpen = first.more;
     selectPage(first);
     try { detailsOpen = java.util.prefs.Preferences.userRoot().node("simkit").getBoolean("calcDetails", false); } catch (Throwable x) { /* closed */ }
-    logging = false;                       // first values of every page: not logged
     for (Tab t : tabs) {
       for (Form fm : t.forms) {
         fluidFields(fm);
         compute(fm);
       }
     }
-    logging = true;
 
     JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
     left.add(groupLabel("Simulation:"));
@@ -1059,7 +1069,7 @@ public class SimKitCalc extends StarMacro {
     fm.timer.restart();
   }
 
-  /** Pure Java on the Swing thread: outputs shown, calc_log row prepared. */
+  /** Pure Java on the Swing thread: outputs shown (calc_log is written on Log this). */
   void compute(Form fm) {
     Tab t = fm.tab;
     try {
@@ -1067,30 +1077,11 @@ public class SimKitCalc extends StarMacro {
       t.lastForm = fm.title;
       String inputs = fm.inputs();
       t.showResult(inputs, r);
-      if (logging) {
-        pendingLog = new String[] {t.name, inputs, r.outputs()};
-        if (logTimer == null) {
-          logTimer = new javax.swing.Timer(2500, e -> flushLog());
-          logTimer.setRepeats(false);
-        }
-        logTimer.restart();
-      }
     } catch (IllegalArgumentException e) {
       t.showError(e.getMessage());
     } catch (Throwable e) {
       t.showError("Error: " + reason(e));
     }
-  }
-
-  /** Writes the last computation to calc_log (once per new set of values). */
-  void flushLog() {
-    String[] p = pendingLog;
-    pendingLog = null;
-    if (p == null) return;
-    String key = String.join("|", p);
-    if (key.equals(lastLogged)) return;
-    lastLogged = key;
-    calcLog(p[0], p[1], p[2]);
   }
 
   /** Appends one row to <case>/record/calc_log.csv (if a case folder exists) and prints it. Returns a status line. */
