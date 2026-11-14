@@ -608,3 +608,14 @@ C. RESULTS SO FAR
   Mesh study fix (user screenshot: the p_meshScale note overlapped the links and was cut): the note is gone; when
   p_meshScale is not 1 the ladder shows a p_meshScale column (value of each level); "above 1 coarser, below 1 finer"
   moved into the line above the table. Offline: rendered with p_meshScale 0.5.
+
+  2026-11-15. Linux fixes confirmed by the user on the team's Linux machine: java.lang.ProcessHandle (STAR-CCM+ there has
+  star.base.neo.ProcessHandle: "reference is ambiguous"), Tracker without any pinned run (trackerPins null).
+  Run on cluster: the team's launcher from the user's working example: bsub.starccmp --input={file} --cpus={ncpus}
+  --queue={queue} --version={version} --fairshare_group={fairshare} --project={project}; queues mc_all_ser / mc_all_par;
+  version = release of the STAR-CCM+ that runs SimKit (ReleaseNumber 21.04.009 -> 2606; 18.06 -> 2310); fairshare
+  ug_st_std, project OTHER_ESA in config/cluster.csv. More options: --mem (MB, default 1000), --estimated_runtime (h,
+  default 360) only when changed, --jobname, --result_dir, --send_completed_notification. SKT91: exit codes 0;
+  11c: "bsub.starccmp --input=R002_finer.sim --cpus=4 --queue=mc_all_par --version=2606 --fairshare_group=ug_st_std
+  --project=OTHER_ESA". Offline (OptTest): options added as expected. Not run: a submission on the cluster with
+  SimKit, the window on Linux.

@@ -1,8 +1,17 @@
 key,value
-# Run on cluster. command: the team's submit command; {sim} = the full path of the file, {ncpus} = CPUs, {queue} = the queue
-command,bsubs.starccmp --input={sim} --ncpus={ncpus} --queue={queue}
+# Run on cluster (Linux). command: the team's submit command, run in the file's folder. Placeholders: {file} file name,
+# {sim} full path, {ncpus} CPUs, {queue} queue below, {version} STAR-CCM+ release, {fairshare}, {project}.
+command,bsub.starccmp --input={file} --cpus={ncpus} --queue={queue} --version={version} --fairshare_group={fairshare} --project={project}
 # queue for 1 CPU (serial) and for more than 1 (parallel)
-queue_serial,A
-queue_parallel,B
+queue_serial,mc_all_ser
+queue_parallel,mc_all_par
+# release for --version: empty = the release of the STAR-CCM+ that runs SimKit (21.04 -> 2606); or a fixed value, e.g. 2310
+version,
+# the team's fairshare group and project (rarely changed)
+fairshare,ug_st_std
+project,OTHER_ESA
+# defaults of the launcher: --mem (MB per slot) and --estimated_runtime (hours) are only added when a user changes them
+mem,1000
+estimated_runtime,360
 # terminal opened on Linux to run the command (konsole, gnome-terminal or xterm)
 terminal,konsole
