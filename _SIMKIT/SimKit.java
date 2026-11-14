@@ -5981,8 +5981,8 @@ public class SimKit extends StarMacro {
   /** Set by reportsMain so the pages can reach the action (one window at a time). */
   ReportsAct reportsAct;
 
-  /** The Reports window (Swing thread): tabs Standard, Per object, In this simulation; one main button acting on the
-   *  open tab; the outcome next to the buttons. */
+  /** The Reports window (Swing thread): tabs Standard and Per object; one main button acting on the open tab; the
+   *  outcome next to the buttons. Reports that do not follow the naming rule: one line under the tabs, Rename... */
   Boolean reportsMain(final ReportsData[] data, final ObjNames names, final List<ObjQty> qs, final List<ObjQty> others,
       final List<ObjTarget> objs, final ReportsAct act, final java.util.function.Supplier<ReportsData> reload, String simTitle) {
     final JButton go = Ui.primary("Create reports");
@@ -5999,11 +5999,18 @@ public class SimKit extends StarMacro {
     };
     final Page std = stdPageOf(data, changed);
     final Page obj = objPage(data, names, qs, others, objs, changed);
-    final Page inv = invPage(data, changed);
-    final Page[] pages = {std, obj, inv};
-    final String[] titles = {"Standard", "Per object", "In this simulation"};
-    final String[] idle = {"Create reports", "Create reports", "Rename reports"};
-    final String[] idleTip = {"Select a report to create.", "Select a quantity, a statistic and an object.", "Select a report to rename."};
+    final Page[] pages = {std, obj};
+    final String[] titles = {"Standard", "Per object"};
+    final String[] idle = {"Create reports", "Create reports"};
+    final String[] idleTip = {"Select a report to create.", "Select a quantity, a statistic and an object."};
+    final JLabel renameNote = new JLabel(" ");
+    renameNote.setForeground(Ui.AMBER);
+    final JButton renameLink = Ui.link("Rename\u2026");
+    renameLink.setToolTipText("Rename these reports to the naming rule.");
+    final JPanel renameRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+    renameRow.add(renameNote);
+    renameRow.add(renameLink);
+    final List<java.util.function.Consumer<java.util.function.Supplier<String>>> run = new ArrayList<>();
     final int[] cur = {0};
     final JPanel cards = new JPanel(new java.awt.CardLayout());
     for (int i = 0; i < pages.length; i++) cards.add(pages[i].panel, titles[i]);
@@ -6024,6 +6031,11 @@ public class SimKit extends StarMacro {
     }
     update[0] = () -> {
       ReportsData d = data[0];
+      int nr = d.obj.renames.size();
+      renameRow.setVisible(nr > 0);
+      renameNote.setText(nr == 1 ? "1 report does not follow the naming rule (config/report_names.csv)."
+          : nr + " reports do not follow the naming rule (config/report_names.csv).");
+      renameLink.setEnabled(!busy[0]);
       for (int i = 0; i < tabs.size(); i++) Ui.tabOn(tabs.get(i), i == cur[0]);
       counts.setText(plural(d.reports, "report", "reports") + "  ·  " + plural(d.monitors, "monitor", "monitors") + "  ·  "
           + plural(d.plots, "plot", "plots"));
@@ -6032,9 +6044,7 @@ public class SimKit extends StarMacro {
       go.setToolTipText(l == null ? idleTip[cur[0]] : null);
       go.setEnabled(l != null && !busy[0]);
     };
-    go.addActionListener(e -> {
-      final java.util.function.Supplier<String> job = pages[cur[0]].job.get();
-      if (job == null) return;
+    run.add(job -> {
       busy[0] = true;
       go.setEnabled(false);
       for (JButton t : tabs) t.setEnabled(false);
@@ -6060,12 +6070,26 @@ public class SimKit extends StarMacro {
       w.setDaemon(true);
       w.start();
     });
+    go.addActionListener(e -> {
+      final java.util.function.Supplier<String> job = pages[cur[0]].job.get();
+      if (job != null) run.get(0).accept(job);
+    });
+    renameLink.addActionListener(e -> {
+      final List<ObjRow> rows = new ArrayList<>(data[0].obj.renames);
+      if (rows.isEmpty() || !renameDialog(rows)) return;
+      final List<ObjRow> todo = new ArrayList<>();
+      for (ObjRow r : rows) if (r.pick) todo.add(r);
+      if (!todo.isEmpty()) run.get(0).accept(() -> reportsAct.run("obj", todo, "none"));
+    });
     JPanel top = new JPanel(new BorderLayout());
     top.add(tabRow, BorderLayout.WEST);
     top.add(counts, BorderLayout.EAST);
     top.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Ui.RULE));
+    JPanel north = new JPanel(new BorderLayout(0, 8));
+    north.add(top, BorderLayout.NORTH);
+    north.add(renameRow, BorderLayout.CENTER);
     JPanel body = new JPanel(new BorderLayout(0, 12));
-    body.add(top, BorderLayout.NORTH);
+    body.add(north, BorderLayout.NORTH);
     body.add(cards, BorderLayout.CENTER);
     ((java.awt.CardLayout) cards.getLayout()).show(cards, titles[cur[0]]);
     update[0].run();
@@ -6073,134 +6097,47 @@ public class SimKit extends StarMacro {
     return Ui.sheet("Reports", simTitle, body, go, null);
   }
 
-  /** In this simulation: every report with its type, quantity, objects and folder; reports of the six statistics on one
-   *  object can take the rule name (select, then Rename). */
-  Page invPage(final ReportsData[] data, final Runnable changed) {
-    final Page p = new Page();
-    final List<InvRow> shown = new ArrayList<>();
-    final JTextField search = Ui.hintField("", "Search reports", 22);
-    final javax.swing.JToggleButton only = Ui.chip("Can be renamed");
-    only.setToolTipText("Show only the reports that do not follow the naming rule.");
+  /** Rename to the naming rule (from the Reports window): the reports with their current and new names, all selected;
+   *  true on Rename with at least one selected (ObjRow.pick says which). */
+  boolean renameDialog(final List<ObjRow> rows) {
+    for (ObjRow r : rows) r.pick = true;
+    final JButton ok = Ui.primary("Rename " + plural(rows.size(), "report", "reports"));
     final javax.swing.table.AbstractTableModel m = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
-      @Override public int getRowCount() { return shown.size(); }
-      @Override public int getColumnCount() { return 7; }
-      @Override public String getColumnName(int c) { return new String[] {"", "Report", "Type", "Quantity", "Objects", "Folder", "New name"}[c]; }
+      @Override public int getRowCount() { return rows.size(); }
+      @Override public int getColumnCount() { return 3; }
+      @Override public String getColumnName(int c) { return new String[] {"", "Current name", "New name"}[c]; }
       @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
-      @Override public boolean isCellEditable(int r, int c) { return c == 0 && shown.get(r).rename != null; }
-      @Override public Object getValueAt(int r, int c) {
-        InvRow x = shown.get(r);
-        switch (c) {
-          case 0: return x.rename != null && x.rename.pick;
-          case 1: return x.name;
-          case 2: return x.type;
-          case 3: return x.field;
-          case 4: return x.on;
-          case 5: return x.folder;
-          default: return x.rename == null ? "" : x.rename.name;
-        }
-      }
+      @Override public boolean isCellEditable(int r, int c) { return c == 0; }
+      @Override public Object getValueAt(int r, int c) { ObjRow x = rows.get(r); return c == 0 ? (Object) x.pick : c == 1 ? x.note : x.name; }
       @Override public void setValueAt(Object v, int r, int c) {
-        InvRow x = shown.get(r);
-        if (x.rename == null) return;
-        x.rename.pick = Boolean.TRUE.equals(v);
+        rows.get(r).pick = Boolean.TRUE.equals(v);
         fireTableRowsUpdated(r, r);
-        changed.run();
+        int k = 0;
+        for (ObjRow x : rows) if (x.pick) k++;
+        ok.setText(k == 0 ? "Rename" : "Rename " + plural(k, "report", "reports"));
       }
     };
     final JTable t = plainTable(m);
-    t.setDefaultRenderer(String.class, new javax.swing.table.DefaultTableCellRenderer() {
-      private static final long serialVersionUID = 1L;
-      @Override public java.awt.Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean f, int r, int c) {
-        super.getTableCellRendererComponent(tb, v, false, false, r, c);
-        InvRow x = shown.get(r);
-        setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
-        setBackground(tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
-        setForeground(c == 1 ? java.awt.Color.BLACK : c == 6 ? (x.rename != null && x.rename.pick ? java.awt.Color.BLACK : Ui.AMBER) : Ui.MUTED);
-        setFont(tb.getFont().deriveFont(Font.PLAIN));
-        setToolTipText(c == 4 && !x.onTip.isEmpty() ? x.onTip : c == 6 && x.rename != null ? "Renames the report to " + x.rename.name + "."
-            : v == null || String.valueOf(v).isEmpty() ? null : String.valueOf(v));
-        return this;
-      }
-    });
-    final javax.swing.table.TableCellRenderer boxes = t.getDefaultRenderer(Boolean.class);
-    final JLabel blank = new JLabel();
-    blank.setOpaque(true);
-    t.setDefaultRenderer(Boolean.class, (tb, v, sel, foc, r, c) -> {
-      java.awt.Color bg = tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE;
-      if (shown.get(r).rename == null) { blank.setBackground(bg); return blank; }
-      javax.swing.JComponent k = (javax.swing.JComponent) boxes.getTableCellRendererComponent(tb, v, false, false, r, c);
-      k.setBackground(bg);
-      k.setToolTipText("Renames the report to " + shown.get(r).rename.name + ".");
-      return k;
-    });
-    int[] w = {28, 220, 120, 160, 140, 110, 200};
-    for (int i = 0; i < w.length; i++) t.getColumnModel().getColumn(i).setPreferredWidth(w[i]);
     t.getColumnModel().getColumn(0).setMaxWidth(28);
     t.getColumnModel().getColumn(0).setMinWidth(28);
-    spaceToggles(t);
-    final JButton selAll = Ui.link("Select all"), clear = Ui.link("Clear");
-    selAll.setToolTipText("Select all reports that can be renamed.");
-    clear.setToolTipText("Clear the selection.");
-    final JLabel note = Ui.muted(" ");
-    final Runnable fill = () -> {
-      String q = search.getText().trim().toLowerCase(Locale.ROOT);
-      int k = 0;
-      for (InvRow x : data[0].inv) if (x.rename != null) k++;
-      only.setText("Can be renamed (" + k + ")");
-      only.setVisible(k > 0);
-      if (k == 0) only.setSelected(false);
-      shown.clear();
-      for (InvRow x : data[0].inv) {
-        if (only.isSelected() && x.rename == null) continue;
-        if (q.isEmpty() || (x.name + " " + x.type + " " + x.field + " " + x.onTip + " " + x.folder).toLowerCase(Locale.ROOT).contains(q)) shown.add(x);
-      }
-      t.putClientProperty("simkit.empty", data[0].inv.isEmpty() ? "No reports in this simulation. Create them on the Standard or Per object tab."
-          : "No report matches.");
-      m.fireTableDataChanged();
-      String s = data[0].inv.isEmpty() ? " " : k == 0 ? "No report to rename."
-          : k == 1 ? "1 report does not follow the naming rule (config/report_names.csv). Select it to rename it."
-          : k + " reports do not follow the naming rule (config/report_names.csv). Select them to rename them.";
-      if (shown.size() < data[0].inv.size() && !data[0].inv.isEmpty()) s += "  ·  " + shown.size() + " of " + data[0].inv.size() + " shown";
-      note.setText(s);
-      selAll.setVisible(k > 0);
-      clear.setVisible(k > 0);
-    };
-    only.addActionListener(e -> fill.run());
-    selAll.addActionListener(e -> { for (InvRow x : data[0].inv) if (x.rename != null) x.rename.pick = true; m.fireTableDataChanged(); changed.run(); });
-    clear.addActionListener(e -> { for (InvRow x : data[0].inv) if (x.rename != null) x.rename.pick = false; m.fireTableDataChanged(); changed.run(); });
-    search.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
-      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
-      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
+    t.getColumnModel().getColumn(1).setPreferredWidth(220);
+    t.getColumnModel().getColumn(2).setPreferredWidth(300);
+    t.setDefaultRenderer(String.class, textCell((r, c) -> c == 2 && rows.get(r).pick ? java.awt.Color.BLACK : Ui.MUTED));
+    final javax.swing.table.TableCellRenderer boxes = t.getDefaultRenderer(Boolean.class);
+    t.setDefaultRenderer(Boolean.class, (tb, v, sel, foc, r, c) -> {
+      java.awt.Component k = boxes.getTableCellRendererComponent(tb, v, false, false, r, c);
+      k.setBackground(tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+      return k;
     });
-    JPanel head = new JPanel(new BorderLayout(8, 0));
-    JPanel lefts = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
-    lefts.add(search);
-    lefts.add(only);
-    head.add(lefts, BorderLayout.WEST);
-    JPanel links = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
-    links.add(selAll);
-    links.add(clear);
-    head.add(links, BorderLayout.EAST);
-    p.panel.setLayout(new BorderLayout(0, 8));
-    p.panel.add(head, BorderLayout.NORTH);
-    p.panel.add(plainScroll(t, 940, 420), BorderLayout.CENTER);
-    p.panel.add(note, BorderLayout.SOUTH);
-    p.focus = t;
-    p.label = () -> {
-      int k = 0;
-      for (InvRow x : data[0].inv) if (x.rename != null && x.rename.pick) k++;
-      return k == 0 ? null : k == 1 ? "Rename 1 report" : "Rename " + k + " reports";
-    };
-    p.job = () -> {
-      final List<ObjRow> rows = new ArrayList<>();
-      for (InvRow x : data[0].inv) if (x.rename != null && x.rename.pick) rows.add(x.rename);
-      return rows.isEmpty() ? null : () -> reportsAct.run("obj", rows, "none");
-    };
-    p.reload = fill;
-    fill.run();
-    return p;
+    spaceToggles(t);
+    JPanel body = new JPanel(new BorderLayout(0, 8));
+    body.add(plainScroll(t, 560, Math.min(10, rows.size()) * t.getRowHeight() + t.getRowHeight() + 8), BorderLayout.CENTER);
+    body.add(Ui.muted("<html>Expressions that use ${old name} and the monitor \"&lt;old name&gt; Monitor\" are renamed too.</html>"), BorderLayout.SOUTH);
+    return Ui.sheet("Rename reports", "Reports that do not follow the naming rule (config/report_names.csv).", body, ok, () -> {
+      for (ObjRow x : rows) if (x.pick) return null;
+      return "Select a report to rename.";
+    });
   }
 
   /** Standard: the team's list (Present, Create, Update, or why not), the surfaces of the selected report on the right. */
@@ -6448,7 +6385,8 @@ public class SimKit extends StarMacro {
       rows.clear();
       int skipped = 0, present = 0, nw = 0;
       Set<String> why = new LinkedHashSet<>();
-      for (ObjRow r : objPlan(names, qs, stats, objs, together[0], label.getText(), plotKeys[plots.getSelectedIndex()], data[0].obj)) {
+      boolean noName = together[0] && label.getText().trim().isEmpty();
+      for (ObjRow r : noName ? new ArrayList<ObjRow>() : objPlan(names, qs, stats, objs, together[0], label.getText(), plotKeys[plots.getSelectedIndex()], data[0].obj)) {
         if (r.action.equals("n/a")) { skipped++; why.add(Ui.cap(r.note)); continue; }
         if (r.action.equals("create")) {
           r.pick = !Boolean.FALSE.equals(picks.get(r.name));
@@ -6468,6 +6406,8 @@ public class SimKit extends StarMacro {
       if (!miss.isEmpty()) {
         String m0 = miss.size() == 1 ? miss.get(0) : String.join(", ", miss.subList(0, miss.size() - 1)) + " and " + miss.get(miss.size() - 1);
         empty = "Select " + m0 + " to list the reports.";
+      } else if (noName) {
+        empty = "Enter a name for the combined report.";
       } else {
         empty = "No report fits this selection: " + String.join("; ", why) + ".";
       }

@@ -571,3 +571,6 @@ C. RESULTS SO FAR
   (None, or one scalar field; a new choice replaces the previous one). Offline: rendered, Density adds its reports.
   Per object: default quantities T, p, U, q (BoundaryHeatFlux). "Other field" replaced by "More fields...": the chosen
   field becomes one extra chip (selected, toggles like the others; a new choice replaces it). Offline: rendered.
+  Reports: tab "In this simulation" removed (it repeated the tree); reports that do not follow the naming rule: one
+  line under the tabs with Rename... (small window: current / new name, all selected). Per object: the Name is
+  required for one report over all selected objects (no more r_..._group). Offline: rendered. Not run: GUI.
