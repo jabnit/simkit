@@ -108,7 +108,7 @@ public class SimKit extends StarMacro {
   static final String[][] DEFAULT_PROJECTS = {{"ISO", "ISO 2685 burner", ""}};
 
   static final String[] TOOL_NAMES = {"", "New case", "Save as new run…", "", "",
-      "Calculators", "", "Case tracker", "Guideline", "About", "Standard reports", "",
+      "Calculators", "", "Case tracker", "", "", "Standard reports", "",
       "Mesh study", "Standard scenes", "", "Run on cluster"};
   static final String[] TOOL_HELP = {"",
       "",
@@ -118,7 +118,7 @@ public class SimKit extends StarMacro {
       "Boundary values, y+ and prism layers, time step, dimensionless numbers, materials, GCI",
       "",
       "Runs of the project: status, comments, based on, family tree",
-      "Team guideline", "SimKit version, kit location, STAR-CCM+ release",
+      "", "",
       "Mass balance, pressures, temperatures, wall heat, y+, Courant: reports, monitors, plots (from IN_ / OUT_ / WALL_ names)",
       "",
       "Coarse / medium / fine levels as runs, for a mesh sensitivity check (GCI)",
@@ -270,8 +270,6 @@ public class SimKit extends StarMacro {
         case 2: toolSave(); break;
         case 5: toolCalc(); break;
         case 7: toolTracker(); break;
-        case 8: toolLinks(); break;
-        case 9: toolAbout(); break;
         case 10: toolStandardReports(); break;
         case 12: toolMeshStudy(); break;
         case 13: toolStandardScenes(); break;
@@ -333,11 +331,11 @@ public class SimKit extends StarMacro {
   static final Object[][] SECTIONS = {
       {"Runs", new int[] {2, 15, 7}},
       {"Set-up", new int[] {10, 13, 12}},
-      {"Tools", new int[] {5, 8, 9}}};
+      {"Tools", new int[] {5}}};
   static final String[] TOOL_SHORT = {"",
       "", "Copy as the next run, from this one", "", "",
       "y+, Re, time step, GCI ...", "", "Runs, status, comments",
-      "Team guideline", "Version, kit location", "Mass balance, p, T, y+ ...", "",
+      "", "", "Mass balance, p, T, y+ ...", "",
       "Mesh levels", "Same views every run", "", "Submit with bsub"};
 
   JLabel headTitle, headSub, headPath, statusLine;
@@ -512,19 +510,6 @@ public class SimKit extends StarMacro {
 
   String simName() {
     try { return sim.getPresentationName(); } catch (Throwable t) { return "?"; }
-  }
-
-  /** Two-line description of the open sim and its case, shown at the top of the menu. */
-  String contextLine() {
-    String path = sessionPath();
-    try {
-      CaseInfo c = parseCase(path);
-      return "Case " + c.caseId + (c.label.isEmpty() ? "" : "   label " + c.label) + "   version v" + Fmt.two(c.version)
-          + "\n" + path;
-    } catch (IllegalStateException e) {
-      return "Not a SimKit case yet (" + e.getMessage() + "): use Save as new\n"
-          + (path.isEmpty() ? "(unsaved sim)" : path);
-    }
   }
 
   String sessionPath() {
@@ -1206,6 +1191,7 @@ public class SimKit extends StarMacro {
       saveRun(study, r.label.isEmpty() ? "next" : r.label, "");
       return;
     }
+    if (!p.isEmpty() && unsavedChanges() && !confirmUnsaved(Paths.get(p).getFileName().toString())) throw new Cancel(null);
     final int it = currentIteration();
     String sp = Env.pref("studyParent");
     final Path parent0 = sp != null && !sp.isEmpty() && Files.isDirectory(Paths.get(sp)) ? Paths.get(sp)
@@ -1221,6 +1207,32 @@ public class SimKit extends StarMacro {
     }
     if (study == null) startStudy((Path) res[2], (String) res[0], (String) res[1]);
     else saveRun(study, (String) res[0], (String) res[1], r, null, (String) res[2]);
+  }
+
+  /** True when the open simulation has changes not saved to its file (RootObject.isModified; false if n/a). */
+  boolean unsavedChanges() {
+    try {
+      return sim.isModified();
+    } catch (Throwable t) {
+      log.na("unsaved changes", t);
+      return false;
+    }
+  }
+
+  /** Warning before Save as new run when the open file has unsaved changes. True: continue. */
+  boolean confirmUnsaved(String file) {
+    String f = Html.esc(file);
+    JLabel text = new JLabel("<html><div style='width:380px'><b>" + f + " has unsaved changes.</b><br><br>"
+        + "The changes will be saved in the new run only. " + f + " will not be modified and keeps its last saved state.<br><br>"
+        + "After saving, the new run is the open simulation.</div></html>");
+    text.setFont(text.getFont().deriveFont(Font.PLAIN, 13f));
+    javax.swing.Icon warn = javax.swing.UIManager.getIcon("OptionPane.warningIcon");
+    JPanel body = new JPanel(new BorderLayout(14, 0));
+    if (warn != null) body.add(new JLabel(warn), BorderLayout.WEST);
+    body.add(text, BorderLayout.CENTER);
+    boolean go = Ui.sheet("Unsaved changes", "", body, Ui.primary("Save as new run"), null);
+    log.line("unsaved changes in " + file + (go ? ": saved in the new run only" : ": cancelled"));
+    return go;
   }
 
   /** The Save as new run window (Swing thread). In a study: {name, comment}; not yet: {name, description, study folder}. */
@@ -2779,12 +2791,6 @@ public class SimKit extends StarMacro {
       JPanel topRight = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 10, 0));
       topRight.add(summary);
 
-      JButton tidyBtn = new JButton("Tidy", tidyIcon());
-      tidyBtn.setToolTipText("Delete old snapshots and runs you no longer need");
-      flat(tidyBtn);
-      tidyBtn.addActionListener(e -> showTidy());
-      tidyBtn.setVisible(study);
-      topRight.add(tidyBtn);
       JPanel top = new JPanel(new BorderLayout());
       top.add(topLeft, BorderLayout.WEST);
       top.add(topRight, BorderLayout.EAST);
@@ -3061,212 +3067,6 @@ public class SimKit extends StarMacro {
         }
       }
       jumpTo(id);
-    }
-
-    /** A small broom. */
-    javax.swing.Icon tidyIcon() {
-      return new javax.swing.Icon() {
-        @Override public int getIconWidth() { return 16; }
-        @Override public int getIconHeight() { return 16; }
-        @Override public void paintIcon(java.awt.Component c, java.awt.Graphics g0, int x, int y) {
-          java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
-          g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-          g.translate(x, y);
-          g.setColor(new java.awt.Color(0x4A, 0x55, 0x63));
-          g.setStroke(new java.awt.BasicStroke(1.4f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND));
-          g.drawLine(12, 1, 7, 8);
-          g.draw(new java.awt.geom.Path2D.Double() {{ moveTo(5, 7); lineTo(10, 10); lineTo(7, 15); lineTo(1, 13); closePath(); }});
-          g.drawLine(3, 14, 6, 10);
-          g.dispose();
-        }
-      };
-    }
-
-    static String mb(long bytes) {
-      if (bytes >= 1L << 30) return String.format(Locale.ROOT, "%.1f GB", bytes / 1073741824.0);
-      if (bytes >= 1L << 20) return String.format(Locale.ROOT, "%.0f MB", bytes / 1048576.0);
-      return String.format(Locale.ROOT, "%d KB", Math.max(1, bytes / 1024));
-    }
-
-    static long sizeOf(Path p) {
-      try (java.util.stream.Stream<Path> w = Files.walk(p)) {
-        return w.filter(Files::isRegularFile).mapToLong(f -> { try { return Files.size(f); } catch (IOException e) { return 0; } }).sum();
-      } catch (IOException e) { return 0; }
-    }
-
-    /** Tidy (a study): every run with its files; the snapshots that are not the latest of their run are ticked; tick
-     *  any other file, or a whole run (its folder), by hand. Deleted after a confirmation (recycle bin when there is
-     *  one). The open file is never deleted. */
-    void showTidy() {
-      if (!study) return;
-      final List<Object[]> items = new ArrayList<>();   // {run?, n, path, label, iteration, size, date, ticked}
-      Map<Integer, List<Path>> files = studyFiles(dir);
-      Map<Integer, Path> recs = runRecords(dir);
-      Set<Integer> runs = new TreeSet<>(files.keySet());
-      runs.addAll(recs.keySet());
-      String open = sessionPath();
-      for (int n : runs) {
-        Path rec = recs.get(n);
-        Map<String, String> r0 = rec == null ? new HashMap<>() : readIdentity(rec);
-        Path rdir = rec != null && rec.getFileName().toString().equals(RUN_TXT) ? rec.getParent() : null;
-        String st = r0.getOrDefault("status", "");
-        items.add(new Object[] {Boolean.TRUE, n, rdir, runId(n) + "  " + r0.getOrDefault("name", "") + (st.isEmpty() ? "" : "   \u00B7 " + st),
-            "", rdir == null ? 0L : sizeOf(rdir), "", Boolean.FALSE});
-        List<Path> fs = files.getOrDefault(n, Collections.emptyList());
-        for (int i = 0; i < fs.size(); i++) {
-          Path f = fs.get(i);
-          boolean snap = !iterOf(f.getFileName().toString()).isEmpty(), latest = i == fs.size() - 1;
-          boolean isOpen = !open.isEmpty() && Fs.same(f, Paths.get(open));
-          long size = 0;
-          try { size = Files.size(f); } catch (IOException e) { /* unreadable */ }
-          Path base = rdir != null && f.startsWith(rdir) ? rdir : dir;   // inside its run folder: the path from there
-          items.add(new Object[] {Boolean.FALSE, n, f, base.relativize(f).toString().replace('\\', '/') + (latest ? "   (latest)" : "")
-              + (isOpen ? "   (open)" : ""), iterOf(f.getFileName().toString()), size,
-              new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date(mtime(f))), snap && !latest && !isOpen});
-        }
-      }
-      final JLabel total = new JLabel(" ");
-      total.setFont(total.getFont().deriveFont(Font.BOLD));
-      final JButton del = Ui.primary("Delete");
-      final Runnable sum = () -> {
-        long b = 0;
-        int k = 0;
-        Set<Integer> whole = new HashSet<>();
-        for (Object[] it : items) if ((Boolean) it[0] && (Boolean) it[7]) { whole.add((Integer) it[1]); b += (Long) it[5]; k++; }
-        for (Object[] it : items) if (!(Boolean) it[0] && (Boolean) it[7] && !whole.contains(it[1])) { b += (Long) it[5]; k++; }
-        total.setText(k == 0 ? "Nothing selected" : k + " selected  \u00B7  " + mb(b));
-        del.setEnabled(k > 0);
-      };
-      final javax.swing.table.AbstractTableModel model = new javax.swing.table.AbstractTableModel() {
-        private static final long serialVersionUID = 1L;
-        @Override public int getRowCount() { return items.size(); }
-        @Override public int getColumnCount() { return 5; }
-        @Override public String getColumnName(int c) { return new String[] {"", "run / file", "iteration", "size", "date"}[c]; }
-        @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
-        @Override public boolean isCellEditable(int r, int c) { return c == 0 && (items.get(r)[2] != null) && !String.valueOf(items.get(r)[3]).contains("(open)"); }
-        @Override public Object getValueAt(int r, int c) {
-          Object[] it = items.get(r);
-          switch (c) {
-            case 0: return it[7];
-            case 1: return (Boolean) it[0] ? it[3] : "      " + it[3];
-            case 2: return it[4];
-            case 3: return (Long) it[5] == 0 ? "" : mb((Long) it[5]);
-            default: return it[6];
-          }
-        }
-        @Override public void setValueAt(Object v, int r, int c) {
-          Object[] it = items.get(r);
-          it[7] = Boolean.TRUE.equals(v);
-          if ((Boolean) it[0]) {   // a whole run: all its files with it
-            for (Object[] f : items) if (!(Boolean) f[0] && f[1].equals(it[1]) && !String.valueOf(f[3]).contains("(open)")) f[7] = it[7];
-          }
-          fireTableDataChanged();
-          sum.run();
-        }
-      };
-      final JTable t = new JTable(model) {
-        private static final long serialVersionUID = 1L;
-        @Override public java.awt.Component prepareRenderer(javax.swing.table.TableCellRenderer rr, int r, int c) {
-          java.awt.Component k = super.prepareRenderer(rr, r, c);
-          boolean run = (Boolean) items.get(r)[0];
-          k.setBackground(run ? new java.awt.Color(0xF2, 0xF4, 0xF7) : java.awt.Color.WHITE);
-          k.setFont(k.getFont().deriveFont(run ? Font.BOLD : Font.PLAIN));
-          if (!isRowSelected(r)) k.setForeground(c >= 2 ? grey : java.awt.Color.BLACK);
-          return k;
-        }
-      };
-      t.setRowHeight(24);
-      t.setShowVerticalLines(false);
-      t.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
-      t.getColumnModel().getColumn(0).setMaxWidth(30);
-      t.getColumnModel().getColumn(1).setPreferredWidth(430);
-      t.getColumnModel().getColumn(2).setPreferredWidth(70);
-      t.getColumnModel().getColumn(3).setPreferredWidth(70);
-      t.getColumnModel().getColumn(4).setPreferredWidth(120);
-      JScrollPane sp = new JScrollPane(t);
-      sp.setPreferredSize(new java.awt.Dimension(740, Math.min(24 * items.size() + 28, 460)));
-      sp.getViewport().setBackground(java.awt.Color.WHITE);
-      JButton old = Ui.link("Old snapshots");
-      JButton none = Ui.link("None");
-      old.addActionListener(e -> {
-        for (int i = 0; i < items.size(); i++) {
-          Object[] it = items.get(i);
-          String lab = String.valueOf(it[3]);
-          it[7] = !(Boolean) it[0] && !String.valueOf(it[4]).isEmpty() && !lab.contains("(latest)") && !lab.contains("(open)");
-        }
-        model.fireTableDataChanged();
-        sum.run();
-      });
-      none.addActionListener(e -> {
-        for (Object[] it : items) it[7] = Boolean.FALSE;
-        model.fireTableDataChanged();
-        sum.run();
-      });
-      JPanel pick = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
-      pick.add(Ui.muted("Select:"));
-      pick.add(old);
-      pick.add(none);
-      JPanel south = new JPanel(new BorderLayout());
-      south.add(pick, BorderLayout.WEST);
-      south.add(total, BorderLayout.EAST);
-      JPanel body = new JPanel(new BorderLayout(0, 8));
-      body.add(sp, BorderLayout.CENTER);
-      body.add(south, BorderLayout.SOUTH);
-      sum.run();
-      final boolean trash = Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.MOVE_TO_TRASH);
-      boolean go = Ui.sheet("Tidy", dir.getFileName() + "  \u00B7  proposed: older snapshots of each run", body, del, () -> {
-        if (t.isEditing()) t.getCellEditor().stopCellEditing();
-        int ok = JOptionPane.showConfirmDialog(t, "Delete " + total.getText() + "?\n" + (trash ? "They go to the recycle bin."
-            : "This cannot be undone."), "Tidy", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
-        return ok == JOptionPane.OK_OPTION ? null : "";
-      });
-      if (!go) return;
-      int n = 0;
-      List<String> bad = new ArrayList<>();
-      Set<Integer> whole = new HashSet<>();
-      for (Object[] it : items) {
-        if (!(Boolean) it[0] || !(Boolean) it[7] || it[2] == null) continue;
-        whole.add((Integer) it[1]);
-        if (remove((Path) it[2], trash)) n++; else bad.add(String.valueOf(it[2]));
-      }
-      for (Object[] it : items) {
-        if ((Boolean) it[0] || !(Boolean) it[7] || whole.contains(it[1])) continue;
-        Path f = (Path) it[2];
-        if (remove(f, trash)) {
-          n++;
-          for (Path d = f.getParent(); d != null && !Fs.same(d, dir) && !Files.isRegularFile(d.resolve(RUN_TXT)); d = d.getParent()) {
-            try (java.util.stream.Stream<Path> in = Files.list(d)) { if (in.findAny().isPresent()) break; } catch (IOException e) { break; }
-            try { Files.delete(d); } catch (IOException e) { break; }   // an emptied job folder
-          }
-        } else {
-          bad.add(String.valueOf(f));
-        }
-      }
-      log.line("tidy: " + n + " removed" + (trash ? " (recycle bin)" : "") + (bad.isEmpty() ? "" : "; not removed: " + String.join(", ", bad)));
-      say(n + " removed" + (bad.isEmpty() ? "" : ", " + bad.size() + " not (in use?)"), bad.isEmpty() ? green : red);
-      reload();
-    }
-
-    /** A file or a whole folder to the recycle bin (when there is one), else deleted. */
-    boolean remove(Path p, boolean trash) {
-      try {
-        Fs.allow(dir);
-        Fs.guard(p);
-        if (trash && Desktop.getDesktop().moveToTrash(p.toFile())) return true;
-        if (Files.isDirectory(p)) {
-          try (java.util.stream.Stream<Path> w = Files.walk(p)) {
-            List<Path> all = new ArrayList<>();
-            w.forEach(all::add);
-            Collections.reverse(all);
-            for (Path q : all) Files.delete(q);
-          }
-        } else {
-          Files.delete(p);
-        }
-        return true;
-      } catch (Throwable e) {
-        return false;
-      }
     }
 
     void showTree() {
@@ -4851,53 +4651,92 @@ public class SimKit extends StarMacro {
         else note.setText(" ");
         if (can) {
           String q = search.getText().trim().toLowerCase(Locale.ROOT);
-          String region = null;
-          for (final Object b : every) {
+          // surfaces grouped by type prefix (IN_, OUT_, OPEN_, WALL_, SYM_, IF_, then the others)
+          Map<String, List<Object>> groups = new LinkedHashMap<>();
+          for (String t : new String[] {"IN", "OUT", "OPEN", "WALL", "SYM", "IF", ""}) groups.put(t, new ArrayList<>());
+          Set<String> regions = new HashSet<>();
+          for (Object b : every) {
             String n = nm(b), reg = "";
             try { reg = nm(((Boundary) b).getRegion()); } catch (Throwable t) { /* no region (offline) */ }
+            regions.add(reg);
             if (!q.isEmpty() && !n.toLowerCase(Locale.ROOT).contains(q) && !reg.toLowerCase(Locale.ROOT).contains(q)) continue;
-            if (!reg.equals(region)) {
-              JLabel h = new JLabel(reg.isEmpty() ? "Surfaces" : reg);
-              h.setFont(h.getFont().deriveFont(Font.BOLD, 11f));
-              h.setForeground(Ui.MUTED);
-              h.setBorder(BorderFactory.createEmptyBorder(region == null ? 2 : 8, 2, 2, 0));
-              h.setAlignmentX(0f);
-              list.add(h);
-              region = reg;
-            }
             String tok = bcToken(n);
-            final javax.swing.JCheckBox cb = new javax.swing.JCheckBox(n.substring(n.lastIndexOf('.') + 1), x.target.contains(b));
-            cb.setBackground(java.awt.Color.WHITE);
-            cb.setFocusPainted(false);
-            cb.setIcon(null);
-            cb.setAlignmentX(0f);
-            cb.setToolTipText(n);
-            final JLabel tag = new JLabel(tok == null ? "" : tok);
-            tag.setFont(tag.getFont().deriveFont(Font.BOLD, 10f));
-            java.awt.Color[] tc = tagColors(tok);
-            tag.setOpaque(tok != null);
+            groups.get(tok == null ? "" : tok).add(b);
+          }
+          final boolean manyRegions = regions.size() > 1;
+          boolean firstGroup = true;
+          for (Map.Entry<String, List<Object>> g : groups.entrySet()) {
+            final List<Object> members = g.getValue();
+            if (members.isEmpty()) continue;
+            String tok = g.getKey().isEmpty() ? null : g.getKey();
+            int on = 0;
+            for (Object b : members) if (x.target.contains(b)) on++;
+            final javax.swing.JCheckBox gb = new javax.swing.JCheckBox("", on == members.size());
+            gb.setBackground(java.awt.Color.WHITE);
+            gb.setFocusPainted(false);
+            gb.setToolTipText("All " + (tok == null ? "other" : tok + "_") + " surfaces");
+            final JLabel tag = new JLabel(tok == null ? "OTHER" : tok);
+            tag.setFont(tag.getFont().deriveFont(Font.BOLD, 11f));
+            java.awt.Color[] tc = tagColors(tok == null ? "" : tok);
+            if (tok == null) tc = new java.awt.Color[] {new java.awt.Color(0xF2, 0xF4, 0xF7), Ui.MUTED};
+            tag.setOpaque(true);
             tag.setBackground(tc[0]);
             tag.setForeground(tc[1]);
-            tag.setBorder(BorderFactory.createEmptyBorder(1, 5, 1, 5));
-            JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
-            row.setBackground(java.awt.Color.WHITE);
-            row.add(cb);
-            row.add(tag);
-            row.setAlignmentX(0f);
-            row.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, cb.getPreferredSize().height + 2));
-            cb.addActionListener(e -> {
-              if (cb.isSelected()) {   // keep the order of the model's surfaces
-                List<Object> nt = new ArrayList<>();
-                for (Object o : every) if (o == b || x.target.contains(o)) nt.add(o);
-                x.target.clear();
-                x.target.addAll(nt);
-              } else {
-                x.target.remove(b);
+            tag.setBorder(BorderFactory.createEmptyBorder(1, 6, 1, 6));
+            final JLabel gn = Ui.muted(on + " / " + members.size());
+            JPanel hrow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+            hrow.setBackground(java.awt.Color.WHITE);
+            hrow.setBorder(BorderFactory.createEmptyBorder(firstGroup ? 2 : 10, 0, 2, 0));
+            hrow.add(gb);
+            hrow.add(tag);
+            hrow.add(gn);
+            hrow.setAlignmentX(0f);
+            hrow.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, hrow.getPreferredSize().height));
+            list.add(hrow);
+            firstGroup = false;
+            gb.addActionListener(e -> {
+              List<Object> nt = new ArrayList<>();
+              for (Object o : every) {
+                boolean in = members.contains(o) ? gb.isSelected() : x.target.contains(o);
+                if (in) nt.add(o);
               }
-              countLbl.setText(x.target.size() + " of " + every.size() + " surfaces");
+              x.target.clear();
+              x.target.addAll(nt);
+              fill[0].run();
               refreshRow.run();
             });
-            list.add(row);
+            for (final Object b : members) {
+              String n = nm(b), reg = "";
+              try { reg = nm(((Boundary) b).getRegion()); } catch (Throwable t) { /* offline */ }
+              final javax.swing.JCheckBox cb = new javax.swing.JCheckBox(n.substring(n.lastIndexOf('.') + 1), x.target.contains(b));
+              cb.setBackground(java.awt.Color.WHITE);
+              cb.setFocusPainted(false);
+              cb.setToolTipText(reg.isEmpty() ? n : reg + " : " + n);
+              JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+              row.setBackground(java.awt.Color.WHITE);
+              row.setBorder(BorderFactory.createEmptyBorder(0, 20, 0, 0));
+              row.add(cb);
+              if (manyRegions && !reg.isEmpty()) row.add(Ui.muted(reg));
+              row.setAlignmentX(0f);
+              row.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, cb.getPreferredSize().height + 2));
+              cb.addActionListener(e -> {
+                if (cb.isSelected()) {   // keep the order of the model's surfaces
+                  List<Object> nt = new ArrayList<>();
+                  for (Object o : every) if (o == b || x.target.contains(o)) nt.add(o);
+                  x.target.clear();
+                  x.target.addAll(nt);
+                } else {
+                  x.target.remove(b);
+                }
+                int k = 0;
+                for (Object o : members) if (x.target.contains(o)) k++;
+                gb.setSelected(k == members.size());
+                gn.setText(k + " / " + members.size());
+                countLbl.setText(x.target.size() + " of " + every.size() + " surfaces");
+                refreshRow.run();
+              });
+              list.add(row);
+            }
           }
           countLbl.setText(x.target.size() + " of " + every.size() + " surfaces");
         } else {
@@ -5724,41 +5563,6 @@ public class SimKit extends StarMacro {
   // =====================================================================================================
   // Other tools
   // =====================================================================================================
-
-  /** Guideline: opens the links of config/links.csv in the browser. */
-  void toolLinks() {
-    List<String[]> links = config("links.csv", new String[] {"label", "url"}, null);
-    List<String[]> ok = new ArrayList<>();
-    for (String[] l : links) if (l[1].matches("(?i)^(https?|file):.*") && !l[1].contains("REPLACE")) ok.add(l);
-    if (ok.isEmpty()) throw new Cancel("no link set yet in " + Fs.config("links.csv") + " (ask the toolkit owner)");
-    String[] labels = new String[ok.size()];
-    for (int i = 0; i < labels.length; i++) labels[i] = ok.get(i)[0];
-    int[] pick = ok.size() == 1 ? new int[] {0} : Ui.pick("Guideline", "Open in the browser:", labels, false);
-    for (int i : pick) {
-      try {
-        Ui.browse(ok.get(i)[1]);
-        log.line("opened " + ok.get(i)[0]);
-        result("opened " + ok.get(i)[0]);
-      } catch (Throwable t) {
-        log.na("open " + ok.get(i)[1], t);
-      }
-    }
-  }
-
-  /** About: version, share, release, config files found. */
-  void toolAbout() {
-    String vfile;
-    try { vfile = Fs.read(Fs.inKit(VERSION_FILE)).trim(); } catch (IOException e) { vfile = "n/a (VERSION.txt not found)"; }
-    StringBuilder sb = new StringBuilder();
-    sb.append(VERSION).append(" (this macro)\nVERSION.txt: ").append(vfile)
-        .append("\nSimKit root: ").append(Fs.kit()).append(" (folder of SimKit.java)")
-        .append("\nSTAR-CCM+: ").append(starVersion()).append("\nJava: ").append(System.getProperty("java.version"))
-        .append("\nuser: ").append(Env.user()).append("\n").append(contextLine()).append("\n\nconfig files:");
-    for (String f : new String[] {"projects.csv", "standard_reports.csv", "links.csv"}) {
-      sb.append("\n  ").append(Files.isRegularFile(Fs.config(f)) ? "found    " : "missing  ").append(f);
-    }
-    log.line(sb.toString());
-  }
 
   /** Calculators = lib/generic/SimKitCalc.java (separate macro, played in this session). */
   void toolCalc() {

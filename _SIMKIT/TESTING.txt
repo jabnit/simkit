@@ -441,4 +441,13 @@ C. RESULTS SO FAR
   Tracker: List | Tree switch in the top bar (family tree inside the window, choice remembered per user); the Family
   tree button removed. STAR regression SKT69 (21.04.009): all 15 exit codes 0, no exception; calculator self-check in
   STAR identical to offline, 50 classes preloaded.
+  Removed (user): Tidy (tracker); About and Guideline buttons (main window, Tools: Calculators only);
+  config/links.csv deleted. Earlier notes on these features no longer apply.
+  Standard reports: surfaces of the right pane grouped by name prefix (IN, OUT, OPEN, WALL, SYM, IF, other), one
+  tick box per group (ticks the whole group) with a count; region shown next to a surface when there are several
+  regions. Offline DialogShot checked.
+  STAR regression SKT71 (21.04.009, with the removals and the surface groups): all 15 exit codes 0, no exception.
+  Save as new run (window only): open file with unsaved changes (Simulation.isModified) -> warning "Unsaved
+  changes": changes saved in the new run only, the open file keeps its last saved state; Cancel stops. Not
+  reached in batch (batch saves without asking); compiled against 21.04.009; offline render checked.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.
