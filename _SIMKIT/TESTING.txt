@@ -574,3 +574,7 @@ C. RESULTS SO FAR
   Reports: tab "In this simulation" removed (it repeated the tree); reports that do not follow the naming rule: one
   line under the tabs with Rename... (small window: current / new name, all selected). Per object: the Name is
   required for one report over all selected objects (no more r_..._group). Offline: rendered. Not run: GUI.
+  Reports: the plots it creates are collapsed in the simulation tree (STAR-CCM+ shows a new plot node open). No API
+  for the tree: the window's Swing trees (JTree, NetBeans Outline) are searched 0.3 / 1 / 2.5 s after the creation and
+  the nodes with the plot names are collapsed; GUI only, never fails the tool. Offline: CollapseTest (JTree) ok.
+  Not run: in the STAR-CCM+ window (which tree component it uses is not known).
