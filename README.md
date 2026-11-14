@@ -1,9 +1,9 @@
-# SimKit: team helper for STAR-CCM+ cases
+# SimKit: team helper for STAR-CCM+ studies
 
 SimKit is a set of STAR-CCM+ Java macros that keeps the native STAR-CCM+ workflow and adds a few
-team tools on top of it: generated case identity and file names, versioned saves with a set-up
-record and a change list, a pre-run check, results export, standard reports and scenes, a mesh
-study helper, a case tracker and engineering calculators.
+team tools on top of it: studies with numbered, named runs (one folder per run, the run number stored
+inside the simulation so cluster copies stay traceable), Run on cluster (bsub), a tracker with a family
+tree, standard reports and scenes, a mesh study helper and engineering calculators.
 
 > **Status (2026-11-12): version 0.3.** Batch-validated on STAR-CCM+ 2606.0002 (21.04.009, Windows).
 > The GUI test, STAR-CCM+ 2402 and Linux (RHEL 7/9) runs are still pending (see `_SIMKIT/TESTING.txt`).
@@ -15,7 +15,7 @@ study helper, a case tracker and engineering calculators.
 | Path | Content |
 |---|---|
 | `_SIMKIT/` | **The kit.** Copy this folder as-is to the team share. Its inner layout must be kept: every macro finds the kit root from its own location. |
-| `_SIMKIT/SimKit.java` | The macro users play: Save as new, Export results and the other tools. |
+| `_SIMKIT/SimKit.java` | The macro users play: Save run, Run on cluster, Tracker and the other tools. |
 | `_SIMKIT/buttons/` | One small macro per toolbar button, their icons and `SimKit_InstallButtons.java` (see `_SIMKIT/buttons/README.txt`). |
 | `_SIMKIT/config/` | Projects, naming rules, Guideline links and MatML material folders (CSV, edited by the owner). |
 | `_SIMKIT/lib/generic/` | `SimKitCalc.java` (Calculators window) and its property tables in `data/`. |
@@ -57,7 +57,7 @@ The GUI test and the expected results are in `_SIMKIT/TESTING.txt`.
 | Tag | Content |
 |---|---|
 | `v0.2.1` | Full kit (20 tools, tags, groups, parameter sync, project workbook, register Apps Script). |
-| `v0.3` | Simplified kit: New case, Save version, Export results, Calculators, Case list (Check and Compare versions removed later), Guideline, About. |
+| `v0.3` | Simplified kit: New case, Save version, Export results, Calculators, Case list, Guideline, About. Later: studies and runs replace cases; Check, Compare versions, Export results and Case report removed. |
 
 `_SIMKIT/VERSION.txt` holds the current version line. Tag each release `v<version>`.
 

@@ -9,8 +9,6 @@
     2. SimKitCalc.java in batch  -> compiles the calculator macro and prints its self-check
     3. (Check removed)
     4. SimKit.java  record       -> set-up record + case card
-    5. SimKit.java  export       -> monitor CSV, scene PNG, report values
-    6. SimKit.java  (default)    -> record + export, as at the end of a cluster run
     7. (optional, -RunSolver)    -> starccm+ -batch run,SimKit.java : short solver run + record + export
   Then it writes  <TestRoot>\results\PASTE_THIS.txt  (paste it into the chat) and a zip with all logs/outputs.
   The interactive tools (case initialisation dialogs, renaming previews, parameter-sync preview, calculator
@@ -162,14 +160,12 @@ $q = { param($s) "`"$s`"" }
 $rc = @{}
 $rc["calc"]     = Invoke-Star "02_SimKitCalc_selfcheck" ($common + @("-batch", (& $q (Join-Path $kit "lib\generic\SimKitCalc.java")), (& $q $caseSim))) ""
 $rc["record"]   = Invoke-Star "04_SimKit_record"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "record"
-$rc["export"]   = Invoke-Star "05_SimKit_export"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "export"
-$rc["default"]  = Invoke-Star "06_SimKit_default"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) ""
 $rc["reports"]  = Invoke-Star "07a_SimKit_reports"      ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "reports"
 $rc["reports2"] = Invoke-Star "07b_SimKit_reports_again" ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "reports"
 $rc["meshpar"]  = Invoke-Star "07c_SimKit_meshparams"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "meshparams"
 $rc["scenes"]   = Invoke-Star "07d_SimKit_scenes"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "scenes"
 $rc["meshstudy"] = Invoke-Star "07e_SimKit_meshstudy"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "meshstudy"
-$rc["button"]   = Invoke-Star "08_button_Export"        ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_ExportResults.java")), (& $q $caseSim))) ""
+$rc["button"]   = Invoke-Star "08_button_Tracker"       ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_CaseTracker.java")), (& $q $caseSim))) ""
 
 # Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
 # keys): every settings.props of the user is copied aside first and put back afterwards, and only the
@@ -217,7 +213,6 @@ try {
 if ($RunSolver) {
   $rc["run"]    = Invoke-Star "09_SimKit_run_record_export" ($common + @("-batch", ("run," + (Join-Path $kit "SimKit.java")), "-batch-report", (& $q $caseSim))) ""
 }
-$rc["report"]   = Invoke-Star "10_SimKit_casereport"     ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "casereport"
 $rc["newver"]   = Invoke-Star "10b_SimKit_newversion"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "newversion"
 $rc["tracker"]  = Invoke-Star "11_SimKit_tracker"        ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "tracker"
 $rc["opensim"]  = Invoke-Star "11b_SimKit_opensim"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "opensim"

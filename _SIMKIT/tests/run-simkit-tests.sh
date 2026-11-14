@@ -137,14 +137,12 @@ log "test case     : $CASE_SIM"
 declare -A RCS
 invoke_star 02_SimKitCalc_selfcheck "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/lib/generic/SimKitCalc.java" "$CASE_SIM"; RCS[calc]=$RC
 invoke_star 04_SimKit_record record ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[record]=$RC
-invoke_star 05_SimKit_export export ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[export]=$RC
-invoke_star 06_SimKit_default "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[default]=$RC
 invoke_star 07a_SimKit_reports reports ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[reports]=$RC
 invoke_star 07b_SimKit_reports_again reports ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[reports2]=$RC
 invoke_star 07c_SimKit_meshparams meshparams ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshpar]=$RC
 invoke_star 07d_SimKit_scenes scenes ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[scenes]=$RC
 invoke_star 07e_SimKit_meshstudy meshstudy ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshstudy]=$RC
-invoke_star 08_button_Export "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_ExportResults.java" "$CASE_SIM"; RCS[button]=$RC
+invoke_star 08_button_Tracker "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_CaseTracker.java" "$CASE_SIM"; RCS[button]=$RC
 
 # Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
 # keys): every settings.props under ~/.star-* is copied aside first and put back afterwards, and only the
@@ -189,7 +187,6 @@ log "    user STAR-CCM+ settings restored (${#SAVED[@]} file(s))"
 if [ "$RUN_SOLVER" -eq 1 ]; then
   invoke_star 09_SimKit_run_record_export "" ${COMMON[@]+"${COMMON[@]}"} -batch "run,$KIT/SimKit.java" -batch-report "$CASE_SIM"; RCS[run]=$RC
 fi
-invoke_star 10_SimKit_casereport casereport ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[report]=$RC
 invoke_star 10b_SimKit_newversion newversion ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[newver]=$RC
 invoke_star 11_SimKit_tracker tracker ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[tracker]=$RC
 invoke_star 11b_SimKit_opensim opensim ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[opensim]=$RC

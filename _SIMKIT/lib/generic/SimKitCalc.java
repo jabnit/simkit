@@ -231,13 +231,19 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
+  /** calc_log.csv: at the root of a study, or in record/ of a case folder. */
+  Path logFile() {
+    return Files.isRegularFile(caseDir.resolve("simkit_study.txt")) ? caseDir.resolve("calc_log.csv")
+        : caseDir.resolve("record").resolve("calc_log.csv");
+  }
+
   /** Case folder from the sim path: <any folder>/<CASEID>/sim/<file>.sim (SimKit case) */
   void detectCase() {
     String path = "";
     try { path = sim.getSessionPath(); } catch (Throwable t) { /* unsaved */ }
     caseDir = caseDirOf(path);
     if (caseDir != null) {
-      caseNote = "Log: " + caseDir.resolve("record").resolve("calc_log.csv");
+      caseNote = "Log: " + logFile();
     } else {
       caseNote = "Log: Output window only (no study)";
     }
@@ -873,7 +879,7 @@ public class SimKitCalc extends StarMacro {
   String calcLog(String tabName, String inputs, String outputs) {
     log.line("calc | " + tabName + " | in: " + inputs + " | out: " + outputs);    // [U52] on the Swing thread
     if (caseDir == null) return "calc_log: not written (no case folder) -- logged in the Output window only.";
-    Path f = caseDir.resolve("record").resolve("calc_log.csv");
+    Path f = logFile();
     try {
       Fs.appendCsv(f, caseDir, CALC_LOG_HEADER, new String[] {Fmt.iso(), Fs.user(), tabName, inputs, outputs});
       return "calc_log: appended to " + f;
@@ -1275,7 +1281,6 @@ public class SimKitCalc extends StarMacro {
     a.f("dim", "dimension (3 = 3-D, 2 = 2-D)", "-", "3");
     a.calc = fm -> Core.gci(fm.req("N1"), fm.req("N2"), fm.req("N3"), fm.req("phi1"), fm.req("phi2"), fm.req("phi3"),
         fm.reqInt("dim"));
-    a.extras.add(button("From cases...", e -> gciFromCases(a, a.tab)));
   }
 
   /** key=value lines of a case_identity.txt (empty map if missing). */
@@ -1288,136 +1293,6 @@ public class SimKitCalc extends StarMacro {
       }
     } catch (IOException e) { /* none */ }
     return kv;
-  }
-
-  /** Run number of the open simulation (parameter p_simkit_run), or -1. */
-  int currentRun() {
-    try {
-      for (Object o : sim.get(star.common.GlobalParameterManager.class).getObjects()) {
-        if (o instanceof star.common.ScalarGlobalParameter && "p_simkit_run".equals(((star.common.ScalarGlobalParameter) o).getPresentationName())) {
-          return (int) Math.round(((star.common.ScalarGlobalParameter) o).getQuantity().getRawValue());
-        }
-      }
-    } catch (Throwable t) { /* none */ }
-    return -1;
-  }
-
-  /** GCI from 3 SimKit cases (mesh levels): reads each case's record/key_results.csv (written by Export results:
-   *  cells, p_meshScale and every report value), lets the user pick the 3 cases and the quantity, fills the form. */
-  void gciFromCases(Form a, Tab t) {
-    try {
-      Path dir;
-      boolean isStudy = caseDir != null && Files.isRegularFile(caseDir.resolve("simkit_study.txt"));
-      if (isStudy) {
-        dir = caseDir;   // the runs of this study
-      } else {
-        java.io.File start = caseDir != null && caseDir.getParent() != null ? caseDir.getParent().toFile() : null;
-        JFileChooser fc = new JFileChooser(start);
-        fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        fc.setDialogTitle("Folder that holds the case folders of the mesh levels, or a study");
-        if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) return;
-        dir = fc.getSelectedFile().toPath();
-        isStudy = Files.isRegularFile(dir.resolve("simkit_study.txt"));
-      }
-      List<String> names = new ArrayList<>(), studies = new ArrayList<>();
-      List<Map<String, String>> data = new ArrayList<>();
-      String mine0 = "";
-      if (isStudy) {   // one entry per run: its latest record/key_results_R<nnn>....csv (written by Export results)
-        Map<Integer, Path> latest = new java.util.TreeMap<>();
-        try (java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(dir.resolve("record"), "key_results_R*.csv")) {
-          for (Path p : ds) {
-            java.util.regex.Matcher m = java.util.regex.Pattern.compile("^key_results_R([0-9]{3,4}).*\\.csv$").matcher(p.getFileName().toString());
-            if (!m.matches()) continue;
-            int n = Integer.parseInt(m.group(1));
-            Path o = latest.get(n);
-            if (o == null || Files.getLastModifiedTime(p).compareTo(Files.getLastModifiedTime(o)) > 0) latest.put(n, p);
-          }
-        } catch (IOException e) { /* no results yet */ }
-        try { mine0 = identity(dir.resolve("record").resolve(String.format(Locale.ROOT, "R%03d.txt", currentRun()))).getOrDefault("mesh_study", ""); }
-        catch (Throwable x) { /* not a run */ }
-        for (Map.Entry<Integer, Path> e : latest.entrySet()) {
-          Map<String, String> m = new LinkedHashMap<>();
-          List<String[]> rows = Csv.parse(Fs.read(e.getValue()));
-          for (int i = 1; i < rows.size(); i++) if (rows.get(i).length >= 2) m.put(rows.get(i)[0], rows.get(i)[1]);
-          if (!m.containsKey("cells")) continue;
-          Map<String, String> idm = identity(dir.resolve("record").resolve(String.format(Locale.ROOT, "R%03d.txt", e.getKey())));
-          names.add(String.format("R%03d  %-8s cells %-10s factor %-6s (%s)", e.getKey(), idm.getOrDefault("mesh_level", idm.getOrDefault("name", "")),
-              m.get("cells"), m.getOrDefault("p_meshScale", "-"), e.getValue().getFileName()));
-          studies.add(idm.getOrDefault("mesh_study", ""));
-          data.add(m);
-        }
-      }
-      if (!isStudy) try (java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
-        for (Path d : ds) {
-          Path kr = d.resolve("record").resolve("key_results.csv");
-          if (!CASE_ID.matcher(d.getFileName().toString()).matches() || !Files.isRegularFile(kr)) continue;
-          Map<String, String> m = new LinkedHashMap<>();
-          List<String[]> rows = Csv.parse(Fs.read(kr));
-          for (int i = 1; i < rows.size(); i++) if (rows.get(i).length >= 2) m.put(rows.get(i)[0], rows.get(i)[1]);
-          if (!m.containsKey("cells")) continue;
-          String sim = rows.size() > 1 && rows.get(1).length > 4 ? rows.get(1)[4] : d.getFileName().toString();
-          Map<String, String> idm = identity(d.resolve("sim").resolve("case_identity.txt"));
-          String level = idm.getOrDefault("mesh_level", "");
-          names.add(String.format("%-12s %-8s cells %-10s p_meshScale %-6s (%s)", d.getFileName(), level, m.get("cells"),
-              m.getOrDefault("p_meshScale", "-"), sim));
-          studies.add(idm.getOrDefault("mesh_study", ""));
-          data.add(m);
-        }
-      }
-      if (data.size() < 3) {
-        t.out.setText("GCI from cases: found " + data.size() + (isStudy ? " run(s)" : " case(s)") + " with results in " + dir + ".\n"
-            + "Each mesh level needs its own run (or case) and an Export results after its run (that writes cells and the values).");
-        return;
-      }
-      javax.swing.JList<String> list = new javax.swing.JList<>(names.toArray(new String[0]));
-      list.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-      list.setSelectionMode(javax.swing.ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
-      // pre-select the levels of a mesh study (Mesh study > Create mesh levels): this case's study, else the only one
-      String mine = isStudy ? mine0 : caseDir == null ? "" : identity(caseDir.resolve("sim").resolve("case_identity.txt")).getOrDefault("mesh_study", "");
-      Set<String> distinct = new HashSet<>(studies);
-      distinct.remove("");
-      if (mine.isEmpty() && distinct.size() == 1) mine = distinct.iterator().next();
-      List<Integer> pre = new ArrayList<>();
-      for (int i = 0; i < studies.size(); i++) if (!mine.isEmpty() && mine.equals(studies.get(i))) pre.add(i);
-      int[] preArr = new int[pre.size()];
-      for (int i = 0; i < preArr.length; i++) preArr[i] = pre.get(i);
-      list.setSelectedIndices(preArr);
-      JPanel p = new JPanel(new BorderLayout(4, 4));
-      p.add(new JLabel("Select the 3 mesh levels (Ctrl+click):"), BorderLayout.NORTH);
-      p.add(new JScrollPane(list), BorderLayout.CENTER);
-      if (JOptionPane.showConfirmDialog(dlg, p, "GCI from cases", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE)
-          != JOptionPane.OK_OPTION) return;
-      int[] sel = list.getSelectedIndices();
-      if (sel.length != 3) {
-        t.out.setText("GCI from cases: select exactly 3 cases (selected: " + sel.length + ").");
-        return;
-      }
-      List<Map<String, String>> three = new ArrayList<>();
-      for (int i : sel) three.add(data.get(i));
-      List<String> common = new ArrayList<>();
-      for (String k : three.get(0).keySet()) {
-        if (k.equals("cells") || k.equals("p_meshScale")) continue;
-        boolean all = true;
-        for (Map<String, String> m : three) all &= !Double.isNaN(Fmt.parse(m.get(k)));
-        if (all) common.add(k);
-      }
-      if (common.isEmpty()) {
-        t.out.setText("GCI from cases: the 3 cases have no numeric result in common.");
-        return;
-      }
-      Object q = JOptionPane.showInputDialog(dlg, "Quantity for the GCI:", "GCI from cases", JOptionPane.QUESTION_MESSAGE,
-          null, common.toArray(new String[0]), common.contains("r_p_in_avg") ? "r_p_in_avg" : common.get(0));
-      if (q == null) return;
-      three.sort((x, y) -> Double.compare(Fmt.parse(y.get("cells")), Fmt.parse(x.get("cells"))));   // fine -> coarse
-      for (int i = 0; i < 3; i++) {
-        a.field("N" + (i + 1)).tf.setText(three.get(i).get("cells"));
-        a.field("phi" + (i + 1)).tf.setText(three.get(i).get(q.toString()));
-      }
-      t.out.setText("GCI from cases: " + q + " filled from 3 cases (fine -> coarse by cell count). Press Compute.\n"
-          + "Unsteady cases use the mean over their averaging window (key_results.csv).");
-    } catch (Throwable e) {
-      t.out.setText("GCI from cases: " + reason(e));
-    }
   }
 
   void buildFluid() {

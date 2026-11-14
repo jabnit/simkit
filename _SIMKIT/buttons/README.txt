@@ -6,11 +6,9 @@ and runs the current version of the tool, so the buttons never need updating whe
   SimKit_Menu.java             the SimKit window (all tools)
   SimKit_SaveNewVersion.java   Save run (the next run of the study; starts the study the first time)
   SimKit_RunOnCluster.java     Run on cluster (saves, then submits with the team's command)
-  SimKit_ExportResults.java    Export results
   SimKit_StandardReports.java  Standard reports
   SimKit_MeshStudy.java        Mesh study
   SimKit_StandardScenes.java   Standard scenes
-  SimKit_CaseReport.java       Case report
   SimKit_CaseTracker.java      Tracker
   SimKit_Calculators.java      Calculators
 

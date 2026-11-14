@@ -399,4 +399,20 @@ C. RESULTS SO FAR
   the tracker; the new run as a dashed blue card under the open run, its name as typed) + Name + Comment + file name
   checked as typed (red if not allowed); New study = Study, Description, Folder, First run; shorter texts in Run on
   cluster, Standard reports, Mesh study, the SimKit window (button lines, tooltips, status "Ready") and Calculators.
+  Save run: link "New study from this run..." bottom left (Ui.sheet extra action) -> closes, opens New study (folder: next to the current study);
+  R001 based_on = <old study>/R004. Batch 11c: new study <study>_branch from the open run.
+  Family tree tooltip: the comment formatted (Md.toHtml).
+  Tracker on a study: stars on the runs (click, Space, right-click > Star), starred runs first; no star on the
+  study row (fold arrow only). Case folders keep the star on the case row.
+  One folder per run (user): <study>/[<group>/]R<nnn>_<name>/ with R<nnn>_<name>.sim, run.txt, submit/ (scripts, log,
+  submissions.csv) and the returned job folders; Save run has a Group field (existing groups, or a new name);
+  mesh levels go to group mesh_study_R<nnn>. Runs found anywhere below the study (run.txt); first studies (sims/,
+  record/R<nnn>.txt) still read. Removed (user: not mature): Export results, Case report, the results folder,
+  the run label at export, GCI From cases, batch actions export / casereport / default; test steps 05, 06, 10;
+  the button test (08) plays SimKit_CaseTracker.java. Calculators: calc_log.csv at the study root. Guideline
+  rewritten for studies and runs.
+  Status diverged (red chip; filter Diverged). Tidy (tracker, studies): runs with their files (path from the run
+  folder, iteration, size, date); older snapshots ticked; tick files or whole runs by hand; confirmation; recycle bin
+  if available (Desktop.moveToTrash), else deleted; emptied job folders removed; open file never deleted. Offline
+  TidyShot checked. Fix: a run's record read from its run folder (new study from a run said based on null).
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.
