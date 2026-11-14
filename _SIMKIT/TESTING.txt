@@ -503,4 +503,8 @@ C. RESULTS SO FAR
   (first version: a tick without a new name switched itself off). Text shortened (issues / total, "Filter by name",
   "Issues only"). Offline: NamesTickTest (mouse clicks on row and heading ticks, prefix on ticked rows, fold) ALL OK;
   renders of a 120-object model checked. STAR regression SKT76: all 14 exit codes 0, no exception.
+  Names: Rename keeps the window open (2026-11-14). The renames run in a worker thread, the rows are read again, the
+  outcome is shown under the table; Close ends the window (Ui.sheet: a main button with client property simkit.stay
+  acts without closing). NamesTickTest extended (Rename: window open, renamed rows gone, outcome shown) ALL OK.
+  STAR regression SKT77: all 14 exit codes 0, no exception.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.

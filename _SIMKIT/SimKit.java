@@ -3904,27 +3904,39 @@ public class SimKit extends StarMacro {
   /** Names: the table; Apply renames the ticked rows that have a new name. */
   void toolNames() {
     final List<NameRow> rows = nameRows();
-    final List<NameRow> done = new ArrayList<>();
-    Boolean ok = Ui.edt(() -> namesWindow(rows));
-    if (!Boolean.TRUE.equals(ok)) throw new Cancel(null);
-    for (NameRow x : rows) {
-      if (!x.pick || x.proposed.trim().isEmpty() || x.proposed.trim().equals(x.name)) continue;
-      try {
-        ((NamedObject) x.o).setPresentationName(x.proposed.trim());
-        log.line("  renamed " + x.kind + " " + x.path + " -> " + x.proposed.trim());
-        done.add(x);
-      } catch (Throwable t) {
-        log.na("rename " + x.path, t);
+    final int[] total = {0};
+    Ui.edt(() -> namesWindow(rows, list -> {
+      int n = 0, bad = 0;
+      for (NameRow x : list) {
+        try {
+          ((NamedObject) x.o).setPresentationName(x.proposed.trim());
+          log.line("  renamed " + x.kind + " " + x.path + " -> " + x.proposed.trim());
+          n++;
+        } catch (Throwable t) {
+          log.na("rename " + x.path, t);
+          bad++;
+        }
       }
-    }
-    result(done.isEmpty() ? "no objects renamed" : done.size() + " object(s) renamed. Undo is not available.");
+      total[0] += n;
+      return (n == 1 ? "1 object renamed." : n + " objects renamed.") + (bad > 0 ? " " + bad + " failed: see the Output window." : "")
+          + " Undo is not available.";
+    }, this::nameRows));
+    result(total[0] == 0 ? "no objects renamed" : total[0] + " object(s) renamed");
   }
 
   /** The Names window (Swing thread): one category at a time (left, with its issue count), its rows grouped by
-   *  region / part / object type, foldable; only the rows that need a look unless asked. True on Rename. */
-  Boolean namesWindow(final List<NameRow> all) {
+   *  region / part / object type, foldable; only the rows with issues unless asked. Rename runs 'rename' on the ticked
+   *  rows with a new name in a worker thread (STAR-CCM+ calls), then 'reload' reads the rows again; the window stays
+   *  open until Close. */
+  Boolean namesWindow(final List<NameRow> all, final java.util.function.Function<List<NameRow>, String> rename,
+      final java.util.function.Supplier<List<NameRow>> reload) {
     final int[] issues = new int[NAME_CATS.length], totals = new int[NAME_CATS.length];
-    for (NameRow x : all) { totals[x.cat]++; if (x.problem) issues[x.cat]++; }
+    final Runnable recount = () -> {
+      Arrays.fill(issues, 0);
+      Arrays.fill(totals, 0);
+      for (NameRow x : all) { totals[x.cat]++; if (x.problem) issues[x.cat]++; }
+    };
+    recount.run();
     final int[] cat = {0};
     for (int c = 0; c < NAME_CATS.length; c++) if (issues[c] > 0) { cat[0] = c; break; }
     final List<Object> view = new ArrayList<>();   // a String = a group heading, else a NameRow
@@ -3935,6 +3947,8 @@ public class SimKit extends StarMacro {
     final JLabel catTitle = new JLabel(" "), catHelp = Ui.muted(" "), ticked = Ui.muted(" ");
     catTitle.setFont(catTitle.getFont().deriveFont(Font.BOLD, 15f));
     final JButton apply = Ui.primary("Rename");
+    apply.putClientProperty("simkit.stay", Boolean.TRUE);
+    final String[] lastMsg = {null};   // the outcome of the last Rename, shown until the next tick
     final JButton useAll = Ui.link("Tick all proposed");
     useAll.setToolTipText("Ticks the rows shown that have a proposed name");
     final java.awt.Color amber = new java.awt.Color(0x8A, 0x5A, 0x00), amberBg = new java.awt.Color(0xFF, 0xF1, 0xD6),
@@ -3990,9 +4004,10 @@ public class SimKit extends StarMacro {
         if (!x.proposed.isEmpty() && !x.proposed.equals(x.name)) n++;
         else m++;
       }
+      if (n + m > 0) lastMsg[0] = null;   // the message of the last Rename until the next tick
       apply.setText(n == 0 ? "Rename" : n == 1 ? "Rename 1 object" : "Rename " + n + " objects");
       apply.setEnabled(n > 0);
-      ticked.setText(n + m == 0 ? "No rows ticked."
+      ticked.setText(n + m == 0 && lastMsg[0] != null ? lastMsg[0] : n + m == 0 ? "No rows ticked."
           : (n + m == 1 ? "1 row ticked" : (n + m) + " rows ticked") + " (all categories)"
             + (m == 0 ? "." : "; " + m + " without a new name: set a prefix or enter a name."));
     };
@@ -4218,16 +4233,51 @@ public class SimKit extends StarMacro {
     prefixBar.setVisible(cat[0] != 2);
     fill.run();
     count.run();
-    int nb = 0;
-    for (int c : issues) nb += c;
-    return Ui.sheet("Names", nb == 0 ? "No issues." : (nb == 1 ? "1 issue." : nb + " issues.") + " Only ticked rows are renamed.",
-        body, apply, () -> {
-          if (t.isEditing()) t.getCellEditor().stopCellEditing();
-          for (NameRow x : all) {
-            if (x.pick && (x.proposed.contains("/") || x.proposed.contains("\\"))) return "Invalid name '" + x.proposed + "': / and \\ are not allowed.";
+    final Runnable paintCatsRef = paintCats;
+    apply.addActionListener(e -> {
+      if (t.isEditing()) t.getCellEditor().stopCellEditing();
+      final List<NameRow> go = new ArrayList<>();
+      for (NameRow x : all) {
+        if (!x.pick || x.proposed.trim().isEmpty() || x.proposed.trim().equals(x.name)) continue;
+        if (x.proposed.contains("/") || x.proposed.contains("\\")) {
+          ticked.setText("Invalid name '" + x.proposed + "': / and \\ are not allowed.");
+          ticked.setForeground(Ui.RED);
+          return;
+        }
+        go.add(x);
+      }
+      if (go.isEmpty()) return;
+      ticked.setForeground(Ui.MUTED);
+      ticked.setText(go.size() == 1 ? "Renaming 1 object..." : "Renaming " + go.size() + " objects...");
+      apply.setEnabled(false);
+      Thread w = new Thread(() -> {   // STAR-CCM+ calls off the Swing thread
+        String msg;
+        List<NameRow> fresh = null;
+        try {
+          msg = rename.apply(go);
+          fresh = reload == null ? null : reload.get();
+        } catch (Throwable x) {
+          msg = "Rename stopped: " + reason(x);
+        }
+        final String m = msg;
+        final List<NameRow> f = fresh;
+        javax.swing.SwingUtilities.invokeLater(() -> {
+          if (f != null) {
+            all.clear();
+            all.addAll(f);
           }
-          return null;
+          for (NameRow x : all) x.pick = false;
+          recount.run();
+          paintCatsRef.run();
+          lastMsg[0] = m;
+          fill.run();
+          count.run();
         });
+      }, "SimKit Names rename");
+      w.setDaemon(true);
+      w.start();
+    });
+    return Ui.sheet("Names", "Only ticked rows are renamed.", body, apply, null);
   }
 
   static int[] append(int[] a, int v) {
@@ -6130,17 +6180,20 @@ public class SimKit extends StarMacro {
         root.add(body, BorderLayout.CENTER);
         final JLabel msg = new JLabel(" ");
         msg.setForeground(RED);
-        JButton cancel = new JButton("Cancel");
+        final boolean stay = Boolean.TRUE.equals(ok.getClientProperty("simkit.stay"));   // acts, the window stays open
+        JButton cancel = new JButton(stay ? "Close" : "Cancel");
         cancel.addActionListener(e -> d.dispose());
-        ok.addActionListener(e -> {
-          String m = check == null ? null : check.get();
-          if (m != null) {
-            msg.setText(m);
-            return;
-          }
-          done[0] = true;
-          d.dispose();
-        });
+        if (!stay) {
+          ok.addActionListener(e -> {
+            String m = check == null ? null : check.get();
+            if (m != null) {
+              msg.setText(m);
+              return;
+            }
+            done[0] = true;
+            d.dispose();
+          });
+        }
         JPanel btns = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
         btns.add(cancel);
         btns.add(ok);
@@ -6160,7 +6213,7 @@ public class SimKit extends StarMacro {
         white(root);
         root.setBackground(java.awt.Color.WHITE);
         d.setContentPane(root);
-        d.getRootPane().setDefaultButton(ok);
+        if (!stay) d.getRootPane().setDefaultButton(ok);
         d.getRootPane().registerKeyboardAction(e -> d.dispose(), javax.swing.KeyStroke.getKeyStroke("ESCAPE"),
             javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW);
         d.pack();
