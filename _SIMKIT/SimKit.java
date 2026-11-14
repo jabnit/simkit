@@ -115,7 +115,7 @@ public class SimKit extends StarMacro {
       "Saves the next run of the project (R008_<name>.sim) from this one; the open file is kept. No project yet: creates one",
       "",
       "",
-      "y+, prism layers, Reynolds, time step, properties, GCI",
+      "Boundary values, y+ and prism layers, time step, dimensionless numbers, materials, GCI",
       "",
       "Runs of the project: status, comments, based on, family tree",
       "Team guideline", "SimKit version, kit location, STAR-CCM+ release",
@@ -2751,6 +2751,23 @@ public class SimKit extends StarMacro {
       final JLabel casesIn = new JLabel(study ? "Project" : "Cases in");
       casesIn.setForeground(grey);
       folderName.setFont(folderName.getFont().deriveFont(Font.BOLD));
+      // List | Tree: the table, or the runs drawn as a family tree, in the same place
+      final javax.swing.JToggleButton listB = new javax.swing.JToggleButton("List"), treeB = new javax.swing.JToggleButton("Tree", treeIcon());
+      javax.swing.ButtonGroup lt = new javax.swing.ButtonGroup();
+      lt.add(listB);
+      lt.add(treeB);
+      for (javax.swing.JToggleButton b : new javax.swing.JToggleButton[] {listB, treeB}) {
+        b.setFocusable(false);
+        b.setMargin(new java.awt.Insets(2, 8, 2, 8));
+      }
+      listB.setToolTipText("Runs as a list");
+      treeB.setToolTipText("Runs as a family tree (click: select, double-click: open, drag: move the view)");
+      listB.addActionListener(e -> showView("list"));
+      treeB.addActionListener(e -> showView("tree"));
+      viewButtons = new javax.swing.JToggleButton[] {listB, treeB};
+      topLeft.add(listB);
+      topLeft.add(treeB);
+      topLeft.add(javax.swing.Box.createHorizontalStrut(10));
       topLeft.add(casesIn);
       topLeft.add(folderName);
       topLeft.add(change);
@@ -2761,11 +2778,7 @@ public class SimKit extends StarMacro {
       summary.setForeground(grey);
       JPanel topRight = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 10, 0));
       topRight.add(summary);
-      JButton treeBtn = new JButton("Family tree", treeIcon());
-      treeBtn.setToolTipText("Runs drawn as a family tree");
-      flat(treeBtn);
-      treeBtn.addActionListener(e -> showTree());
-      topRight.add(treeBtn);
+
       JButton tidyBtn = new JButton("Tidy", tidyIcon());
       tidyBtn.setToolTipText("Delete old snapshots and runs you no longer need");
       flat(tidyBtn);
@@ -2812,7 +2825,25 @@ public class SimKit extends StarMacro {
       tableScroll = new JScrollPane(table);
       tableScroll.getViewport().setBackground(java.awt.Color.WHITE);
       tableScroll.setMinimumSize(new java.awt.Dimension(400, 120));
-      split = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, tableScroll, details);
+      runTree = new RunTree();
+      runTree.source = () -> {
+        List<String[]> l = new ArrayList<>();
+        for (String[] r : rows) if (showHidden.isSelected() || !(hidden(r) || caseHidden(caseOf(r[COL_ID])))) l.add(r);
+        return l;
+      };
+      runTree.shown = this::shown;
+      runTree.study = study;
+      runTree.openId = openId;
+      runTree.onClick = (id, n) -> {
+        selectQuiet(id);
+        if (n == 2) openSelected();
+      };
+      JScrollPane treeScroll = new JScrollPane(runTree);
+      treeScroll.getViewport().setBackground(java.awt.Color.WHITE);
+      treeScroll.getVerticalScrollBar().setUnitIncrement(16);
+      leftCards.add(tableScroll, "list");
+      leftCards.add(treeScroll, "tree");
+      split = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, leftCards, details);
       split.setBorder(null);
       split.setDividerSize(7);
       split.setContinuousLayout(true);
@@ -2835,6 +2866,7 @@ public class SimKit extends StarMacro {
       keyOn(filter, "ESCAPE", () -> { filter.setText(""); table.requestFocusInWindow(); });
       reload();
       if (openId != null) jumpTo(openId);
+      showView("tree".equals(Env.pref("trackerView")) ? "tree" : "list");   // the view used last time
       w.pack();
       layoutDetails();
     }
@@ -2963,6 +2995,7 @@ public class SimKit extends StarMacro {
       model.fireTableDataChanged();
       rowHeights();
       for (int i = 0; i < view.size(); i++) if (sel.contains(view.get(i).key())) table.addRowSelectionInterval(i, i);
+      if (runTree != null && "tree".equals(leftView)) runTree.relayout();
       summary.setText((study ? "" : nCases + (nCases == 1 ? " case" : " cases") + "  ·  ") + nVers + (study ? (nVers == 1 ? " run" : " runs")
           : nVers == 1 ? " version" : " versions")
           + (nRunning > 0 ? "  ·  " + nRunning + " meshing or running" : "") + (nHidden > 0 ? "  ·  " + nHidden + " hidden" : ""));
@@ -2999,6 +3032,36 @@ public class SimKit extends StarMacro {
     }
 
     JDialog treeWin;
+    RunTree runTree;
+    final java.awt.CardLayout leftLayout = new java.awt.CardLayout();
+    final JPanel leftCards = new JPanel(leftLayout);
+    String leftView = "list";
+    javax.swing.JToggleButton[] viewButtons;
+
+    /** List or Tree on the left (remembered for this user). */
+    void showView(String v) {
+      leftView = v;
+      if (runTree != null && v.equals("tree")) {
+        runTree.relayout();
+        Item it = current();
+        runTree.picked = it == null || it.isCase() ? null : it.r[COL_ID];
+        runTree.repaint();
+      }
+      leftLayout.show(leftCards, v);
+      if (viewButtons != null) viewButtons[v.equals("tree") ? 1 : 0].setSelected(true);
+      Env.setPref("trackerView", v);
+    }
+
+    /** Selects a row (the details on the right follow) without changing the filter when it is visible. */
+    void selectQuiet(String id) {
+      for (int i = 0; i < view.size(); i++) {
+        if (id.equals(view.get(i).key())) {
+          table.setRowSelectionInterval(i, i);
+          return;
+        }
+      }
+      jumpTo(id);
+    }
 
     /** A small broom. */
     javax.swing.Icon tidyIcon() {

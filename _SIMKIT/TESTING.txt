@@ -426,4 +426,19 @@ C. RESULTS SO FAR
   folders). Standard reports: reports and monitors in one folder per purpose, plots in "Standard reports"; window in
   two panes: list on the left, the selected report's surfaces on the right (checkboxes by region with type tags,
   search, Default / All / None, count; blue dot = changed). Offline DialogShot checked.
+  Calculators redesign: each page Inputs | Outputs; outputs recomputed 0.3 s after each change (no Compute
+  button); calc_log row 2.5 s after the last change (first values at opening not logged); main output in large type
+  with Copy; formula, source, validity under "Formula and source" (remembered). Pages removed: y+ correction,
+  statistics from monitor CSV, radiation, adiabatic surface temperature, water-cooled calorimeter, Re/Pr/Sc/Pe,
+  Fr/Ri/Gr/Ra, Strouhal, Biot/Fourier, Rosin-Rammler, flow number, Weber/Ohnesorge, droplet response, temperature;
+  the More group is gone. Merged: Fluid + Material properties = Materials (a MatML material with a viscosity is a
+  fluid); First cell + Prism stack = y+ and prism layers. New: Dimensionless numbers (23 definitions, inputs of the
+  selected number only), Pipe pressure drop (Darcy-Weisbach, Colebrook / Haaland, minor losses). Stoichiometry:
+  Z, Z_st, phi from the mass flows, phi or Z; empty atom count = 0; Turns AFR and heat release removed. Time step:
+  frequency and cycles removed (averaging time is an input). Output names without formulas. Offline: self-check
+  values unchanged, pipe f = 0.02089 at Re 5e4 (Colebrook), Re 66666.7; LiveTest (typing recomputes, error line,
+  fluid switch refills the properties); CalcShot2 renders checked.
+  Tracker: List | Tree switch in the top bar (family tree inside the window, choice remembered per user); the Family
+  tree button removed. STAR regression SKT69 (21.04.009): all 15 exit codes 0, no exception; calculator self-check in
+  STAR identical to offline, 50 classes preloaded.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.
