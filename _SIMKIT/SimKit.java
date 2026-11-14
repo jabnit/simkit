@@ -6271,21 +6271,36 @@ public class SimKit extends StarMacro {
       qChips.add(b);
     };
     for (ObjQty q : qs) addQ.accept(q);
-    // one other scalar field at a time: choosing one replaces the previous one (the list of quantities stays fixed)
+    // one extra chip for another scalar field: picked from the list, it works like the other chips; a new pick
+    // replaces it (the row grows by one chip at most)
+    final javax.swing.JToggleButton extraChip = Ui.chip(" ");
+    extraChip.setVisible(false);
+    qChips.add(extraChip);
+    final ObjQty[] extra = {null};
+    extraChip.addActionListener(e -> { if (extra[0] != null) { extra[0].pick = extraChip.isSelected(); refresh[0].run(); } });
     List<String> on = new ArrayList<>();
-    on.add("None");
+    on.add("More fields…");
     for (ObjQty q : others) on.add(q.label);
     final JComboBox<String> other = new JComboBox<>(on.toArray(new String[0]));
-    other.setToolTipText("One more scalar field, in addition to the quantities above. Its function name is used in the report name.");
-    final ObjQty[] extra = {null};
+    other.setToolTipText("Another scalar field: it becomes one more chip (a new choice replaces it). Its function name is used in the report name.");
     other.addActionListener(e -> {
-      if (extra[0] != null) { qs.remove(extra[0]); extra[0].pick = false; extra[0] = null; }
       int i = other.getSelectedIndex();
-      if (i > 0) { extra[0] = others.get(i - 1); extra[0].pick = true; qs.add(extra[0]); }
+      if (i <= 0) return;
+      ObjQty q = others.get(i - 1);
+      if (extra[0] != null && extra[0] != q) { qs.remove(extra[0]); extra[0].pick = false; }
+      if (!qs.contains(q)) qs.add(q);
+      extra[0] = q;
+      q.pick = true;
+      extraChip.setText(q.label);
+      extraChip.setToolTipText("Field function " + q.ffName + ". Code in the report name: " + q.code + ".");
+      extraChip.setSelected(true);
+      extraChip.setVisible(true);
+      qChips.revalidate();
+      qChips.repaint();
+      other.setSelectedIndex(0);
       refresh[0].run();
     });
     final JPanel otherRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
-    otherRow.add(new JLabel("Other field"));
     otherRow.add(other);
 
     // 2 statistics

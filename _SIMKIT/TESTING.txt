@@ -569,3 +569,5 @@ C. RESULTS SO FAR
   Not run: the window in the STAR-CCM+ GUI.
   Per object: "Add field..." (added a chip per field, the window could grow without limit) replaced by "Other field"
   (None, or one scalar field; a new choice replaces the previous one). Offline: rendered, Density adds its reports.
+  Per object: default quantities T, p, U, q (BoundaryHeatFlux). "Other field" replaced by "More fields...": the chosen
+  field becomes one extra chip (selected, toggles like the others; a new choice replaces it). Offline: rendered.
