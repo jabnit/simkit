@@ -2243,7 +2243,7 @@ public class SimKit extends StarMacro {
       this.dir = dir0;
       this.openId = openId;
       if (openId != null) expanded.add(caseOf(openId));
-      for (String p : Env.pref("trackerPins").split("\n")) if (!p.trim().isEmpty()) pins.add(p.trim());
+      for (String p : java.util.Objects.toString(Env.pref("trackerPins"), "").split("\n")) if (!p.trim().isEmpty()) pins.add(p.trim());
       model = new javax.swing.table.AbstractTableModel() {
         private static final long serialVersionUID = 1L;
         @Override public int getRowCount() { return view.size(); }
