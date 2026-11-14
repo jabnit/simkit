@@ -1,4 +1,4 @@
-// SimKit: Standard reports (mass balance, pressures, temperatures, y+, cells...)
+// SimKit: Reports (standard reports: mass balance, pressures, temperatures, y+ ...; reports per object)
 //
 // SimKit 0.3 toolbar button. Play it from the buttons/ folder of the SimKit root on the team share (do not copy
 // it elsewhere): it finds the root from its own location (STAR-CCM+ resolvePath("..")) and plays SimKit.java

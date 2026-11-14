@@ -149,6 +149,7 @@ invoke_star 07f_SimKit_names names ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimK
 invoke_star 07g_SimKit_presubmit presubmit ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[presubmit]=$RC
 invoke_star 07h_SimKit_chttest chttest ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[chttest]=$RC
 invoke_star 07i_SimKit_cadtest cadtest ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[cadtest]=$RC
+invoke_star 07j_SimKit_objtest objtest ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[objtest]=$RC
 invoke_star 08_button_Tracker "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_CaseTracker.java" "$CASE_SIM"; RCS[button]=$RC
 
 # Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
@@ -168,6 +169,12 @@ log_buttons() {
     log "    $1: SimKit toolbar $([ -d "$tb" ] && echo present || echo absent), $(ls "$tb"/*.shadow 2>/dev/null | wc -l) button link(s)"
   done < <(star_settings)
 }
+# A STAR-CCM+ window that is open reads these settings: its buttons would point at the test kit or be gone while
+# the steps run. The steps are skipped then (a starccm+ process without -batch / -server).
+if ps -eo args 2>/dev/null | grep -E '(^|/)(starccm\+|star-ccm\+)( |$)' | grep -v -E -- '-batch|-server' | grep -q .; then
+  log "    08b / 08c skipped: a STAR-CCM+ window is open (these steps write the user's toolbar settings)"
+  RCS[buttons]=skip; RCS[buttonsrm]=skip
+else
 BK="$TEST_ROOT/_settings_backup"
 mkdir -p "$BK"
 declare -A SAVED=()
@@ -191,6 +198,7 @@ while IFS= read -r f; do
 done < <(star_settings)
 rm -rf "$BK"
 log "    user STAR-CCM+ settings restored (${#SAVED[@]} file(s))"
+fi
 if [ "$RUN_SOLVER" -eq 1 ]; then
   invoke_star 09_SimKit_run "" ${COMMON[@]+"${COMMON[@]}"} -batch "run,$KIT/SimKit.java" -batch-report "$CASE_SIM"; RCS[run]=$RC
 fi

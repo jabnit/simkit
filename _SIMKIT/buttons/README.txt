@@ -8,7 +8,7 @@ play SimKit_InstallButtons.java again to take it off the toolbar.
   SimKit_Menu.java             the SimKit window (all tools)
   SimKit_SaveNewVersion.java   Save as new run (the next run of the project; starts the project the first time)
   SimKit_RunOnCluster.java     Run on cluster (saves, then submits with the team's command)
-  SimKit_StandardReports.java  Standard reports
+  SimKit_StandardReports.java  Reports (standard reports; reports per object)
   SimKit_MeshStudy.java        Mesh study
   SimKit_CaseTracker.java      Tracker
   SimKit_Calculators.java      Calculators

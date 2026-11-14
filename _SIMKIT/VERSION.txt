@@ -1,1 +1,1 @@
-SimKit 0.3 (2026-11-14) -- runs and projects: Save as new run, Run on cluster, Tracker (list and family tree), Standard reports, Mesh study, Calculators. Batch-validated on STAR-CCM+ 2606.0002 (21.04.009, Windows); GUI test, 2402 and Linux runs pending (TESTING.txt).
+SimKit 0.3 (2026-11-14) -- runs and projects: Save as new run, Run on cluster, Tracker (list and family tree), Reports (standard, per object), Mesh study, Calculators. Batch-validated on STAR-CCM+ 2606.0002 (21.04.009, Windows); GUI test, 2402 and Linux runs pending (TESTING.txt).

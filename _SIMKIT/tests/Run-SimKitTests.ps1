@@ -165,6 +165,7 @@ $rc["names"]    = Invoke-Star "07f_SimKit_names"         ($common + @("-batch", 
 $rc["presubmit"] = Invoke-Star "07g_SimKit_presubmit"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "presubmit"
 $rc["chttest"]  = Invoke-Star "07h_SimKit_chttest"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "chttest"
 $rc["cadtest"]  = Invoke-Star "07i_SimKit_cadtest"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "cadtest"
+$rc["objtest"]  = Invoke-Star "07j_SimKit_objtest"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "objtest"
 $rc["button"]   = Invoke-Star "08_button_Tracker"       ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_CaseTracker.java")), (& $q $caseSim))) ""
 
 # Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
@@ -184,6 +185,12 @@ function Log-Buttons([string]$when) {
     Log ("    {0}: SimKit toolbar {1}, {2} button link(s)" -f $when, $(if (Test-Path $tb) { "present" } else { "absent" }), $links.Count)
   }
 }
+# A STAR-CCM+ window that is open reads these settings: its buttons would point at the test kit or be gone while
+# the steps run. The steps are skipped then.
+if (Get-Process starccmw -ErrorAction SilentlyContinue) {
+  Log "    08b / 08c skipped: a STAR-CCM+ window is open (these steps write the user's toolbar settings)"
+  $rc["buttons"] = "skip"; $rc["buttonsrm"] = "skip"
+} else {
 $bk = Join-Path $TestRoot "_settings_backup"
 New-Item -ItemType Directory -Force $bk | Out-Null
 $saved = @{}
@@ -209,6 +216,7 @@ try {
   foreach ($f in Get-StarSettingsFiles) { if (-not $saved.ContainsKey($f.FullName)) { Log ("    new settings file left by the test (not removed): " + $f.FullName) } }
   Remove-Item $bk -Recurse -Force -ErrorAction SilentlyContinue
   Log ("    user STAR-CCM+ settings restored ({0} file(s))" -f $saved.Count)
+}
 }
 if ($RunSolver) {
   $rc["run"]    = Invoke-Star "09_SimKit_run" ($common + @("-batch", ("run," + (Join-Path $kit "SimKit.java")), "-batch-report", (& $q $caseSim))) ""

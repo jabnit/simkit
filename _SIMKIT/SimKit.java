@@ -100,8 +100,8 @@ public class SimKit extends StarMacro {
     TRACKER("Tracker", "Runs, status, comments", "Runs of the project: status, comments, based on, family tree"),
     NAMES("Names", "Prefixes, default names",
         "Type prefixes (IN_, OUT_, WALL_ ...) on boundaries and part surfaces, default names, prefix vs boundary type; renames on request"),
-    REPORTS("Standard reports", "Mass balance, p, T, y+ ...",
-        "Mass balance, pressures, temperatures, wall heat, y+, Courant: reports, monitors, plots (from IN_ / OUT_ / WALL_ names)"),
+    REPORTS("Reports", "Standard, per object",
+        "Standard reports: mass balance, pressures, temperatures, wall heat, y+, Courant: reports, monitors, plots (from IN_ / OUT_ / WALL_ names). Reports per object: chosen quantities and statistics on each boundary or region, named by a rule"),
     MESH("Mesh study", "Mesh levels", "Coarse / medium / fine levels as runs, for a mesh sensitivity check (GCI)"),
     CALC("Calculators", "y+, Re, time step, GCI ...", "Boundary values, y+ and prism layers, time step, dimensionless numbers, GCI");
 
@@ -140,6 +140,8 @@ public class SimKit extends StarMacro {
   Log log;
 
   boolean gui;
+
+  boolean reportsPerObj;   // Standard reports closed by its link Reports per object
 
   Runnable namesCad;   // opens 3D-CAD faces from the Names window (null: no 3D-CAD model)
 
@@ -209,6 +211,7 @@ public class SimKit extends StarMacro {
         case "chttest": testCht(); break;   // test: solid region + interface in memory (not saved): Names, reports, pre-submit
         case "cadnames": logCad(); break;   // the 3D-CAD bodies and their check, written to the log
         case "cadtest": testCad(); break;   // test: 3D-CAD faces on a model built in memory (not saved)
+        case "objtest": testObjReports(); break;   // test: Reports per object in memory (not saved)
         case "presubmit": for (String[] k : preSubmitChecks()) log.line("pre-submit " + k[0] + "  " + k[1]); break;
         case "tracker": toolTracker(); break;
         case "opensim": testOpenSim(); break;   // test: the tracker's Open in STAR-CCM+
@@ -4946,16 +4949,20 @@ public class SimKit extends StarMacro {
     boolean any = false;
     for (StdReport x : all) any |= x.why == null;
     if (!any) {
-      if (gui) Ui.sheet("Standard reports", "Nothing to add", Ui.muted("All present, or no IN_ / OUT_ / OPEN_ / WALL_ surfaces."),
-          Ui.primary("OK"), null);
       log.line("nothing to add.");
       for (StdReport x : all) log.line(String.format("  %-22s %s", x.def[0], x.why));
+      if (gui && Ui.sheet("Standard reports", "Nothing to add", Ui.muted("All present, or no IN_ / OUT_ / OPEN_ / WALL_ surfaces."),
+          Ui.primary("Reports per object\u2026"), null)) toolObjReports();
       return;
     }
     if (gui) {
       List<Object> every = new ArrayList<>();
       for (Region r : sim.getRegionManager().getRegions()) every.addAll(r.getBoundaryManager().getBoundaries());
-      if (!Ui.edt(() -> reportsWindow(all, every))) throw new Cancel(null);
+      reportsPerObj = false;
+      if (!Ui.edt(() -> reportsWindow(all, every))) {
+        if (reportsPerObj) { toolObjReports(); return; }
+        throw new Cancel(null);
+      }
     }
     Map<String, List<Object>> groups = new LinkedHashMap<>();
     Set<String> made = new LinkedHashSet<>(existing);
@@ -5342,12 +5349,655 @@ public class SimKit extends StarMacro {
     center.add(right, BorderLayout.EAST);
     JPanel body = new JPanel(new BorderLayout(0, 8));
     body.add(center, BorderLayout.CENTER);
-    body.add(Ui.muted("One monitor per report, one plot per group, in folders by purpose  ·  ● surfaces changed  ·  config/standard_reports.csv"),
-        BorderLayout.SOUTH);
+    final JButton perObj = Ui.link("Reports per object\u2026");
+    perObj.setToolTipText("Quantities x statistics x objects, one report each, named by a rule (closes this window)");
+    perObj.addActionListener(e -> { reportsPerObj = true; javax.swing.SwingUtilities.getWindowAncestor(perObj).dispose(); });
+    JPanel foot = new JPanel(new BorderLayout(10, 0));
+    foot.add(perObj, BorderLayout.WEST);
+    foot.add(Ui.muted("One monitor per report, one plot per group, in folders by purpose  ·  ● surfaces changed  ·  config/standard_reports.csv"),
+        BorderLayout.CENTER);
+    body.add(foot, BorderLayout.SOUTH);
     for (int i = 0; i < rows.size(); i++) {   // the first report that can be made, selected
       if (rows.get(i) instanceof StdReport && ((StdReport) rows.get(i)).why == null) { table.setRowSelectionInterval(i, i); break; }
     }
     return Ui.sheet("Standard reports", "", body, ok, null);
+  }
+
+  // =====================================================================================================
+  // Reports per object (quantity x statistic x object), names from a rule (config/report_names.csv)
+  // =====================================================================================================
+
+  /** config/report_names.csv: kind (pattern | quantity | statistic), key, code. pattern: the report name with {q}
+   *  (quantity code), {s} (statistic code), {o} (object name). quantity key: a field function name, or
+   *  "<name>:magnitude" for the magnitude of a vector. */
+  static final String[] OBJ_COLS = {"kind", "key", "code"};
+
+  static final String[][] OBJ_NAMES = {
+      {"pattern", "", "r_{q}_{s}_{o}"},
+      {"quantity", "Temperature", "T"}, {"quantity", "Pressure", "p"}, {"quantity", "TotalPressure", "p0"},
+      {"quantity", "Velocity:magnitude", "U"}, {"quantity", "WallYplus", "yplus"}, {"quantity", "WallShearStress:magnitude", "tauw"},
+      {"statistic", "maximum", "max"}, {"statistic", "minimum", "min"}, {"statistic", "area average", "aavg"},
+      {"statistic", "mass-flow average", "mfavg"}, {"statistic", "surface integral", "int"}, {"statistic", "volume average", "vavg"}};
+
+  static final String[] OBJ_STATS = {"maximum", "minimum", "area average", "mass-flow average", "surface integral", "volume average"};
+
+  /** Report class of a statistic. */
+  static String statClass(String stat) {
+    switch (stat) {
+      case "maximum": return "star.base.report.MaxReport";
+      case "minimum": return "star.base.report.MinReport";
+      case "area average": return "star.base.report.AreaAverageReport";
+      case "mass-flow average": return "star.flow.MassFlowAverageReport";
+      case "surface integral": return "star.base.report.SurfaceIntegralReport";
+      case "volume average": return "star.base.report.VolumeAverageReport";
+      default: return stat;
+    }
+  }
+
+  /** maximum and minimum: boundaries and regions; volume average: regions; the others: boundaries. */
+  static boolean statFits(String stat, boolean region) {
+    if (stat.equals("maximum") || stat.equals("minimum")) return true;
+    return stat.equals("volume average") == region;
+  }
+
+  /** The name rule: pattern and the codes of quantities (by key) and statistics. */
+  static final class ObjNames {
+    String pattern = "r_{q}_{s}_{o}";
+    final Map<String, String> q = new LinkedHashMap<>(), s = new LinkedHashMap<>();
+
+    String stat(String stat) { String c = s.get(stat); return c == null || c.isEmpty() ? objToken(stat) : c; }
+
+    String name(String qCode, String sCode, String obj) {
+      return pattern.replace("{q}", qCode).replace("{s}", sCode).replace("{o}", obj);
+    }
+  }
+
+  ObjNames objNames() {
+    ObjNames n = new ObjNames();
+    for (String[] d : OBJ_NAMES) if (d[0].equals("statistic")) n.s.put(d[1], d[2]);
+    boolean anyQ = false;
+    for (String[] r : config("report_names.csv", OBJ_COLS, OBJ_NAMES)) {
+      if (r[0] == null) continue;
+      String k = r[0].trim().toLowerCase(Locale.ROOT), key = r[1] == null ? "" : r[1].trim(), code = r[2] == null ? "" : r[2].trim();
+      if (k.equals("pattern") && code.contains("{o}")) n.pattern = code;
+      else if (k.equals("statistic") && !key.isEmpty() && !code.isEmpty()) n.s.put(key.toLowerCase(Locale.ROOT), code);
+      else if (k.equals("quantity") && !key.isEmpty()) { n.q.put(key, code.isEmpty() ? objToken(key) : code); anyQ = true; }
+    }
+    if (!anyQ) for (String[] d : OBJ_NAMES) if (d[0].equals("quantity")) n.q.put(d[1], d[2]);
+    return n;
+  }
+
+  /** An object name as a part of a report name: blanks, dots, slashes and colons become '-'. */
+  static String objToken(String s) {
+    return s.trim().replaceAll("[\\s./\\\\:]+", "-").replaceAll("^-+|-+$", "");
+  }
+
+  /** A quantity of the window: config key, code, label, field function (null offline) and its function name. */
+  static final class ObjQty {
+    String key, code, label, ffName;
+    Object ff;
+    boolean pick;
+  }
+
+  /** A boundary or a region the reports can be computed on. name: the part of the report name. */
+  static final class ObjTarget {
+    Object o;
+    String name, region = "", kind = "";   // kind: prefix (WALL ...), "region", or ""
+    boolean region() { return kind.equals("region"); }
+    boolean pick;
+  }
+
+  /** A line of the plan: a report to create, one that exists, or an existing report to rename. */
+  static final class ObjRow {
+    String name, action, note = "", cls, plotKey, plotTitle;   // action: create | exists | rename | n/a
+    Object ff, report;
+    List<Object> parts = new ArrayList<>();
+    boolean pick;
+  }
+
+  /** The reports of the simulation: their names, the definitions (class | field | objects), the renames proposed. */
+  static final class ObjState {
+    final Set<String> names = new HashSet<>();
+    final Map<String, String> sigs = new HashMap<>();
+    final List<ObjRow> renames = new ArrayList<>();
+  }
+
+  static String objSig(String cls, String ffName, List<String> parts) {
+    List<String> p = new ArrayList<>(parts);
+    Collections.sort(p);
+    return cls + "|" + ffName + "|" + String.join(",", p);
+  }
+
+  static String ffName(Object ff) {
+    try { return ff == null ? "" : ((FieldFunction) ff).getFunctionName(); } catch (Throwable t) { return nm(ff); }
+  }
+
+  /** Field function of a quantity key ("Temperature", "Velocity:magnitude"), or null. */
+  Object objField(String key) {
+    int c = key.indexOf(':');
+    Object f = fieldFunction(c < 0 ? key : key.substring(0, c));
+    if (f == null || c < 0) return f;
+    if (key.substring(c + 1).trim().equalsIgnoreCase("magnitude")) {
+      try { return ((FieldFunction) f).getMagnitudeFunction(); } catch (Throwable t) { return null; }
+    }
+    return null;
+  }
+
+  /** The quantities of the name rule that this simulation has. */
+  List<ObjQty> objQuantities(ObjNames n) {
+    List<ObjQty> out = new ArrayList<>();
+    for (Map.Entry<String, String> e : n.q.entrySet()) {
+      Object f = objField(e.getKey());
+      if (f == null) continue;
+      ObjQty q = new ObjQty();
+      q.key = e.getKey();
+      q.code = e.getValue();
+      q.ff = f;
+      q.ffName = ffName(f);
+      q.label = nm(f);
+      out.add(q);
+    }
+    return out;
+  }
+
+  /** The other scalar field functions (Add a field...), code = function name. */
+  List<ObjQty> objOtherFields(List<ObjQty> have) {
+    Set<String> skip = new HashSet<>();
+    for (ObjQty q : have) skip.add(q.ffName);
+    List<ObjQty> out = new ArrayList<>();
+    try {
+      for (FieldFunction f : sim.getFieldFunctionManager().getObjects()) {
+        String fn = f.getFunctionName();
+        if (skip.contains(fn) || f.getTypeAsEnum() != FieldFunctionTypeOption.Type.SCALAR) continue;
+        ObjQty q = new ObjQty();
+        q.key = fn;
+        q.code = objToken(fn);
+        q.ff = f;
+        q.ffName = fn;
+        q.label = nm(f);
+        out.add(q);
+      }
+    } catch (Throwable t) { log.na("field functions", t); }
+    out.sort((a, b) -> a.label.compareToIgnoreCase(b.label));
+    return out;
+  }
+
+  /** Boundaries (no interface boundaries made by STAR-CCM+) and regions. A boundary name found in several regions
+   *  gets _<region>. */
+  List<ObjTarget> objTargets() {
+    List<ObjTarget> out = new ArrayList<>();
+    Map<String, Integer> seen = new HashMap<>();
+    for (Region r : sim.getRegionManager().getRegions()) {
+      for (Boundary b : r.getBoundaryManager().getBoundaries()) {
+        if (isInterfaceBoundary(b)) continue;
+        ObjTarget x = new ObjTarget();
+        x.o = b;
+        String n = nm(b);
+        x.name = objToken(n.substring(n.lastIndexOf('.') + 1));
+        x.region = nm(r);
+        String t = bcToken(n);
+        x.kind = t == null ? "" : t;
+        seen.merge(x.name, 1, Integer::sum);
+        out.add(x);
+      }
+    }
+    for (ObjTarget x : out) if (seen.get(x.name) > 1) x.name = x.name + "_" + objToken(x.region);
+    for (Region r : sim.getRegionManager().getRegions()) {
+      ObjTarget x = new ObjTarget();
+      x.o = r;
+      x.name = objToken(nm(r));
+      x.region = nm(r);
+      x.kind = "region";
+      out.add(x);
+    }
+    return out;
+  }
+
+  /** The reports of the simulation (names, definitions) and the renames to the rule: reports of the six statistics on
+   *  one object whose name differs from the rule; standard reports, and names the rule would give twice, are left. */
+  ObjState objState(ObjNames n, List<ObjQty> qs, List<ObjTarget> objs) {
+    ObjState st = new ObjState();
+    Map<Object, String> tn = new HashMap<>();
+    for (ObjTarget x : objs) tn.put(x.o, x.name);
+    Map<String, String> codes = new HashMap<>();
+    for (ObjQty q : qs) codes.put(q.ffName, q.code);
+    Set<String> std = new HashSet<>();
+    for (String[] d : STANDARD_REPORTS) std.add(d[0]);
+    try { for (String[] d : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) if (d[0] != null) std.add(d[0].trim()); }
+    catch (Throwable t) { /* built-in list only */ }
+    List<Object> reports = new ArrayList<>(sim.getReportManager().getObjects());
+    for (Object r : reports) st.names.add(nm(r));
+    Set<String> taken = new HashSet<>(st.names);
+    for (Object r : reports) {
+      String cls = r.getClass().getName(), stat = null;
+      for (String s : OBJ_STATS) if (statClass(s).equals(cls)) stat = s;
+      if (stat == null) continue;
+      Object ff = Reflect.tryCall(r, "getFieldFunction");
+      if (ff == null) continue;
+      String fn = ffName(ff);
+      List<Object> parts = partsOf(r);
+      List<String> pn = new ArrayList<>();
+      for (Object p : parts) pn.add(tn.containsKey(p) ? tn.get(p) : nm(p));
+      st.sigs.put(objSig(cls, fn, pn), nm(r));
+      if (parts.size() != 1 || !tn.containsKey(parts.get(0))) continue;
+      String old = nm(r);
+      String code = codes.containsKey(fn) ? codes.get(fn) : objToken(fn);
+      String nn = n.name(code, n.stat(stat), pn.get(0));
+      if (old.equals(nn) || std.contains(old) || taken.contains(nn)) continue;
+      taken.add(nn);
+      ObjRow x = new ObjRow();
+      x.action = "rename";
+      x.name = nn;
+      x.note = old;
+      x.report = r;
+      st.renames.add(x);
+    }
+    return st;
+  }
+
+  /** The reports of the ticked quantities x statistics x objects (one per object, or one over all of them). */
+  static List<ObjRow> objPlan(ObjNames n, List<ObjQty> qs, List<String> stats, List<ObjTarget> objs, boolean combine, String label,
+      String plotMode, ObjState st) {
+    List<ObjRow> out = new ArrayList<>();
+    List<ObjTarget> picked = new ArrayList<>();
+    for (ObjTarget x : objs) if (x.pick) picked.add(x);
+    if (picked.isEmpty()) return out;
+    List<List<ObjTarget>> sets = new ArrayList<>();
+    if (combine) sets.add(picked);
+    else for (ObjTarget x : picked) sets.add(Collections.singletonList(x));
+    Set<String> seen = new HashSet<>();
+    for (ObjQty q : qs) {
+      if (!q.pick) continue;
+      for (String s : stats) {
+        for (List<ObjTarget> set : sets) {
+          boolean reg = false, bnd = false;
+          List<String> pn = new ArrayList<>();
+          ObjRow r = new ObjRow();
+          for (ObjTarget x : set) { reg |= x.region(); bnd |= !x.region(); pn.add(x.name); r.parts.add(x.o); }
+          String obj = combine ? objToken(label == null || label.trim().isEmpty() ? "group" : label) : set.get(0).name;
+          String sc = n.stat(s);
+          r.name = n.name(q.code, sc, obj);
+          r.cls = statClass(s);
+          r.ff = q.ff;
+          if (plotMode.equals("quantity")) { r.plotKey = q.code + "_" + sc; r.plotTitle = "pl_" + q.code + "_" + sc; }
+          else if (plotMode.equals("object")) { r.plotKey = obj; r.plotTitle = "pl_" + obj; }
+          String sig = objSig(r.cls, q.ffName, pn);
+          if (reg && bnd) { r.action = "n/a"; r.note = "boundaries and regions in one report"; }
+          else if (!statFits(s, reg)) { r.action = "n/a"; r.note = s + (reg ? ": boundaries only" : ": regions only"); }
+          else if (st.names.contains(r.name) || seen.contains(r.name)) { r.action = "exists"; r.note = "name in use"; }
+          else if (st.sigs.containsKey(sig)) { r.action = "exists"; r.note = "same report: " + st.sigs.get(sig); }
+          else { r.action = "create"; r.pick = true; }
+          seen.add(r.name);
+          out.add(r);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Expressions that use ${old}: expression reports and field functions; the monitor "<old> Monitor". */
+  void objRenameRefs(String old, String nn) {
+    String a = "${" + old + "}", b = "${" + nn + "}";
+    List<Object> withDef = new ArrayList<>(sim.getReportManager().getObjects());
+    try { withDef.addAll(sim.getFieldFunctionManager().getObjects()); } catch (Throwable t) { /* reports only */ }
+    for (Object o : withDef) {
+      Object d = Reflect.tryCall(o, "getDefinition");
+      if (d instanceof String && ((String) d).contains(a)) {
+        try {
+          Reflect.invoke(o, "setDefinition", ((String) d).replace(a, b));
+          log.line("  " + nm(o) + ": " + a + " -> " + b);
+        } catch (Throwable t) { log.na("expression of " + nm(o), t); }
+      }
+    }
+    for (Object m : sim.getMonitorManager().getObjects()) {
+      if (nm(m).equals(old + " Monitor")) ((NamedObject) m).setPresentationName(nn + " Monitor");
+    }
+  }
+
+  /** Creates and renames the ticked rows; one monitor per new report, plots by plot key; all in folders "Per object". */
+  String objApply(List<ObjRow> rows, String plotMode) {
+    int made = 0, ren = 0, bad = 0;
+    Map<String, List<Object>> groups = new LinkedHashMap<>();
+    Map<String, String> titles = new HashMap<>();
+    List<Object> reports = new ArrayList<>();
+    for (ObjRow r : rows) {
+      if (!r.pick) continue;
+      if (r.action.equals("rename")) {
+        try {
+          String old = nm(r.report);
+          ((NamedObject) r.report).setPresentationName(r.name);
+          log.line("  renamed " + old + " -> " + r.name);
+          objRenameRefs(old, r.name);
+          ren++;
+        } catch (Throwable t) { log.na("rename of " + r.note, t); bad++; }
+      } else if (r.action.equals("create")) {
+        try {
+          Object rep = Reflect.invoke(sim.getReportManager(), "createReport", Reflect.cls(r.cls));
+          ((NamedObject) rep).setPresentationName(r.name);
+          Reflect.invoke(rep, "setFieldFunction", r.ff);
+          Reflect.invoke(Reflect.invoke(rep, "getParts"), "setObjects", new NeoObjectVector(r.parts.toArray()));
+          log.line("  created " + r.name);
+          reports.add(rep);
+          String k = r.plotKey == null ? "" : r.plotKey;
+          groups.computeIfAbsent(k, x -> new ArrayList<>()).add(rep);
+          if (r.plotTitle != null) titles.put(k, r.plotTitle);
+          made++;
+        } catch (Throwable t) { log.na("report " + r.name, t); bad++; }
+      }
+    }
+    List<Object> monitors = new ArrayList<>(), plots = new ArrayList<>();
+    for (Map.Entry<String, List<Object>> g : groups.entrySet()) {
+      Object[] mp = monitorsAndPlot(g.getValue(), plotMode.equals("none") ? null : titles.get(g.getKey()));
+      monitors.addAll((List<?>) mp[0]);
+      if (mp[1] != null) plots.add(mp[1]);
+    }
+    if (!reports.isEmpty()) {
+      toFolder(sim.getReportManager(), "Per object", reports);
+      toFolder(sim.getMonitorManager(), "Per object", monitors);
+      if (!plots.isEmpty()) toFolder(sim.getPlotManager(), "Per object", plots);
+    }
+    String s = (made > 0 ? made + (made == 1 ? " report" : " reports") + " with monitors" + (plots.isEmpty() ? "" : " and " + plots.size()
+        + (plots.size() == 1 ? " plot" : " plots")) + " created" : "") + (made > 0 && ren > 0 ? ", " : "")
+        + (ren > 0 ? ren + (ren == 1 ? " report" : " reports") + " renamed" : "");
+    if (s.isEmpty()) s = "Nothing done";
+    return s + "." + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
+  }
+
+  /** Reports per object (from Standard reports): the window; what is done is written to the log. */
+  void toolObjReports() {
+    loadPrefixes();
+    final ObjNames n = objNames();
+    final List<ObjQty> qs = objQuantities(n);
+    final List<ObjQty> others = objOtherFields(qs);
+    final List<ObjTarget> objs = objTargets();
+    final ObjState[] st = {objState(n, qs, objs)};
+    final List<String> done = new ArrayList<>();
+    Ui.edt(() -> objWindow(n, qs, others, objs, st, (rows, mode) -> { String m = objApply(rows, mode); done.add(m); return m; },
+        () -> objState(n, qs, objs)));
+    result(done.isEmpty() ? "Reports per object: nothing done" : "Reports per object: " + String.join(" ", done));
+  }
+
+  /** The Reports per object window (Swing thread). Left: quantities, statistics, plots; middle: the objects; bottom:
+   *  the reports it gives (create / exists / rename). The button acts in a worker thread; the window stays open. */
+  Boolean objWindow(final ObjNames names, final List<ObjQty> qs, final List<ObjQty> others, final List<ObjTarget> objs, final ObjState[] st,
+      final java.util.function.BiFunction<List<ObjRow>, String, String> act, final java.util.function.Supplier<ObjState> reload) {
+    final String[] plotKeys = {"quantity", "object", "none"};
+    final javax.swing.JComboBox<String> plots = new javax.swing.JComboBox<>(new String[] {"One per quantity and statistic", "One per object", "None (monitors only)"});
+    final javax.swing.JCheckBox combine = new javax.swing.JCheckBox("One report over all ticked objects");
+    combine.setToolTipText("Off: one report per object");
+    final JTextField label = Ui.hintField("", "name, e.g. walls", 10);
+    label.setEnabled(false);
+    final JButton go = Ui.primary("Create");
+    go.putClientProperty("simkit.stay", Boolean.TRUE);
+    final JLabel status = Ui.muted(" "), doneLbl = new JLabel(" ");
+    final java.awt.Color amber = new java.awt.Color(0x8A, 0x5A, 0x00), green = new java.awt.Color(0x2E, 0x6B, 0x2E), grey = new java.awt.Color(0xA8, 0xB0, 0xBA);
+    doneLbl.setForeground(green);
+    final List<String> stats = new ArrayList<>();
+    final List<ObjRow> rows = new ArrayList<>();
+    final Map<String, Boolean> picks = new HashMap<>();   // ticks the user changed on create rows
+    final int[] skipped = {0};
+    final Runnable[] refresh = {null};
+
+    // ----- the reports it gives -----
+    final javax.swing.table.AbstractTableModel pm = new javax.swing.table.AbstractTableModel() {
+      private static final long serialVersionUID = 1L;
+      @Override public int getRowCount() { return rows.size(); }
+      @Override public int getColumnCount() { return 3; }
+      @Override public String getColumnName(int c) { return new String[] {"", "Report", "Action"}[c]; }
+      @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
+      @Override public boolean isCellEditable(int r, int c) { return c == 0 && !rows.get(r).action.equals("exists"); }
+      @Override public Object getValueAt(int r, int c) {
+        ObjRow x = rows.get(r);
+        if (c == 0) return x.pick;
+        if (c == 1) return x.name;
+        if (x.action.equals("create")) return "new" + (x.plotTitle == null ? "" : ", plot " + x.plotTitle);
+        if (x.action.equals("rename")) return "rename, now " + x.note;
+        return "exists: " + x.note;
+      }
+      @Override public void setValueAt(Object v, int r, int c) {
+        ObjRow x = rows.get(r);
+        x.pick = Boolean.TRUE.equals(v);
+        if (x.action.equals("create")) picks.put(x.name, x.pick);
+        refresh[0].run();
+      }
+    };
+    final JTable pt = new JTable(pm);
+    pt.setRowHeight(22);
+    pt.setShowVerticalLines(false);
+    pt.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
+    pt.setFillsViewportHeight(true);
+    pt.getColumnModel().getColumn(0).setMaxWidth(30);
+    pt.getColumnModel().getColumn(1).setPreferredWidth(330);
+    pt.getColumnModel().getColumn(2).setPreferredWidth(330);
+    pt.setDefaultRenderer(String.class, new javax.swing.table.DefaultTableCellRenderer() {
+      private static final long serialVersionUID = 1L;
+      @Override public java.awt.Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean f, int r, int c) {
+        super.getTableCellRendererComponent(tb, v, false, false, r, c);
+        ObjRow x = rows.get(r);
+        setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 6));
+        setBackground(java.awt.Color.WHITE);
+        boolean ex = x.action.equals("exists");
+        setForeground(ex ? grey : c == 2 && x.action.equals("rename") ? amber : c == 2 ? Ui.MUTED : x.pick ? java.awt.Color.BLACK : grey);
+        return this;
+      }
+    });
+
+    // ----- the objects -----
+    final List<ObjTarget> shown = new ArrayList<>(objs);
+    final JTextField search = Ui.hintField("", "Search objects, e.g. WALL_", 18);
+    final javax.swing.table.AbstractTableModel om = new javax.swing.table.AbstractTableModel() {
+      private static final long serialVersionUID = 1L;
+      @Override public int getRowCount() { return shown.size(); }
+      @Override public int getColumnCount() { return 4; }
+      @Override public String getColumnName(int c) { return new String[] {"", "Object", "Region", "Type"}[c]; }
+      @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
+      @Override public boolean isCellEditable(int r, int c) { return c == 0; }
+      @Override public Object getValueAt(int r, int c) {
+        ObjTarget x = shown.get(r);
+        return c == 0 ? x.pick : c == 1 ? x.name : c == 2 ? (x.region() ? "" : x.region) : x.kind.isEmpty() ? "-" : x.kind;
+      }
+      @Override public void setValueAt(Object v, int r, int c) {
+        shown.get(r).pick = Boolean.TRUE.equals(v);
+        refresh[0].run();
+      }
+    };
+    final JTable ot = new JTable(om);
+    ot.setRowHeight(22);
+    ot.setShowVerticalLines(false);
+    ot.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
+    ot.setFillsViewportHeight(true);
+    ot.getColumnModel().getColumn(0).setMaxWidth(30);
+    ot.getColumnModel().getColumn(1).setPreferredWidth(230);
+    ot.getColumnModel().getColumn(2).setPreferredWidth(110);
+    ot.getColumnModel().getColumn(3).setPreferredWidth(60);
+    final Runnable filter = () -> {
+      String q = search.getText().trim().toLowerCase(Locale.ROOT);
+      shown.clear();
+      for (ObjTarget x : objs) {
+        if (q.isEmpty() || x.name.toLowerCase(Locale.ROOT).contains(q) || x.region.toLowerCase(Locale.ROOT).contains(q)
+            || x.kind.toLowerCase(Locale.ROOT).equals(q.replace("_", ""))) shown.add(x);
+      }
+      om.fireTableDataChanged();
+    };
+    search.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { filter.run(); }
+      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { filter.run(); }
+      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { filter.run(); }
+    });
+    final JButton tickShown = Ui.link("Tick shown"), untickShown = Ui.link("Untick shown");
+    tickShown.addActionListener(e -> { for (ObjTarget x : shown) x.pick = true; om.fireTableDataChanged(); refresh[0].run(); });
+    untickShown.addActionListener(e -> { for (ObjTarget x : shown) x.pick = false; om.fireTableDataChanged(); refresh[0].run(); });
+
+    // ----- quantities, statistics, plots -----
+    final JPanel qPanel = new JPanel();
+    qPanel.setLayout(new javax.swing.BoxLayout(qPanel, javax.swing.BoxLayout.Y_AXIS));
+    final java.util.function.Consumer<ObjQty> addQ = q -> {
+      final javax.swing.JCheckBox b = new javax.swing.JCheckBox("<html>" + Html.esc(q.label) + " <font color='#8A94A0'>" + Html.esc(q.code) + "</font></html>", q.pick);
+      b.setToolTipText("Field function " + q.ffName + ", code " + q.code + " in the report name");
+      b.setAlignmentX(0f);
+      b.addActionListener(e -> { q.pick = b.isSelected(); refresh[0].run(); });
+      qPanel.add(b);
+    };
+    for (ObjQty q : qs) addQ.accept(q);
+    List<String> otherNames = new ArrayList<>();
+    otherNames.add("Add a field…");
+    for (ObjQty q : others) otherNames.add(q.label);
+    final javax.swing.JComboBox<String> other = new javax.swing.JComboBox<>(otherNames.toArray(new String[0]));
+    other.setToolTipText("Other scalar field functions; the code in the name is the function name");
+    other.addActionListener(e -> {
+      int i = other.getSelectedIndex();
+      if (i <= 0) return;
+      ObjQty q = others.get(i - 1);
+      if (!qs.contains(q)) { q.pick = true; qs.add(q); addQ.accept(q); qPanel.revalidate(); qPanel.repaint(); }
+      other.setSelectedIndex(0);
+      refresh[0].run();
+    });
+    JPanel left = new JPanel() {   // fixed width, the height it needs
+      private static final long serialVersionUID = 1L;
+      @Override public java.awt.Dimension getPreferredSize() { return new java.awt.Dimension(240, super.getPreferredSize().height); }
+    };
+    left.setLayout(new javax.swing.BoxLayout(left, javax.swing.BoxLayout.Y_AXIS));
+    final java.util.function.Function<String, JLabel> head = s -> {
+      JLabel l = new JLabel(s);
+      l.setFont(l.getFont().deriveFont(Font.BOLD));
+      l.setAlignmentX(0f);
+      return l;
+    };
+    left.add(head.apply("Quantities"));
+    qPanel.setAlignmentX(0f);
+    left.add(qPanel);
+    other.setAlignmentX(0f);
+    other.setMaximumSize(new java.awt.Dimension(230, other.getPreferredSize().height));
+    left.add(other);
+    left.add(javax.swing.Box.createVerticalStrut(12));
+    left.add(head.apply("Statistics"));
+    for (final String s : OBJ_STATS) {
+      final javax.swing.JCheckBox b = new javax.swing.JCheckBox("<html>" + Html.esc(s) + " <font color='#8A94A0'>" + Html.esc(names.stat(s)) + "</font></html>");
+      b.setToolTipText(s.equals("volume average") ? "Regions only" : s.equals("maximum") || s.equals("minimum") ? "Boundaries and regions" : "Boundaries only");
+      b.setAlignmentX(0f);
+      b.addActionListener(e -> {
+        if (b.isSelected()) { stats.add(s); stats.sort(java.util.Comparator.comparingInt(x -> Arrays.asList(OBJ_STATS).indexOf(x))); }
+        else stats.remove(s);
+        refresh[0].run();
+      });
+      left.add(b);
+    }
+    left.add(javax.swing.Box.createVerticalStrut(12));
+    left.add(head.apply("Plots"));
+    plots.setAlignmentX(0f);
+    plots.setMaximumSize(new java.awt.Dimension(230, plots.getPreferredSize().height));
+    left.add(plots);
+    left.add(javax.swing.Box.createVerticalStrut(12));
+    combine.setAlignmentX(0f);
+    left.add(combine);
+    JPanel lrow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+    lrow.add(Ui.muted("Name:"));
+    lrow.add(label);
+    lrow.setAlignmentX(0f);
+    lrow.setMaximumSize(new java.awt.Dimension(230, lrow.getPreferredSize().height));
+    left.add(lrow);
+    left.add(javax.swing.Box.createVerticalGlue());
+    plots.addActionListener(e -> refresh[0].run());
+    combine.addActionListener(e -> { label.setEnabled(combine.isSelected()); refresh[0].run(); });
+    label.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { refresh[0].run(); }
+      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { refresh[0].run(); }
+      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { refresh[0].run(); }
+    });
+
+    refresh[0] = () -> {
+      rows.clear();
+      skipped[0] = 0;
+      int exist = 0;
+      Set<String> why = new LinkedHashSet<>();
+      for (ObjRow r : objPlan(names, qs, stats, objs, combine.isSelected(), label.getText(), plotKeys[plots.getSelectedIndex()], st[0])) {
+        if (r.action.equals("n/a")) { skipped[0]++; why.add(r.note); continue; }
+        if (r.action.equals("create")) r.pick = !Boolean.FALSE.equals(picks.get(r.name));
+        else exist++;
+        rows.add(r);
+      }
+      rows.addAll(st[0].renames);
+      pm.fireTableDataChanged();
+      int c = 0, rn = 0;
+      for (ObjRow r : rows) {
+        if (!r.pick) continue;
+        if (r.action.equals("create")) c++;
+        else if (r.action.equals("rename")) rn++;
+      }
+      go.setText(c > 0 && rn > 0 ? "Create " + c + ", rename " + rn : c > 0 ? "Create " + c + (c == 1 ? " report" : " reports")
+          : rn > 0 ? "Rename " + rn + (rn == 1 ? " report" : " reports") : "Create");
+      go.setEnabled(c + rn > 0);
+      int nq = 0, no = 0;
+      for (ObjQty q : qs) if (q.pick) nq++;
+      for (ObjTarget x : objs) if (x.pick) no++;
+      List<String> s = new ArrayList<>();
+      if (nq == 0 || stats.isEmpty() || no == 0) s.add("Tick quantities, statistics and objects.");
+      else s.add(nq + " quantities x " + stats.size() + " statistics x " + (combine.isSelected() ? "1 group of " + no : String.valueOf(no)) + " objects");
+      if (exist > 0) s.add(exist + " exist");
+      if (skipped[0] > 0) s.add(skipped[0] + " skipped (" + String.join("; ", why) + ")");
+      if (!st[0].renames.isEmpty()) s.add(st[0].renames.size() + (st[0].renames.size() == 1 ? " existing report" : " existing reports") + " can take the rule name (tick to rename)");
+      status.setText(String.join("  ·  ", s));
+    };
+    go.addActionListener(e -> {
+      final List<ObjRow> todo = new ArrayList<>();
+      for (ObjRow r : rows) if (r.pick && !r.action.equals("exists")) todo.add(r);
+      if (todo.isEmpty()) return;
+      final String mode = plotKeys[plots.getSelectedIndex()];
+      go.setEnabled(false);
+      doneLbl.setForeground(Ui.MUTED);
+      doneLbl.setText("Working…");
+      Thread w = new Thread(() -> {
+        String m;
+        ObjState ns;
+        try { m = act.apply(todo, mode); } catch (Throwable t) { m = "Failed: " + reason(t); }
+        try { ns = reload.get(); } catch (Throwable t) { ns = st[0]; }
+        final String msg = m;
+        final ObjState fs = ns;
+        javax.swing.SwingUtilities.invokeLater(() -> {
+          st[0] = fs;
+          picks.clear();
+          doneLbl.setForeground(msg.startsWith("Failed") ? Ui.RED : green);
+          doneLbl.setText(msg);
+          refresh[0].run();
+        });
+      }, "SimKit reports per object");
+      w.setDaemon(true);
+      w.start();
+    });
+
+    JPanel searchRow = new JPanel(new BorderLayout(6, 0));
+    searchRow.add(search, BorderLayout.CENTER);
+    JPanel links = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));
+    links.add(tickShown);
+    links.add(untickShown);
+    searchRow.add(links, BorderLayout.EAST);
+    JScrollPane os = new JScrollPane(ot);
+    os.getViewport().setBackground(java.awt.Color.WHITE);
+    os.setPreferredSize(new java.awt.Dimension(460, 300));
+    JPanel mid = new JPanel(new BorderLayout(0, 6));
+    mid.add(head.apply("Objects"), BorderLayout.NORTH);
+    JPanel midBody = new JPanel(new BorderLayout(0, 4));
+    midBody.add(searchRow, BorderLayout.NORTH);
+    midBody.add(os, BorderLayout.CENTER);
+    mid.add(midBody, BorderLayout.CENTER);
+    JPanel top = new JPanel(new BorderLayout(16, 0));
+    top.add(left, BorderLayout.WEST);
+    top.add(mid, BorderLayout.CENTER);
+    JScrollPane ps = new JScrollPane(pt);
+    ps.getViewport().setBackground(java.awt.Color.WHITE);
+    ps.setPreferredSize(new java.awt.Dimension(700, 190));
+    JPanel bottom = new JPanel(new BorderLayout(0, 4));
+    bottom.add(head.apply("Reports"), BorderLayout.NORTH);
+    bottom.add(ps, BorderLayout.CENTER);
+    JPanel lines = new JPanel(new java.awt.GridLayout(2, 1, 0, 2));
+    lines.add(status);
+    lines.add(doneLbl);
+    bottom.add(lines, BorderLayout.SOUTH);
+    JPanel body = new JPanel(new BorderLayout(0, 12));
+    body.add(top, BorderLayout.CENTER);
+    body.add(bottom, BorderLayout.SOUTH);
+    refresh[0].run();
+    return Ui.sheet("Reports per object", "Names: " + names.pattern + " (config/report_names.csv). Existing reports are not replaced.", body, go, null);
   }
 
   /** Colours of a surface type tag: IN green, OUT / OPEN amber, WALL grey, SYM / IF blue. */
@@ -5386,11 +6036,11 @@ public class SimKit extends StarMacro {
         }
       }
       if (loose.isEmpty()) return;
-      boolean exists = false;
-      for (Object g0 : gm.getObjects()) exists |= folder.equals(nm(g0));
+      star.base.neo.ClientServerObjectGroup have = null;
+      for (Object g0 : gm.getObjects()) if (folder.equals(nm(g0)) && g0 instanceof star.base.neo.ClientServerObjectGroup) have = (star.base.neo.ClientServerObjectGroup) g0;
       String how;
-      if (exists) {   // the folder is there already: add to it (no "Standard reports 2")
-        for (star.base.neo.ClientServerObject o : loose) Reflect.invoke(manager, "addToGroup", folder, o);
+      if (have != null) {   // the folder is there already: add to it (no "Standard reports 2")
+        have.addObjects(loose);
         how = "added";
       } else {
         gm.groupObjects(folder, loose);
@@ -6115,6 +6765,90 @@ public class SimKit extends StarMacro {
       }
     } catch (Throwable t) { log.na("cad: parts", t); }
     log.line("cad: done (the simulation is not saved)");
+  }
+
+  /** Batch test of Reports per object, in memory (the sim is not saved): plan and create T / p x maximum, area average,
+   *  volume average x the WALL_ boundaries and the first region (plots per quantity), the same plan again (must create
+   *  nothing), one report over all walls, then a report made by hand with a default name and an expression that uses
+   *  it: the rename to the rule and the expression after it; a name with '-' in ${...}. */
+  void testObjReports() {
+    loadPrefixes();
+    ObjNames n = objNames();
+    List<ObjQty> qs = objQuantities(n);
+    List<ObjTarget> objs = objTargets();
+    List<String> ql = new ArrayList<>();
+    for (ObjQty q : qs) ql.add(q.label + "=" + q.code + " (" + q.ffName + ")");
+    log.line("obj: pattern " + n.pattern + "; quantities " + ql);
+    List<String> ol = new ArrayList<>();
+    for (ObjTarget x : objs) ol.add(x.name + "[" + x.kind + "]");
+    log.line("obj: objects " + ol);
+    log.line("obj: other scalar fields " + objOtherFields(qs).size());
+    for (ObjQty q : qs) q.pick = q.key.equals("Temperature") || q.key.equals("Pressure");
+    boolean firstRegion = true;
+    ObjTarget wall = null, other = null;
+    for (ObjTarget x : objs) {
+      if (x.kind.equals("WALL")) { x.pick = true; if (wall == null) wall = x; }
+      else if (x.region() && firstRegion) { x.pick = true; firstRegion = false; }
+      else if (!x.region() && other == null) other = x;
+    }
+    List<String> stats = Arrays.asList("maximum", "area average", "volume average");
+    ObjState st = objState(n, qs, objs);
+    List<ObjRow> plan = objPlan(n, qs, stats, objs, false, "", "quantity", st);
+    int na = 0;
+    for (ObjRow r : plan) {
+      if (r.action.equals("n/a")) { na++; continue; }
+      log.line("obj: plan " + r.action + " " + r.name + (r.note.isEmpty() ? "" : " (" + r.note + ")") + (r.plotTitle == null ? "" : " plot " + r.plotTitle));
+    }
+    log.line("obj: plan " + plan.size() + " rows, " + na + " n/a");
+    log.line("obj: apply -> " + objApply(plan, "quantity"));
+    int again = 0;
+    for (ObjRow r : objPlan(n, qs, stats, objs, false, "", "quantity", objState(n, qs, objs))) if (r.action.equals("create")) again++;
+    log.line("obj: the same plan again: " + again + " to create (expected 0)");
+    List<ObjRow> comb = objPlan(n, qs, Collections.singletonList("maximum"), objs.stream().filter(x -> x.kind.equals("WALL")).collect(java.util.stream.Collectors.toList()),
+        true, "walls", "object", objState(n, qs, objs));
+    for (ObjRow r : comb) log.line("obj: combined " + r.action + " " + r.name + " on " + r.parts.size() + " object(s)" + (r.note.isEmpty() ? "" : " (" + r.note + ")"));
+    log.line("obj: apply combined -> " + objApply(comb, "object"));
+    try {
+      ObjTarget t = other != null ? other : wall;
+      MinReport hand = sim.getReportManager().createReport(MinReport.class);
+      hand.setFieldFunction((FieldFunction) objField("Pressure"));
+      hand.getParts().setObjects((NamedObject) t.o);
+      String handName = nm(hand);
+      hand.createMonitor();
+      ExpressionReport ex = sim.getReportManager().createReport(ExpressionReport.class);
+      ex.setPresentationName("x_obj_expr");
+      ex.setDefinition("${" + handName + "} * 2");
+      log.line("obj: report by hand '" + handName + "' (minimum of Pressure on " + t.name + "), expression " + ex.getDefinition());
+      ObjState s2 = objState(n, qs, objs);
+      for (ObjRow r : s2.renames) {
+        log.line("obj: rename proposed " + r.note + " -> " + r.name);
+        r.pick = true;
+      }
+      log.line("obj: apply renames -> " + objApply(s2.renames, "none"));
+      List<String> mons = new ArrayList<>();
+      for (Object m : sim.getMonitorManager().getObjects()) if (nm(m).contains("_min_")) mons.add(nm(m));
+      log.line("obj: after rename: expression " + ex.getDefinition() + "; monitors " + mons);
+      ExpressionReport dash = sim.getReportManager().createReport(ExpressionReport.class);
+      dash.setPresentationName("r_test_dash-name");
+      dash.setDefinition("3");
+      ExpressionReport ed = sim.getReportManager().createReport(ExpressionReport.class);
+      ed.setPresentationName("x_obj_dash");
+      ed.setDefinition("${r_test_dash-name} + 0");
+      String v1, v2;
+      try { v1 = String.valueOf(dash.getReportMonitorValue()); } catch (Throwable e) { v1 = "n/a (" + reason(e) + ")"; }
+      try { v2 = String.valueOf(ed.getReportMonitorValue()); } catch (Throwable e) { v2 = "n/a (" + reason(e) + ")"; }
+      log.line("obj: name with '-' in ${...}: report " + v1 + ", expression ${r_test_dash-name} + 0 = " + v2 + " (expected 3)");
+    } catch (Throwable t) { log.na("obj: rename test", t); }
+    List<String> folders = new ArrayList<>();
+    for (Object m : new Object[] {sim.getReportManager(), sim.getMonitorManager(), sim.getPlotManager()}) {
+      try {
+        for (Object g : ((star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(m, "getGroupsManager")).getObjects()) folders.add(nm(m) + "/" + nm(g));
+      } catch (Throwable t) { /* no folders */ }
+    }
+    List<String> pl = new ArrayList<>();
+    for (Object p : sim.getPlotManager().getObjects()) if (nm(p).startsWith("pl_")) pl.add(nm(p));
+    log.line("obj: folders " + folders + "; plots " + pl);
+    log.line("obj: done (the simulation is not saved)");
   }
 
   // =====================================================================================================

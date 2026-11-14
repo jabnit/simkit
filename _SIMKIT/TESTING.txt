@@ -10,6 +10,7 @@ What is in the kit
   lib/generic/SimKitCalc.java calculators (opened by the Calculators button); data in lib/generic/data/*.csv
   config/cluster.csv          bsub command and options for Run on cluster
   config/standard_reports.csv the reports, monitors and plots of Standard reports (optional criterion and mean)
+  config/report_names.csv     the name rule of Reports per object (pattern, quantity and statistic codes)
   config/naming.csv           type prefixes (IN, OUT, OPEN, WALL, SYM, IF) and the boundary types that fit each
   config/comment_template.txt optional: the comment template of the tracker (absent = built-in)
   buttons/                    one macro per toolbar button; see buttons/README.txt
@@ -533,3 +534,19 @@ C. RESULTS SO FAR
   default; the touching blocks merge coplanar faces (one name each); with the flag off the warning shows; geometry part
   surfaces = the face names (WALL_burner_draft-tube, swirl, WALL_burner_electrode-1_rest). Offline: window rendered,
   NamesTickTest ALL OK. Not run: the window in the STAR-CCM+ GUI, a real CAD import.
+
+  Reports per object (2026-11-14). Standard reports > Reports per object...: quantities x statistics x objects
+  (boundaries, regions), one report each or one over all ticked objects, names r_<q>_<s>_<o> from
+  config/report_names.csv, a monitor each, plots per quantity and statistic / per object / none, folders "Per object";
+  rows new / exists (name in use, or same class + field + objects) / rename (reports of the six statistics on one
+  object, standard reports left; ${old} in expressions and "<old> Monitor" follow). Batch action objtest (step 07j).
+  SKT84: all 17 exit codes 0. 07j: 15 reports + monitors + 6 plots (T, p x max, aavg, vavg x 3 WALL_ + region;
+  8 n/a skipped); the same plan again: 0 to create; one report over the walls: r_T_max_walls found as the same report
+  as r_T_wall_max, r_p_max_walls created; renames Maximum 1 / Minimum 1 / r_T_out_avg to the rule, ${Minimum 1} in an
+  expression and "Minimum 1 Monitor" followed; ${r_test_dash-name} + 0 = 3 (a name with '-' works in expressions).
+  Fixed in toFolder (all tools): adding to an existing folder made a second one ("Per object 2"); now added to it.
+  Button renamed Reports (file SimKit_StandardReports.java kept, so installed buttons still work; the tooltip
+  changes when SimKit_InstallButtons.java is played again). Test runners: 08b / 08c skipped while a STAR-CCM+ window
+  is open (they write the user's toolbar settings; Windows: process starccmw; Linux: starccm+ without -batch/-server,
+  not run on Linux).
+  Not run: the window in the STAR-CCM+ GUI.
