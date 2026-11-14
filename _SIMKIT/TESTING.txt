@@ -550,3 +550,10 @@ C. RESULTS SO FAR
   is open (they write the user's toolbar settings; Windows: process starccmw; Linux: starccm+ without -batch/-server,
   not run on Linux).
   Not run: the window in the STAR-CCM+ GUI.
+
+  Reports window (2026-11-14). One window, tabs In this simulation (all reports: type, quantity, objects, folder;
+  rename to the rule moved here) / Standard (status per report: present, add, update, or why not; no more "Nothing
+  to add" dead end) / Per object (chips: quantities, statistics, report on each object or all together, object
+  groups; result list). One blue button acting on the open tab; the window stays open. Batch path of Standard
+  reports unchanged (stdPlan + stdApply). SKT86: exit codes 0 (08b/08c skipped: STAR-CCM+ window open); 07j: window
+  data read (40 reports, Standard 15 present, 40 rows). Offline: the three tabs rendered (RepShot). Not run: GUI.
