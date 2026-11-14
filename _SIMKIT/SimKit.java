@@ -5461,7 +5461,7 @@ public class SimKit extends StarMacro {
 
   static final String[][] OBJ_NAMES = {
       {"pattern", "", "r_{q}_{s}_{o}"},
-      {"quantity", "Temperature", "T"}, {"quantity", "Pressure", "p"}, {"quantity", "Velocity:magnitude", "U"},
+      {"quantity", "Temperature", "T"}, {"quantity", "Pressure", "p"}, {"quantity", "Velocity:magnitude", "U"}, {"quantity", "BoundaryHeatFlux", "q"},
       {"statistic", "maximum", "max"}, {"statistic", "minimum", "min"}, {"statistic", "area average", "aavg"},
       {"statistic", "mass-flow average", "mfavg"}, {"statistic", "surface integral", "int"}, {"statistic", "volume average", "vavg"}};
 
