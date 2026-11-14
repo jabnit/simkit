@@ -103,7 +103,7 @@ public class SimKit extends StarMacro {
     REPORTS("Standard reports", "Mass balance, p, T, y+ ...",
         "Mass balance, pressures, temperatures, wall heat, y+, Courant: reports, monitors, plots (from IN_ / OUT_ / WALL_ names)"),
     MESH("Mesh study", "Mesh levels", "Coarse / medium / fine levels as runs, for a mesh sensitivity check (GCI)"),
-    CALC("Calculators", "y+, Re, time step, GCI ...", "Boundary values, y+ and prism layers, time step, dimensionless numbers, materials, GCI");
+    CALC("Calculators", "y+, Re, time step, GCI ...", "Boundary values, y+ and prism layers, time step, dimensionless numbers, GCI");
 
     final String title, sub, help;
 

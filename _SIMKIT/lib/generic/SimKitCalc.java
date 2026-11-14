@@ -1,4 +1,4 @@
-// Engineering calculators: inlet and outlet, orifice, turbulence inlet, materials (library and MatML), y+ and prism layers, time step, averaging window, dimensionless numbers, pipe pressure drop, GCI, convection, thermocouple, stoichiometry, units
+// Engineering calculators: inlet and outlet, orifice, turbulence inlet, y+ and prism layers, time step, averaging window, dimensionless numbers, pipe pressure drop, GCI, convection, thermocouple, stoichiometry, units
 //
 // SimKitCalc.java -- SimKit 0.2 (2026-11-11) -- UNTESTED IN STAR-CCM+ (written for Simcenter STAR-CCM+ 2402 / 19.02).
 // Spec: SIMKIT_SPEC_v02.md section B. See _SIMKIT\TESTING.txt.
@@ -18,9 +18,7 @@
 // Version 0.2 (2026-11-11). The physics (class Core) and the data loading (class Library) have NO STAR-CCM+
 // imports and were unit-tested with a plain JDK 11 compiler; the STAR-CCM+ calls are UNTESTED in STAR.
 //
-// Data (read at start; "Choose data folder..." on the fluid tab reloads them; MatML *.xml material files are read
-//   from the folders listed in config/material_folders.csv and from the user's own folder, "MatML folder..."):
-//   <root>/lib/generic/data/fluids.csv, materials.csv, emissivity.csv. <root> = the SimKit root, found from this
+// Data (read at start): <root>/lib/generic/data/fluids.csv. <root> = the SimKit root, found from this
 //   file's own location (two folders up); no variable or path to set.
 //
 // Threading: the window is NON-modal and floats next to STAR-CCM+; the macro ends as soon as it is shown, so the
@@ -76,7 +74,6 @@ import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
-import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -124,7 +121,6 @@ public class SimKitCalc extends StarMacro {
   String lastLogged = "";
   final List<JComboBox<String>> mixedFluidCombos = new ArrayList<>();   // ENTERED + fluids
   final List<JComboBox<String>> fluidCombos = new ArrayList<>();        // fluids only
-  final List<JComboBox<String>> materialCombos = new ArrayList<>();
 
   @Override
   public void execute() {
@@ -139,7 +135,6 @@ public class SimKitCalc extends StarMacro {
       lib = new Library();
       lib.errors.add("library not loaded: " + reason(e));
     }
-    loadMatMLFolders();
     detectCase();
     log.line(VERSION + " | kit " + Fs.kit() + " | " + (batchReason == null ? "interactive" : "batch: " + batchReason)
         + " | classes preloaded: " + preloaded);
@@ -1216,7 +1211,6 @@ public class SimKitCalc extends StarMacro {
   void refreshLibraryCombos() {
     for (JComboBox<String> cb : mixedFluidCombos) refill(cb, fluidNames(true));
     for (JComboBox<String> cb : fluidCombos) refill(cb, fluidNames(false));
-    for (JComboBox<String> cb : materialCombos) refill(cb, materialNames());
   }
 
   static void refill(JComboBox<String> cb, String[] items) {
@@ -1233,7 +1227,6 @@ public class SimKitCalc extends StarMacro {
   void buildTabs() {
     buildInlet();
     buildTurbulence();
-    buildMaterials();
     buildWall();
     buildTimeStep();
     buildDimensionless();
@@ -1317,92 +1310,6 @@ public class SimKitCalc extends StarMacro {
     a.opt("P", "Wetted perimeter", "P", "m", "", "");
     a.calc = fm -> Core.turbulenceInlet(fm.req("U"), fm.v("I"), fm.v("l"), fm.v("VR"), fm.req("nu"), fm.v("Dh"),
         fm.v("A"), fm.v("P")).main("k");
-  }
-
-  static final String FLUID_TAG = "  (fluid)", SOLID_TAG = "  (solid)";
-
-  /** Library fluids and solids, MatML materials included. */
-  String[] materialNames() {
-    List<String> n = new ArrayList<>();
-    for (String f : lib.fluids.keySet()) n.add(f + FLUID_TAG);
-    for (String m : lib.materials.keySet()) n.add(m + SOLID_TAG);
-    return n.toArray(new String[0]);
-  }
-
-  static String baseName(String s) {
-    if (s.endsWith(FLUID_TAG)) return s.substring(0, s.length() - FLUID_TAG.length());
-    if (s.endsWith(SOLID_TAG)) return s.substring(0, s.length() - SOLID_TAG.length());
-    return s;
-  }
-
-  /** Team MatML folders (config/material_folders.csv, one folder per row) and the user's own folder (remembered). */
-  List<Path> matmlFolders() {
-    List<Path> out = new ArrayList<>();
-    try {
-      Path cfg = Fs.inKit("config/material_folders.csv");
-      if (Files.isRegularFile(cfg)) {
-        List<String[]> rows = Csv.parse(Fs.read(cfg));
-        for (int i = 1; i < rows.size(); i++) {
-          String f = rows.get(i).length > 0 ? rows.get(i)[0].trim() : "";
-          if (!f.isEmpty() && !f.startsWith("#")) out.add(Paths.get(f));
-        }
-      }
-    } catch (Throwable t) { /* no team folder */ }
-    try {
-      String mine = java.util.prefs.Preferences.userRoot().node("simkit").get("matmlFolder", null);
-      if (mine != null && !mine.isEmpty() && !out.contains(Paths.get(mine))) out.add(Paths.get(mine));
-    } catch (Throwable t) { /* no own folder */ }
-    return out;
-  }
-
-  void loadMatMLFolders() {
-    lib.matml.clear();
-    for (Path f : matmlFolders()) {
-      List<String> rep = new ArrayList<>();
-      MatML.loadFolder(lib, f, rep);
-      lib.matml.addAll(rep);
-    }
-  }
-
-  void buildMaterials() {
-    Form a = new Form(page("Set-up", "Materials", "Properties of a library or MatML material at a temperature."), "Materials");
-    JComboBox<String> cb = a.c("name", "Material", materialNames());
-    materialCombos.add(cb);
-    a.in("T", "Temperature", "T", "K", "300");
-    a.in("p", "Pressure (ideal-gas density)", "p", "Pa", "101325");
-    a.hidden = fm -> fm.s("name").endsWith(FLUID_TAG) ? keys() : keys("p");
-    a.extras.add(Styled.link("MatML folder...", e -> {
-      JFileChooser fc = new JFileChooser(matmlFolders().isEmpty() ? null : matmlFolders().get(matmlFolders().size() - 1).toFile());
-      fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-      fc.setDialogTitle("Folder of MatML files (*.xml)");
-      if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) return;
-      try { java.util.prefs.Preferences.userRoot().node("simkit").put("matmlFolder", fc.getSelectedFile().toString()); }
-      catch (Throwable x) { /* not remembered */ }
-      List<String> rep = new ArrayList<>();
-      int n = MatML.loadFolder(lib, fc.getSelectedFile().toPath(), rep);
-      lib.matml.addAll(rep);
-      refreshLibraryCombos();
-      a.tab.out.setText(n + " material(s) read from " + fc.getSelectedFile() + "\n\n" + String.join("\n", rep));
-    }));
-    a.extras.add(Styled.link("Files read", e -> a.tab.out.setText(lib.summary() + "\n\n" + (lib.matml.isEmpty()
-        ? "MatML: no folder (MatML folder..., or the team folder in config/material_folders.csv)."
-        : String.join("\n", lib.matml)))));
-    a.extras.add(Styled.link("Data folder...", e -> {
-      JFileChooser fc = new JFileChooser(lib.dir == null ? null : lib.dir.toFile());
-      fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-      fc.setDialogTitle("Folder of fluids.csv, materials.csv, emissivity.csv");
-      if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) return;
-      lib = Library.load(fc.getSelectedFile().toPath());
-      loadMatMLFolders();
-      refreshLibraryCombos();
-      a.tab.out.setText(lib.summary());
-    }));
-    a.calc = fm -> {
-      String sel = fm.s("name"), n = baseName(sel);
-      if (sel.isEmpty()) throw new IllegalArgumentException("Material: none in the library");
-      Core.R r = sel.endsWith(FLUID_TAG) ? lib.fluidReport(n, fm.req("T"), fm.v("p")) : lib.materialReport(n, fm.req("T"));
-      return r.main("rho");
-    };
   }
 
   void buildWall() {
@@ -2966,7 +2873,7 @@ public class SimKitCalc extends StarMacro {
   }
 
   // =====================================================================================================
-  // Library: config\fluids.csv, materials.csv, emissivity.csv (no STAR types)
+  // Library: data/fluids.csv (no STAR types)
   // =====================================================================================================
 
   static final class Library {
@@ -2987,23 +2894,15 @@ public class SimKitCalc extends StarMacro {
       }
     }
 
-    static final class Emis {
-      String surface, source, note;
-      double typ, min, max;
-    }
-
     final Map<String, Map<String, Prop>> fluids = new LinkedHashMap<>();
-    final Map<String, Map<String, Prop>> materials = new LinkedHashMap<>();
-    final List<Emis> emissivity = new ArrayList<>();
     final List<String> errors = new ArrayList<>();
     final List<String> loaded = new ArrayList<>();
-    final List<String> matml = new ArrayList<>();   // what was read from MatML folders (one line per file)
     Path dir;
 
     static Library load(Path configDir) {
       Library l = new Library();
       l.dir = configDir;
-      String[] files = {"fluids.csv", "materials.csv", "emissivity.csv"};
+      String[] files = {"fluids.csv"};
       for (String fn : files) {
         Path p = configDir.resolve(fn);
         String text;
@@ -3014,24 +2913,18 @@ public class SimKitCalc extends StarMacro {
           continue;
         }
         l.loaded.add(fn);
-        if (fn.equals("emissivity.csv")) l.emissivity.addAll(parseEmissivity(text, fn, l.errors));
-        else {
-          Map<String, Map<String, Prop>> target = fn.equals("fluids.csv") ? l.fluids : l.materials;
-          for (Prop pr : parseProps(text, fn, l.errors)) target.computeIfAbsent(pr.owner, k -> new LinkedHashMap<>()).put(pr.prop, pr);
-        }
+        for (Prop pr : parseProps(text, fn, l.errors)) l.fluids.computeIfAbsent(pr.owner, k -> new LinkedHashMap<>()).put(pr.prop, pr);
       }
       return l;
     }
 
     String summary() {
-      StringBuilder sb = new StringBuilder("library " + dir + ": " + fluids.size() + " fluids, " + materials.size()
-          + " materials, " + emissivity.size() + " emissivity rows (" + String.join(", ", loaded) + ")");
+      StringBuilder sb = new StringBuilder("library " + dir + ": " + fluids.size() + " fluids (" + String.join(", ", loaded) + ")");
       for (String e : errors) sb.append("\n  library WARNING: ").append(e);
-      if (!matml.isEmpty()) sb.append("\n  ").append(matml.get(0));
       return sb.toString();
     }
 
-    /** Parses fluids.csv / materials.csv; every unparseable row is reported in 'errors' and skipped. */
+    /** Parses fluids.csv; every unparseable row is reported in 'errors' and skipped. */
     static List<Prop> parseProps(String text, String file, List<String> errors) {
       List<Prop> out = new ArrayList<>();
       List<String[]> rows = Csv.parse(text);
@@ -3205,62 +3098,6 @@ public class SimKitCalc extends StarMacro {
       l.addAll(u);
     }
 
-    Core.R fluidReport(String name, double tK, double pPa) {
-      Map<String, Prop> m = fluids.get(name);
-      if (m == null) throw new IllegalArgumentException("choose a fluid (fluids.csv loaded: " + loaded.contains("fluids.csv") + ")");
-      Core.R r = new Core.R("Fluid " + name + " at T = " + Core.g(tK) + " K" + (Double.isNaN(pPa) ? "" : ", p = " + Core.g(pPa) + " Pa"));
-      Map<String, Double> v = new LinkedHashMap<>();
-      for (Prop p : m.values()) {
-        List<String> w = new ArrayList<>();
-        try {
-          double x = eval(p, tK, pPa, w);
-          v.put(p.prop, x);
-          r.put(p.prop, x, siUnit(p.unit), propName(p.prop));
-          r.lines.add("Source:   " + p.prop + " = " + describe(p) + " [" + p.unit + "], valid " + p.range() + "; " + p.source
-              + (p.note.isEmpty() ? "" : " -- " + p.note));
-        } catch (IllegalArgumentException e) {
-          w.add(p.prop + ": " + e.getMessage());
-        }
-        for (String s : w) r.warn(s);
-      }
-      Double rho = v.get("rho"), mu = v.get("mu"), nu = v.get("nu"), k = v.get("k"), cp = v.get("cp");
-      if (mu == null && nu != null && rho != null) { mu = nu * rho; r.put("mu", mu, "Pa-s", "Dynamic viscosity"); }
-      if (nu == null && mu != null && rho != null) r.put("nu", mu / rho, "m^2/s", "Kinematic viscosity");
-      if (k != null && rho != null && cp != null) r.put("alpha", k / (rho * cp), "m^2/s", "Thermal diffusivity");
-      if (mu != null && k != null && cp != null) r.put("Pr", mu * cp / k, "-", "Prandtl number");
-      r.valid("each row is valid in its T range (shown); outside it the value is CLAMPED and a warning is given");
-      return r;
-    }
-
-    Core.R materialReport(String name, double tK) {
-      Map<String, Prop> m = materials.get(name);
-      if (m == null) throw new IllegalArgumentException("choose a material (materials.csv loaded: " + loaded.contains("materials.csv") + ")");
-      Core.R r = new Core.R("Material " + name + " at T = " + Core.g(tK) + " K (" + Core.g(tK - 273.15) + " degC)");
-      Map<String, Double> v = new LinkedHashMap<>();
-      for (Prop p : m.values()) {
-        List<String> w = new ArrayList<>();
-        double x = eval(p, tK, Double.NaN, w);
-        v.put(p.prop, x);
-        r.put(p.prop, x, siUnit(p.unit), propName(p.prop));
-        r.lines.add("Source:   " + p.prop + " = " + describe(p) + (p.celsius ? " (T in degC)" : "") + " [" + p.unit + "], valid "
-            + p.range() + "; " + p.source + (p.note.isEmpty() ? "" : " -- " + p.note));
-        for (String s : w) r.warn(s);
-      }
-      Double rho = v.get("rho"), cp = v.get("cp");
-      for (String kk : new String[] {"k", "k_x", "k_y", "k_z", "k_zz", "k_xy"}) {
-        Double k = v.get(kk);
-        if (k != null && rho != null && cp != null) r.put("alpha_" + kk, k / (rho * cp), "m^2/s", "Thermal diffusivity" + (kk.equals("k") ? "" : ", " + kk));
-      }
-      r.valid("each row is valid in its T range (shown); outside it the value is CLAMPED and a warning is given");
-      r.lines.add("");
-      r.lines.add("Emissivity (data/emissivity.csv): typical [min-max] -- source -- note");
-      for (Emis e : emissivity) {
-        r.lines.add(String.format(Locale.ROOT, "  %-36s %.2f [%.2f-%.2f] -- %s%s", e.surface, e.typ, e.min, e.max, e.source,
-            e.note.isEmpty() ? "" : " -- " + e.note));
-      }
-      return r;
-    }
-
     /** Name of a property key as shown in the outputs. */
     static String propName(String key) {
       switch (key) {
@@ -3292,305 +3129,6 @@ public class SimKitCalc extends StarMacro {
       }
     }
 
-    static List<Emis> parseEmissivity(String text, String file, List<String> errors) {
-      List<Emis> out = new ArrayList<>();
-      List<String[]> rows = Csv.parse(text);
-      if (rows.isEmpty()) { errors.add(file + ": empty"); return out; }
-      String[] h = rows.get(0);
-      String[] need = {"surface", "typical", "min", "max", "source", "note"};
-      Map<String, Integer> col = new LinkedHashMap<>();
-      for (int i = 0; i < h.length; i++) col.put(h[i].trim(), i);
-      for (String c : need) if (!col.containsKey(c)) { errors.add(file + ": header lacks column '" + c + "'"); return out; }
-      for (int i = 1; i < rows.size(); i++) {
-        String[] r = rows.get(i);
-        try {
-          if (r.length != h.length) throw new IllegalArgumentException(r.length + " columns, header has " + h.length);
-          Emis e = new Emis();
-          e.surface = get(r, col, "surface");
-          e.typ = optNum(get(r, col, "typical"), "typical");
-          e.min = optNum(get(r, col, "min"), "min");
-          e.max = optNum(get(r, col, "max"), "max");
-          e.source = get(r, col, "source");
-          e.note = get(r, col, "note");
-          if (e.surface.isEmpty() || Double.isNaN(e.typ) || Double.isNaN(e.min) || Double.isNaN(e.max)) {
-            throw new IllegalArgumentException("surface, typical, min and max are required");
-          }
-          if (!(0 <= e.min && e.min <= e.typ && e.typ <= e.max && e.max <= 1)) {
-            throw new IllegalArgumentException("need 0 <= min <= typical <= max <= 1");
-          }
-          out.add(e);
-        } catch (RuntimeException ex) {
-          errors.add(file + " row " + (i + 1) + ": " + ex.getMessage());
-        }
-      }
-      return out;
-    }
-  }
-
-  // =====================================================================================================
-  // MatML (*.xml) material files -> library materials (no STAR types; unit-testable with a plain JDK)
-  // =====================================================================================================
-
-  /** Reads MatML 3.x files: plain MatML (values in PropertyData/Data) and ANSYS Engineering Data exports (values in
-   *  ParameterValue marked "Dependent", temperature as the "Independent" parameter). Known properties are mapped to
-   *  rho, cp, k (k_x, k_y, k_z if orthotropic) and eps with SI units; temperatures in C/F become K; any other numeric
-   *  property is kept under its own name and unit. A temperature series becomes an interpolated table. */
-  static final class MatML {
-    /** Loads every *.xml below 'folder' (2 levels) into lib.materials; one report line per file in 'report'. */
-    static int loadFolder(Library lib, Path folder, List<String> report) {
-      int n = 0;
-      if (folder == null || !Files.isDirectory(folder)) {
-        report.add("MatML folder not found: " + folder);
-        return 0;
-      }
-      List<Path> files = new ArrayList<>();
-      try (java.util.stream.Stream<Path> w = Files.walk(folder, 3)) {
-        w.filter(p -> Files.isRegularFile(p) && p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".xml"))
-            .sorted().forEach(files::add);
-      } catch (IOException e) {
-        report.add("MatML folder unreadable: " + folder + " (" + e.getMessage() + ")");
-        return 0;
-      }
-      for (Path f : files) {
-        try {
-          int k = loadFile(lib, f, report);
-          n += k;
-        } catch (Throwable t) {
-          report.add(f.getFileName() + ": not read (" + t.getClass().getSimpleName() + ": " + t.getMessage() + ")");
-        }
-      }
-      report.add(0, "MatML folder " + folder + ": " + files.size() + " file(s), " + n + " material(s)");
-      return n;
-    }
-
-    static int loadFile(Library lib, Path f, List<String> report) throws Exception {
-      javax.xml.parsers.DocumentBuilderFactory dbf = javax.xml.parsers.DocumentBuilderFactory.newInstance();
-      dbf.setNamespaceAware(true);
-      try { dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true); } catch (Exception e) { /* parser default */ }
-      dbf.setXIncludeAware(false);
-      dbf.setExpandEntityReferences(false);
-      org.w3c.dom.Document doc = dbf.newDocumentBuilder().parse(f.toFile());
-      Map<String, String[]> props = details(doc, "PropertyDetails"), params = details(doc, "ParameterDetails");
-      int n = 0;
-      for (org.w3c.dom.Element mat : elements(doc.getDocumentElement(), "Material")) {
-        org.w3c.dom.Element bulk = first(mat, "BulkDetails");
-        if (bulk == null) continue;
-        String name = text(first(bulk, "Name"));
-        if (name.isEmpty()) name = f.getFileName().toString().replaceFirst("(?i)\\.xml$", "");
-        String key = name;
-        if (lib.materials.containsKey(key) || lib.fluids.containsKey(key)) key = name + " (" + f.getFileName() + ")";
-        Map<String, Library.Prop> m = new LinkedHashMap<>();
-        List<String> got = new ArrayList<>(), skipped = new ArrayList<>();
-        for (org.w3c.dom.Element pd : children(bulk, "PropertyData")) {
-          String[] pdet = props.getOrDefault(pd.getAttribute("property"), new String[] {pd.getAttribute("property"), ""});
-          double[] temps = null;
-          String tUnit = "";
-          List<Object[]> series = new ArrayList<>();   // {name, unit, double[] values}
-          for (org.w3c.dom.Element pv : children(pd, "ParameterValue")) {
-            String[] det = params.getOrDefault(pv.getAttribute("parameter"), new String[] {pv.getAttribute("parameter"), ""});
-            double[] vals = numbers(text(first(pv, "Data")));
-            if (vals == null) continue;
-            // ANSYS writes one flag per point: "Dependent,Dependent,Dependent"
-            String vt = qualifier(pv, "Variable Type").split(",")[0].trim();
-            if (det[0].toLowerCase(Locale.ROOT).contains("temperature") && !vt.equalsIgnoreCase("Dependent")) {
-              temps = vals;
-              tUnit = det[1];
-            } else if (vt.isEmpty() || vt.equalsIgnoreCase("Dependent")) {
-              series.add(new Object[] {det[0], det[1], vals});
-            }
-          }
-          if (temps != null) {   // ANSYS writes a dummy temperature (7.9e-31) when a property does not depend on T
-            boolean dummy = true;
-            for (double t : temps) dummy &= Math.abs(t) < 1e-20;
-            if (dummy) temps = null;
-          }
-          if (series.isEmpty()) {
-            double[] vals = numbers(text(first(pd, "Data")));
-            if (vals != null) series.add(new Object[] {pdet[0], pdet[1], vals});
-          }
-          if (series.isEmpty()) { skipped.add(pdet[0]); continue; }
-          for (Object[] sr : series) {
-            String pname = (String) sr[0], unit = (String) sr[1];
-            double[] vals = (double[]) sr[2];
-            String k = keyFor(pname.isEmpty() ? pdet[0] : pname, pdet[0]);
-            double scale = scaleToSI(k, unit);
-            Library.Prop p = new Library.Prop();
-            p.owner = key;
-            p.prop = k;
-            p.unit = siUnitOf(k, unit);
-            p.source = "MatML " + f.getFileName() + " (" + pdet[0] + ")";
-            p.note = "";
-            p.tUnit = "K";
-            double[] tk = temps == null ? null : toKelvin(temps, tUnit);
-            boolean table = tk != null && tk.length == vals.length && vals.length > 1 && tk[0] > 1;
-            if (table) {
-              double[][] tab = sortByT(tk, vals, scale);
-              p.model = "table";
-              p.tab = tab;
-              p.tMin = tab[0][0];
-              p.tMax = tab[0][tab[0].length - 1];
-              StringBuilder ct = new StringBuilder();
-              for (int i = 0; i < tab[0].length; i++) ct.append(i == 0 ? "" : ";").append(Core.g(tab[0][i])).append(':').append(Core.g(tab[1][i]));
-              p.coeffText = ct.toString();
-            } else {
-              p.model = "const";
-              p.c = new double[] {vals[0] * scale};
-              p.coeffText = Core.g(p.c[0]);
-              if (tk != null && tk.length == 1 && tk[0] > 1) p.note = "given at " + Core.g(tk[0]) + " K";
-            }
-            m.put(k, p);
-            got.add(k + (table ? "(T)" : ""));
-          }
-        }
-        if (m.isEmpty()) {
-          report.add(f.getFileName() + ": material '" + name + "' has no numeric property");
-          continue;
-        }
-        if (m.containsKey("rho") && (m.containsKey("mu") || m.containsKey("nu"))) lib.fluids.put(key, m);   // a viscosity: a fluid
-        else lib.materials.put(key, m);
-        n++;
-        report.add(f.getFileName() + ": " + key + " -> " + String.join(", ", got)
-            + (skipped.isEmpty() ? "" : " ; not numeric: " + String.join(", ", skipped)));
-      }
-      if (n == 0) report.add(f.getFileName() + ": no MatML material found");
-      return n;
-    }
-
-    /** SimKit key of a property: rho, cp, k, k_x/k_y/k_z, eps; otherwise the name itself (letters/digits/_). */
-    static String keyFor(String name, String propertyName) {
-      String s = (name + " " + propertyName).toLowerCase(Locale.ROOT);
-      if (s.contains("density")) return "rho";
-      if (s.contains("specific heat")) return "cp";
-      if (s.contains("conductivity")) {
-        String n = name.toLowerCase(Locale.ROOT);
-        if (n.matches(".*\\bx\\b.*direction.*|.*\\bx direction.*|.*\\bk_?x\\b.*")) return "k_x";
-        if (n.matches(".*\\by\\b.*direction.*|.*\\by direction.*|.*\\bk_?y\\b.*")) return "k_y";
-        if (n.matches(".*\\bz\\b.*direction.*|.*\\bz direction.*|.*\\bk_?z\\b.*")) return "k_z";
-        return "k";
-      }
-      if (s.contains("emissivity")) return "eps";
-      if (s.contains("viscosity")) return s.contains("kinematic") ? "nu" : "mu";
-      String k = name.replaceAll("[^A-Za-z0-9]+", "_").replaceAll("^_|_$", "");
-      return k.isEmpty() ? "property" : k;
-    }
-
-    static String norm(String unit) { return unit.replace(" ", "").replace("^", "").toLowerCase(Locale.ROOT); }
-
-    /** Factor to SI for the common MatML unit spellings ("kg m^-3", "g cm^-3", "J kg^-1 C^-1", "W m^-1 C^-1"...). */
-    static double scaleToSI(String key, String unit) {
-      String u = norm(unit);
-      switch (key) {
-        case "rho": return u.startsWith("gcm-3") || u.equals("g/cm3") ? 1000 : u.startsWith("tonnemm-3") ? 1e12 : 1;
-        case "cp": return u.startsWith("jg-1") || u.startsWith("j/g") ? 1000 : u.startsWith("mjtonne-1") ? 1 : 1;
-        case "k": case "k_x": case "k_y": case "k_z": return u.startsWith("wmm-1") ? 1000 : 1;
-        case "mu": return u.startsWith("mpa") || u.equals("cp") || u.startsWith("centipoise") ? 1e-3 : 1;
-        default: return 1;
-      }
-    }
-
-    static String siUnitOf(String key, String unit) {
-      switch (key) {
-        case "rho": return "kg/m3";
-        case "cp": return "J/kg.K";
-        case "k": case "k_x": case "k_y": case "k_z": return "W/m.K";
-        case "eps": return "-";
-        case "mu": return "Pa.s";
-        case "nu": return "m2/s";
-        default: return unit.isEmpty() ? "-" : unit;
-      }
-    }
-
-    static double[] toKelvin(double[] t, String unit) {
-      String u = norm(unit);
-      double[] k = new double[t.length];
-      for (int i = 0; i < t.length; i++) {
-        k[i] = u.equals("c") || u.contains("degc") || u.contains("celsius") ? t[i] + 273.15
-            : u.equals("f") || u.contains("degf") || u.contains("fahrenheit") ? (t[i] - 32) * 5 / 9 + 273.15 : t[i];
-      }
-      return k;
-    }
-
-    static double[][] sortByT(double[] t, double[] v, double scale) {
-      Integer[] idx = new Integer[t.length];
-      for (int i = 0; i < idx.length; i++) idx[i] = i;
-      Arrays.sort(idx, (a, b) -> Double.compare(t[a], t[b]));
-      double[][] out = new double[2][t.length];
-      for (int i = 0; i < idx.length; i++) {
-        out[0][i] = t[idx[i]];
-        out[1][i] = v[idx[i]] * scale;
-      }
-      return out;
-    }
-
-    /** id -> {name, units} from Metadata/PropertyDetails or ParameterDetails. */
-    static Map<String, String[]> details(org.w3c.dom.Document doc, String tag) {
-      Map<String, String[]> m = new LinkedHashMap<>();
-      for (org.w3c.dom.Element d : elements(doc.getDocumentElement(), tag)) {
-        m.put(d.getAttribute("id"), new String[] {text(first(d, "Name")), units(d)});
-      }
-      return m;
-    }
-
-    /** Units of a details element: Units/@name, else "kg m^-3" built from Units/Unit[@power]/Name; Unitless -> "". */
-    static String units(org.w3c.dom.Element d) {
-      org.w3c.dom.Element u = first(d, "Units");
-      if (u == null) return "";
-      if (!u.getAttribute("name").isEmpty()) return u.getAttribute("name");
-      List<String> parts = new ArrayList<>();
-      for (org.w3c.dom.Element one : children(u, "Unit")) {
-        String pw = one.getAttribute("power");
-        parts.add(text(first(one, "Name")) + (pw.isEmpty() || pw.equals("1") ? "" : "^" + pw));
-      }
-      return String.join(" ", parts);
-    }
-
-    static String qualifier(org.w3c.dom.Element e, String name) {
-      for (org.w3c.dom.Element q : children(e, "Qualifier")) if (name.equalsIgnoreCase(q.getAttribute("name"))) return text(q);
-      return "";
-    }
-
-    /** "7850, 7840" -> numbers; null if any item is not a number (e.g. "-", "Interpolation"). */
-    static double[] numbers(String s) {
-      if (s == null || s.trim().isEmpty()) return null;
-      String[] parts = s.trim().split("\\s*[,;]\\s*");
-      double[] out = new double[parts.length];
-      for (int i = 0; i < parts.length; i++) {
-        try { out[i] = Double.parseDouble(parts[i].trim()); } catch (NumberFormatException e) { return null; }
-      }
-      return out;
-    }
-
-    static String text(org.w3c.dom.Element e) { return e == null ? "" : e.getTextContent().trim(); }
-
-    static String local(org.w3c.dom.Node n) { return n.getLocalName() != null ? n.getLocalName() : n.getNodeName(); }
-
-    static org.w3c.dom.Element first(org.w3c.dom.Element parent, String name) {
-      if (parent == null) return null;
-      for (org.w3c.dom.Node n = parent.getFirstChild(); n != null; n = n.getNextSibling()) {
-        if (n instanceof org.w3c.dom.Element && local(n).equals(name)) return (org.w3c.dom.Element) n;
-      }
-      return null;
-    }
-
-    static List<org.w3c.dom.Element> children(org.w3c.dom.Element parent, String name) {
-      List<org.w3c.dom.Element> out = new ArrayList<>();
-      for (org.w3c.dom.Node n = parent.getFirstChild(); n != null; n = n.getNextSibling()) {
-        if (n instanceof org.w3c.dom.Element && local(n).equals(name)) out.add((org.w3c.dom.Element) n);
-      }
-      return out;
-    }
-
-    /** All descendants with this local name (any namespace). */
-    static List<org.w3c.dom.Element> elements(org.w3c.dom.Element root, String name) {
-      List<org.w3c.dom.Element> out = new ArrayList<>();
-      org.w3c.dom.NodeList l = root.getElementsByTagNameNS("*", name);
-      for (int i = 0; i < l.getLength(); i++) out.add((org.w3c.dom.Element) l.item(i));
-      if (out.isEmpty()) {
-        l = root.getElementsByTagName(name);
-        for (int i = 0; i < l.getLength(); i++) out.add((org.w3c.dom.Element) l.item(i));
-      }
-      return out;
-    }
   }
 
   // =====================================================================================================

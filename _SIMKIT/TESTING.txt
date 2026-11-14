@@ -11,7 +11,6 @@ What is in the kit
   config/cluster.csv          bsub command and options for Run on cluster
   config/standard_reports.csv the reports, monitors and plots of Standard reports (optional criterion and mean)
   config/naming.csv           type prefixes (IN, OUT, OPEN, WALL, SYM, IF) and the boundary types that fit each
-  config/material_folders.csv team folders of MatML material files (*.xml) for Calculators > Materials
   config/comment_template.txt optional: the comment template of the tracker (absent = built-in)
   buttons/                    one macro per toolbar button; see buttons/README.txt
   tests/                      validation runners (this file)
@@ -38,7 +37,7 @@ Path map
 Site set-up (once)
   1. Copy the _SIMKIT folder anywhere on the share (e.g. S:\CFD\_SIMKIT on Windows = /mnt/cfd/_SIMKIT on Linux).
      Nothing else to configure: no environment variable, no path in the macros.
-  2. Edit config/cluster.csv (bsub command, queue, cores) and config/material_folders.csv.
+  2. Edit config/cluster.csv (bsub command, queue, cores).
   3. Each user plays buttons/SimKit_InstallButtons.java once (File > Macro > Play Macro, from the share): the SimKit
      buttons go to a SimKit toolbar (STAR-CCM+ favourite macros), pointing at the files on the share (do not
      copy them: each button finds the root from its own location and always runs the current kit).
@@ -117,10 +116,6 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       changes, images); sections not produced yet say "not available".
    4f. Calculators > Flow-through & averaging window: From report... can fill the mass flow from
       r_mdot_in; Compute gives t_ft, the averaging window start and the end time.
-   4i. Calculators > Set-up > Material properties > MatML folder...: choose the team folder of MatML *.xml files ->
-      "n material(s) read"; What was read lists each file -> material -> properties (k(T) = temperature table).
-      Pick one, enter T, Compute: rho, cp, k (or k_x/k_y/k_z) in SI; a T outside the data is clamped with a warning.
-      Compare one value with the source tool (e.g. ANSYS Engineering Data). Restart Calculators: the folder is kept.
    4h. Case tracker: one grey header row per case (ID, description, "n versions") with its versions underneath
       (ID + grey file name, coloured status, comment, based on, saved). The open case is unfolded, its version has
       a green dot and is selected. Click the arrow of another case: it unfolds; again: it folds. Right-click > Fold
@@ -524,3 +519,7 @@ C. RESULTS SO FAR
   Set type -> MassFlowBoundary; IF defaults F_air/IF_face5 only; pre-submit lines as expected. Offline: NamesTickTest
   ALL OK, ReportsTickTest ok, Names render with Set type checked. Not run: the Set type dialog in the GUI.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.
+
+  Calculators: Materials removed (2026-11-14). The Materials page is removed, with the MatML reader
+  (config/material_folders.csv, tests/matml_samples) and the solid and emissivity tables (data/materials.csv,
+  data/emissivity.csv). The other pages keep their fluid list (data/fluids.csv). Older MatML notes above: history.
