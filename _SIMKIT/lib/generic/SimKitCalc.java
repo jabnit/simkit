@@ -231,9 +231,10 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** calc_log.csv: at the root of a study, or in record/ of a case folder. */
+  /** calc_log.csv: at the root of a project, or in record/ of a case folder. */
   Path logFile() {
-    return Files.isRegularFile(caseDir.resolve("simkit_study.txt")) ? caseDir.resolve("calc_log.csv")
+    return Files.isRegularFile(caseDir.resolve("simkit_project.txt")) || Files.isRegularFile(caseDir.resolve("simkit_study.txt"))
+        ? caseDir.resolve("calc_log.csv")
         : caseDir.resolve("record").resolve("calc_log.csv");
   }
 
@@ -245,7 +246,7 @@ public class SimKitCalc extends StarMacro {
     if (caseDir != null) {
       caseNote = "Log: " + logFile();
     } else {
-      caseNote = "Log: Output window only (no study)";
+      caseNote = "Log: Output window only (no project)";
     }
   }
 
@@ -255,7 +256,7 @@ public class SimKitCalc extends StarMacro {
     try {
       Path f = Paths.get(simPath).toAbsolutePath().normalize();
       Path d = f.getParent();   // a study (simkit_study.txt in the folder or up to 5 above): its record/ holds calc_log.csv
-      for (int k = 0; d != null && k < 6; k++, d = d.getParent()) if (Files.isRegularFile(d.resolve("simkit_study.txt"))) return d;
+      for (int k = 0; d != null && k < 6; k++, d = d.getParent()) if (Files.isRegularFile(d.resolve("simkit_project.txt")) || Files.isRegularFile(d.resolve("simkit_study.txt"))) return d;
       Path simDir = f.getParent();
       if (simDir == null || !simDir.getFileName().toString().equalsIgnoreCase("sim")) return null;
       Path cd = simDir.getParent();

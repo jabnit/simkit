@@ -112,12 +112,12 @@ public class SimKit extends StarMacro {
       "Mesh study", "Standard scenes", "", "Run on cluster"};
   static final String[] TOOL_HELP = {"",
       "",
-      "Saves the next run of the study (R008_<name>.sim) from this one; the open file is kept. No study yet: creates one",
+      "Saves the next run of the project (R008_<name>.sim) from this one; the open file is kept. No project yet: creates one",
       "",
       "",
       "y+, prism layers, Reynolds, time step, properties, GCI",
       "",
-      "Runs of the study: status, comments, based on, family tree",
+      "Runs of the project: status, comments, based on, family tree",
       "Team guideline", "SimKit version, kit location, STAR-CCM+ release",
       "Mass balance, pressures, temperatures, wall heat, y+, Courant: reports, monitors, plots (from IN_ / OUT_ / WALL_ names)",
       "",
@@ -463,7 +463,7 @@ public class SimKit extends StarMacro {
           + "<font color='#6B7580'>&nbsp;&nbsp;\u00B7&nbsp;&nbsp;iteration " + currentIteration() + "</font></html>");
       headTitle.setForeground(java.awt.Color.BLACK);
       String note = r.getOrDefault("comment", "");
-      headSub.setText("Study " + c.caseDir.getFileName() + (r.getOrDefault("based_on", "").isEmpty() ? "" : "  \u00B7  based on "
+      headSub.setText("Project " + c.caseDir.getFileName() + (r.getOrDefault("based_on", "").isEmpty() ? "" : "  \u00B7  based on "
           + r.get("based_on")) + (note.isEmpty() ? "" : "  \u00B7  " + Md.plain(note)));
       headPath.setText(path);
     } else if (c != null) {
@@ -473,7 +473,7 @@ public class SimKit extends StarMacro {
       headSub.setText(desc.isEmpty() ? " " : Md.plain(desc));
       headPath.setText(path);
     } else {
-      headTitle.setText("No study");
+      headTitle.setText("No project");
       headTitle.setForeground(new java.awt.Color(0x8A, 0x5A, 0x00));
       headSub.setText("Save run creates one (this simulation becomes R001).");
       headPath.setText(path.isEmpty() ? "(simulation not saved yet)" : path);
@@ -482,7 +482,7 @@ public class SimKit extends StarMacro {
       JButton b = buttonById.get(id);
       if (b == null) continue;
       b.setEnabled(c != null && !busy);
-      b.setToolTipText(c != null ? TOOL_HELP[id] : "Needs a run of a study: use Save run first. (" + TOOL_HELP[id] + ")");
+      b.setToolTipText(c != null ? TOOL_HELP[id] : "Needs a run of a project: use Save run first. (" + TOOL_HELP[id] + ")");
     }
   }
 
@@ -610,7 +610,7 @@ public class SimKit extends StarMacro {
     try {
       return parseCase(sessionPath());
     } catch (IllegalStateException e) {
-      throw new Cancel("this needs a run of a study: use Save run first (" + e.getMessage() + ")");
+      throw new Cancel("this needs a run of a project: use Save run first (" + e.getMessage() + ")");
     }
   }
 
@@ -626,7 +626,7 @@ public class SimKit extends StarMacro {
   // that comes back from the cluster, whatever its name, still says which run it is and what it was based on.
   // =====================================================================================================
 
-  static final String STUDY_FILE = "simkit_study.txt", P_RUN = "p_simkit_run", P_FROM = "p_simkit_from",
+  static final String STUDY_FILE = "simkit_project.txt", OLD_STUDY_FILE = "simkit_study.txt", P_RUN = "p_simkit_run", P_FROM = "p_simkit_from",
       P_FROM_IT = "p_simkit_from_iteration", ITER_SEP = "_iter_";
   static final Pattern RUN_FILE = Pattern.compile("^R([0-9]{3,4})(?:_([A-Za-z0-9][A-Za-z0-9_-]{0,39}?))?(?:(?:_iter_|@)[^/\\\\]*)?\\.sim$");
 
@@ -651,7 +651,7 @@ public class SimKit extends StarMacro {
   /** The study folder holding a file (itself or up to 5 folders above), or null. */
   static Path studyDirOf(Path file) {
     Path d = file.toAbsolutePath().normalize().getParent();
-    for (int k = 0; d != null && k < 6; k++, d = d.getParent()) if (Files.isRegularFile(d.resolve(STUDY_FILE))) return d;
+    for (int k = 0; d != null && k < 6; k++, d = d.getParent()) if (isStudy(d)) return d;
     return null;
   }
 
@@ -729,16 +729,6 @@ public class SimKit extends StarMacro {
     return study.relativize(d.getParent()).toString().replace('\\', '/');
   }
 
-  /** Group folders of a study: folders below it that hold run folders (not runs themselves). */
-  static List<String> groupsOf(Path study) {
-    Set<String> out = new TreeSet<>();
-    for (Path f : runRecords(study).values()) {
-      if (!f.getFileName().toString().equals(RUN_TXT)) continue;
-      Path g = f.getParent().getParent();
-      if (g != null && !Fs.same(g, study)) out.add(study.relativize(g).toString().replace('\\', '/'));
-    }
-    return new ArrayList<>(out);
-  }
 
   int currentIteration() {
     try { return sim.getSimulationIterator().getCurrentIteration(); } catch (Throwable t) { return 0; }
@@ -852,13 +842,13 @@ public class SimKit extends StarMacro {
     Fs.allow(dir);
     Fs.mkdirs(dir);
     Map<String, String> m = new LinkedHashMap<>();
-    m.put("study", dir.getFileName().toString());
+    m.put("project", dir.getFileName().toString());
     m.put("description", desc);
     m.put("created", Fmt.iso());
     m.put("created_by", Env.user());
     Fs.write(dir.resolve(STUDY_FILE), identityText(m));
     Env.setPref("studyParent", dir.getParent() == null ? "" : dir.getParent().toString());
-    log.line("study " + dir);
+    log.line("project " + dir);
     saveRun(dir, name, "", runOrNull(), null, "");
   }
 
@@ -1207,7 +1197,7 @@ public class SimKit extends StarMacro {
     final String p = sessionPath();
     final Path study = r != null ? r.caseDir : null;
     if (!gui) {
-      if (study == null) throw new Cancel("not in a study yet: start one with Save run in the STAR-CCM+ window");
+      if (study == null) throw new Cancel("not in a project yet: start one with Save run in the STAR-CCM+ window");
       saveRun(study, r.label.isEmpty() ? "next" : r.label, "");
       return;
     }
@@ -1231,7 +1221,7 @@ public class SimKit extends StarMacro {
   /** The Save run window (Swing thread). In a study: {name, comment}; not yet: {name, description, study folder}. */
   Object[] runWindow(final CaseInfo r, final Path study, final int it, Path parent0) {
     final boolean first = study == null;
-    final JTextField name = Ui.hintField("", "e.g. finer_mesh", 22);
+    final JTextField name = Ui.hintField("", first ? "e.g. baseline" : "e.g. finer_mesh", 22);
     name.setFont(name.getFont().deriveFont(Font.BOLD, 15f));
     final JTextField note = Ui.hintField("", first ? "one line" : "optional", 30);
     final JTextField sname = Ui.hintField("", "e.g. ISO_rebuild_2026", 22);
@@ -1241,20 +1231,42 @@ public class SimKit extends StarMacro {
     browse.addActionListener(e -> {
       JFileChooser fc = new JFileChooser(where.getText());
       fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-      fc.setDialogTitle("Folder of the study");
+      fc.setDialogTitle("Folder of the project");
       if (fc.showOpenDialog(where) == JFileChooser.APPROVE_OPTION) where.setText(fc.getSelectedFile().getPath());
     });
     final int n = first ? 1 : nextRun(study);
-    final JComboBox<String> group = new JComboBox<>();
-    if (!first) {
-      group.addItem("");
-      for (String gname : groupsOf(study)) group.addItem(gname);
-      group.setEditable(true);
-      group.setSelectedItem(groupOf(study, r.simFile));
-      group.setToolTipText("Sub-folder of the study for this run (empty: the study folder); type a name for a new one");
-    }
     final JLabel file = new JLabel(" ");
     file.setFont(file.getFont().deriveFont(Font.BOLD, 13f));
+    // where the run's folder goes: next to the run it comes from; the folder icon picks another place in the study
+    final String[] place = {first ? "" : groupOf(study, r.simFile)};
+    final JLabel inLbl = Ui.muted(" ");
+    final JButton pickDir = new JButton(actionIcon(1));
+    pickDir.setToolTipText("Another folder of the project");
+    pickDir.setFocusable(false);
+    pickDir.setContentAreaFilled(false);
+    pickDir.setBorderPainted(false);
+    pickDir.setMargin(new java.awt.Insets(0, 2, 0, 2));
+    pickDir.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+    final Runnable showPlace = () -> {
+      if (first) return;
+      inLbl.setText("in  " + study.getFileName() + (place[0].isEmpty() ? "" : "/" + place[0]));
+    };
+    showPlace.run();
+    pickDir.addActionListener(e -> {
+      JFileChooser fc = new JFileChooser(place[0].isEmpty() ? study.toFile() : study.resolve(place[0]).toFile());
+      fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+      fc.setDialogTitle("Folder for the new run (inside " + study.getFileName() + ")");
+      if (fc.showOpenDialog(pickDir) != JFileChooser.APPROVE_OPTION) return;
+      Path d = fc.getSelectedFile().toPath().toAbsolutePath().normalize();
+      if (!(Fs.same(d, study) || Fs.under(d, study))) {
+        JOptionPane.showMessageDialog(pickDir, "Choose a folder inside the project " + study.getFileName() + ".", "SimKit",
+            JOptionPane.WARNING_MESSAGE);
+        return;
+      }
+      if (Files.isRegularFile(d.resolve(RUN_TXT))) d = d.getParent();   // a run folder: next to it
+      place[0] = Fs.same(d, study) ? "" : study.relativize(d).toString().replace('\\', '/');
+      showPlace.run();
+    });
     final Runnable upd = () -> {
       String t = name.getText().trim();
       if (t.isEmpty()) {
@@ -1318,18 +1330,15 @@ public class SimKit extends StarMacro {
     g.fill = java.awt.GridBagConstraints.HORIZONTAL;
     int y = 0;
     if (first) {
-      g.gridy = y++; form.add(Ui.muted("Study"), g); form.add(sname, g);
+      g.gridy = y++; form.add(Ui.muted("Project"), g); form.add(sname, g);
       g.gridy = y++; form.add(Ui.muted("Description"), g); form.add(note, g);
       JPanel wp = new JPanel(new BorderLayout(4, 0));
       wp.add(where, BorderLayout.CENTER);
       wp.add(browse, BorderLayout.EAST);
       g.gridy = y++; form.add(Ui.muted("Folder"), g); form.add(wp, g);
     }
-    g.gridy = y++; form.add(Ui.muted(first ? "First run" : "Name"), g); form.add(name, g);
-    if (!first) {
-      g.gridy = y++; form.add(Ui.muted("Comment"), g); form.add(note, g);
-      g.gridy = y; form.add(Ui.muted("Group"), g); form.add(group, g);
-    }
+    g.gridy = y++; form.add(Ui.muted(first ? "Run name (R001)" : "Name"), g); form.add(name, g);
+    if (!first) { g.gridy = y; form.add(Ui.muted("Comment"), g); form.add(note, g); }
     JPanel body = new JPanel();
     body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
     JPanel formRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
@@ -1339,48 +1348,48 @@ public class SimKit extends StarMacro {
     if (treeView != null) parts.add(treeView);
     final boolean[] toNew = {false};
     final JButton okB = Ui.primary(first ? "Create" : "Save run");
-    final JButton newRoot = first ? null : Ui.link("New study from this run…");
+    final JButton newRoot = first ? null : Ui.link("New project from this run…");
     if (newRoot != null) {
-      newRoot.setToolTipText("R001 of a new study, coming from " + r.caseId);
+      newRoot.setToolTipText("R001 of a new project, coming from " + r.caseId);
       newRoot.addActionListener(e -> {
         toNew[0] = true;
         okB.doClick();   // closes this window; the New study window follows
       });
     }
     parts.addAll(Arrays.asList(formRow, sep, file));
+    if (!first) {   // the folder line: "in study/sub-folder" and the folder icon
+      JPanel where2 = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+      where2.add(inLbl);
+      where2.add(javax.swing.Box.createHorizontalStrut(4));
+      where2.add(pickDir);
+      parts.add(where2);
+    }
     for (javax.swing.JComponent k : parts) {
       k.setAlignmentX(0f);
       body.add(k);
       body.add(javax.swing.Box.createVerticalStrut(k == formRow || k == treeView ? 10 : 6));
     }
     upd.run();
-    String title = first ? "New study" : "Save run";
+    String title = first ? "New project" : "Save run";
     String sub = first ? "" : study.getFileName() + "  \u00B7  from " + r.caseId + (r.label.isEmpty() ? "" : " " + r.label) + "  \u00B7  it " + it;
     boolean go = Ui.sheet(title, sub, body, okB, () -> {
       if (toNew[0]) return null;
       try { runName(name.getText()); } catch (Cancel x) { return x.getMessage(); }
-      if (!first) {
-        Object gi2 = group.getEditor().getItem();
-        String g2 = gi2 == null ? "" : gi2.toString().trim();
-        return g2.isEmpty() || g2.matches("[A-Za-z0-9_. /-]{1,80}") && !g2.contains("..") && !RUN_DIR.matcher(g2).matches() ? null
-            : "Group: letters, digits, _ . - (not R001...).";
-      }
+      if (!first) return null;
       String sn = sname.getText().trim();
-      if (!sn.matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,59}")) return "Study: letters, digits, _ . - (no spaces).";
+      if (!sn.matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,59}")) return "Project: letters, digits, _ . - (no spaces).";
       if (where.getText().trim().isEmpty()) return "Choose the folder.";
       Path d;
       try { d = Paths.get(where.getText().trim()).toAbsolutePath().normalize().resolve(sn); }
       catch (RuntimeException x) { return "Folder: not a valid path."; }
       if (Fs.under(d, Fs.kit()) || Fs.same(d, Fs.kit())) return "Not inside the kit folder.";
-      if (Files.exists(d.resolve(STUDY_FILE))) return "Study " + sn + " already exists there.";
+      if (isStudy(d)) return "Project " + sn + " already exists there.";
       return null;
     }, newRoot);
     if (!go) return null;
     if (toNew[0]) return new Object[] {"newstudy"};
     String nm = runName(name.getText());
-    Object gi = group.getEditor().getItem();
-    String gr = gi == null ? "" : gi.toString().trim().replace('\\', '/').replaceAll("^/+|/+$", "").replaceAll("\\s+", "_");
-    if (!first) return new Object[] {nm, Fmt.oneLine(note.getText()), gr};
+    if (!first) return new Object[] {nm, Fmt.oneLine(note.getText()), place[0]};   // default: next to the run it comes from
     return new Object[] {nm, Fmt.oneLine(note.getText()),
         Paths.get(where.getText().trim()).toAbsolutePath().normalize().resolve(sname.getText().trim())};
   }
@@ -1637,7 +1646,15 @@ public class SimKit extends StarMacro {
 
   // ----- a study in the tracker: one group (the study) whose rows are its runs; ID <study>.v007, shown as R007 -----
 
-  static boolean isStudy(Path dir) { return dir != null && Files.isRegularFile(dir.resolve(STUDY_FILE)); }
+  static boolean isStudy(Path dir) {
+    return dir != null && (Files.isRegularFile(dir.resolve(STUDY_FILE)) || Files.isRegularFile(dir.resolve(OLD_STUDY_FILE)));
+  }
+
+  /** The project's own file (simkit_project.txt, or simkit_study.txt of the first projects). */
+  static Path studyFile(Path dir) {
+    return Files.isRegularFile(dir.resolve(OLD_STUDY_FILE)) && !Files.isRegularFile(dir.resolve(STUDY_FILE)) ? dir.resolve(OLD_STUDY_FILE)
+        : dir.resolve(STUDY_FILE);
+  }
 
   /** Run number of a tracker row of a study (the part after .v). */
   static int runOf(String versionId) {
@@ -1653,7 +1670,7 @@ public class SimKit extends StarMacro {
   /** The identity of a case, or for a study: the study's file plus each run's comment_v / status_v / hidden_v. */
   static Map<String, String> identityOf(Path dir, String caseId) {
     if (!isStudy(dir)) return readIdentity(dir.resolve(caseId).resolve("sim").resolve("case_identity.txt"));
-    Map<String, String> m = readIdentity(dir.resolve(STUDY_FILE));
+    Map<String, String> m = readIdentity(studyFile(dir));
     for (Map.Entry<Integer, Path> rf : runRecords(dir).entrySet()) {
       String v = String.format(Locale.ROOT, "%03d", rf.getKey());
       for (Map.Entry<String, String> e : readIdentity(rf.getValue()).entrySet()) m.put(e.getKey() + "_v" + v, e.getValue());
@@ -1703,7 +1720,7 @@ public class SimKit extends StarMacro {
     Map<Integer, Path> recs = runRecords(study);
     Set<Integer> runs = new TreeSet<>(files.keySet());
     runs.addAll(recs.keySet());
-    String desc = readIdentity(study.resolve(STUDY_FILE)).getOrDefault("description", "");
+    String desc = readIdentity(studyFile(study)).getOrDefault("description", "");
     for (int n : runs) {
       Map<String, String> r0 = recs.containsKey(n) ? readIdentity(recs.get(n)) : new HashMap<>();
       List<Path> fs = files.getOrDefault(n, Collections.emptyList());
@@ -1736,7 +1753,7 @@ public class SimKit extends StarMacro {
   /** Hides or shows again a whole case (v == null) or one version; only case_identity.txt changes. */
   static void setHidden(Path casesDir, String caseId, String v, boolean hide) throws IOException {
     if (isStudy(casesDir)) {
-      Path f = v == null ? casesDir.resolve(STUDY_FILE) : runRecord(casesDir, Integer.parseInt(v));
+      Path f = v == null ? studyFile(casesDir) : runRecord(casesDir, Integer.parseInt(v));
       Map<String, String> m = readIdentity(f);
       if (hide) m.put("hidden", "yes"); else m.remove("hidden");
       Fs.write(f, identityText(m));
@@ -1910,7 +1927,7 @@ public class SimKit extends StarMacro {
   static void setIdentityKey(Path casesDir, String caseId, String key, String value) throws IOException {
     if (isStudy(casesDir)) {   // a run's comment / status in record/R<nnn>.txt; the description in the study file
       Matcher m = Pattern.compile("^([a-z]+)_v([0-9]+)$").matcher(key);
-      Path f = m.matches() ? runRecord(casesDir, Integer.parseInt(m.group(2))) : casesDir.resolve(STUDY_FILE);
+      Path f = m.matches() ? runRecord(casesDir, Integer.parseInt(m.group(2))) : studyFile(casesDir);
       Map<String, String> id = readIdentity(f);
       id.put(m.matches() ? m.group(1) : key, value == null ? "" : value);
       Fs.write(f, identityText(id));
@@ -2082,6 +2099,33 @@ public class SimKit extends StarMacro {
         @Override public void mouseMoved(java.awt.event.MouseEvent e) {
           boolean hand = onClick != null && at(e.getPoint()) != null;
           setCursor(java.awt.Cursor.getPredefinedCursor(hand ? java.awt.Cursor.HAND_CURSOR : java.awt.Cursor.DEFAULT_CURSOR));
+        }
+      });
+      // click and drag anywhere: moves the view (a click without moving still selects a box)
+      final java.awt.Point[] grab = new java.awt.Point[2];   // mouse on screen, view position at the press
+      addMouseListener(new java.awt.event.MouseAdapter() {
+        @Override public void mousePressed(java.awt.event.MouseEvent e) {
+          javax.swing.JViewport vp = (javax.swing.JViewport) javax.swing.SwingUtilities.getAncestorOfClass(javax.swing.JViewport.class, RunTree.this);
+          if (vp == null) return;
+          grab[0] = e.getLocationOnScreen();
+          grab[1] = vp.getViewPosition();
+        }
+        @Override public void mouseReleased(java.awt.event.MouseEvent e) {
+          grab[0] = null;
+          setCursor(java.awt.Cursor.getDefaultCursor());
+        }
+      });
+      addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+        @Override public void mouseDragged(java.awt.event.MouseEvent e) {
+          javax.swing.JViewport vp = (javax.swing.JViewport) javax.swing.SwingUtilities.getAncestorOfClass(javax.swing.JViewport.class, RunTree.this);
+          if (vp == null || grab[0] == null) return;
+          java.awt.Point now = e.getLocationOnScreen();
+          int x = grab[1].x - (now.x - grab[0].x), y = grab[1].y - (now.y - grab[0].y);
+          java.awt.Dimension view = getSize(), ext = vp.getExtentSize();
+          x = Math.max(0, Math.min(x, Math.max(0, view.width - ext.width)));
+          y = Math.max(0, Math.min(y, Math.max(0, view.height - ext.height)));
+          setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.MOVE_CURSOR));
+          vp.setViewPosition(new java.awt.Point(x, y));
         }
       });
     }
@@ -2699,7 +2743,7 @@ public class SimKit extends StarMacro {
       close.addActionListener(e -> w.dispose());
 
       JPanel topLeft = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
-      final JLabel casesIn = new JLabel(study ? "Study" : "Cases in");
+      final JLabel casesIn = new JLabel(study ? "Project" : "Cases in");
       casesIn.setForeground(grey);
       folderName.setFont(folderName.getFont().deriveFont(Font.BOLD));
       topLeft.add(casesIn);
@@ -3323,7 +3367,7 @@ public class SimKit extends StarMacro {
         if (!text.equals(liveMd())) setLive(text);
         live.setEditable(key != null);
         live.setBackground(key != null ? java.awt.Color.WHITE : new java.awt.Color(0xF4, 0xF5, 0xF7));
-        hint = key == null ? "" : key.startsWith("case:") ? (study ? "Description of the study" : "Description of the case") : "Comment";
+        hint = key == null ? "" : key.startsWith("case:") ? (study ? "Description of the project" : "Description of the case") : "Comment";
         live.repaint();
       }
       for (JButton b : fmtButtons) b.setEnabled(key != null);
@@ -5008,15 +5052,15 @@ public class SimKit extends StarMacro {
   void toolMeshStudy() throws IOException {
     CaseInfo c = caseOrNull();
     if (!gui) {
-      if (c == null) throw new Cancel("mesh levels are saved as runs of a study: start a study first");
+      if (c == null) throw new Cancel("mesh levels are saved as runs of a project: start a project first");
       if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) toolParametrizeMesh();
       if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) throw new Cancel("no mesh size follows " + MESH_SCALE + ": nothing to vary");
       createMeshLevels(c, meshParams(), new ArrayList<>(Arrays.asList(new MeshLevel("coarse", 2.0), new MeshLevel("medium", 1.0))), true);
       return;
     }
     if (c == null) {
-      boolean go = Ui.sheet("Mesh study", "Needs a study", Ui.muted("Levels are saved as runs."),
-          Ui.primary("New study..."), null);
+      boolean go = Ui.sheet("Mesh study", "Needs a project", Ui.muted("Levels are saved as runs."),
+          Ui.primary("New project..."), null);
       if (!go) throw new Cancel(null);
       toolSave();
       c = caseOrNull();

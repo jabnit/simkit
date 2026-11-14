@@ -1,7 +1,7 @@
-# SimKit: team helper for STAR-CCM+ studies
+# SimKit: team helper for STAR-CCM+ projects
 
 SimKit is a set of STAR-CCM+ Java macros that keeps the native STAR-CCM+ workflow and adds a few
-team tools on top of it: studies with numbered, named runs (one folder per run, the run number stored
+team tools on top of it: projects with numbered, named runs (one folder per run, the run number stored
 inside the simulation so cluster copies stay traceable), Run on cluster (bsub), a tracker with a family
 tree, standard reports and scenes, a mesh study helper and engineering calculators.
 
@@ -57,7 +57,7 @@ The GUI test and the expected results are in `_SIMKIT/TESTING.txt`.
 | Tag | Content |
 |---|---|
 | `v0.2.1` | Full kit (20 tools, tags, groups, parameter sync, project workbook, register Apps Script). |
-| `v0.3` | Simplified kit: New case, Save version, Export results, Calculators, Case list, Guideline, About. Later: studies and runs replace cases; Check, Compare versions, Export results and Case report removed. |
+| `v0.3` | Simplified kit: New case, Save version, Export results, Calculators, Case list, Guideline, About. Later: projects and runs replace cases; Check, Compare versions, Export results and Case report removed. |
 
 `_SIMKIT/VERSION.txt` holds the current version line. Tag each release `v<version>`.
 

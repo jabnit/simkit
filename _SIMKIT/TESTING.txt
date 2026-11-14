@@ -415,4 +415,10 @@ C. RESULTS SO FAR
   folder, iteration, size, date); older snapshots ticked; tick files or whole runs by hand; confirmation; recycle bin
   if available (Desktop.moveToTrash), else deleted; emptied job folders removed; open file never deleted. Offline
   TidyShot checked. Fix: a run's record read from its run folder (new study from a run said based on null).
+  Family tree (window and Save run preview): click and drag moves the view (offline PanTest: 200 px drag -> 200 px).
+  Save run: Group field removed (user: misplaced); a new run's folder goes next to the run it comes from.
+  Save run: "in <study>/<folder>" line with a folder icon (chooser opens in the study; outside the study refused;
+  a run folder chosen -> next to it); default: next to the run it comes from.
+  "Study" renamed "Project" everywhere the user reads it; marker file simkit_project.txt (simkit_study.txt still
+  read); New project window: "Run name (R001)" instead of "First run".
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.
