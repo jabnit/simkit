@@ -389,4 +389,14 @@ C. RESULTS SO FAR
   mesh_scale, mesh_cells). Calculators: a study is the folder for calc_log (record/), GCI From cases reads the runs'
   record/key_results_R*.csv. Batch 11c extended: returned copy in job_12345_host_07/, comment via the tracker,
   coarse + medium runs, study rows and case_tracker.csv. Offline StudyShot (tracker on a study, filter R004) passed.
+  Family tree (tracker, top right): separate window, generations left to right, cards with status band and chip,
+  name, start of the comment, open run marked; curved links; click = select in the tracker, double-click = open.
+  Offline StudyShot tree picture checked (8 runs, branches).
+  Run names (user: make the free text more important than the R number): required in Save run, bold 15 pt field
+  first; up to 40 letters, digits, _ and - (spaces -> _; not _iter_); tracker ID column "R007  **name**  it 5000",
+  family tree card: R007 tag + bold name; SimKit window title: name, then R007 and iteration in grey.
+  Dry text (user): window titles only "SimKit" in the title bar; Save run = family tree preview (RunTree, shared with
+  the tracker; the new run as a dashed blue card under the open run, its name as typed) + Name + Comment + file name
+  checked as typed (red if not allowed); New study = Study, Description, Folder, First run; shorter texts in Run on
+  cluster, Standard reports, Mesh study, the SimKit window (button lines, tooltips, status "Ready") and Calculators.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.

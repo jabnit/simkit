@@ -237,10 +237,9 @@ public class SimKitCalc extends StarMacro {
     try { path = sim.getSessionPath(); } catch (Throwable t) { /* unsaved */ }
     caseDir = caseDirOf(path);
     if (caseDir != null) {
-      caseNote = "case folder " + caseDir + " -> every Compute is appended to record/calc_log.csv";
+      caseNote = "Log: " + caseDir.resolve("record").resolve("calc_log.csv");
     } else {
-      caseNote = "calc_log: the sim is not in a SimKit case folder (" + (path == null || path.isEmpty() ? "unsaved sim" : path)
-          + "): results go to the Output window only, nothing is written to disk";
+      caseNote = "Log: Output window only (no study)";
     }
   }
 
@@ -296,8 +295,7 @@ public class SimKitCalc extends StarMacro {
         @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { sync(); }
         @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { sync(); }
       });
-      out.setText(name + "\n\nEnter the inputs and press Compute. Results show the formula, the source and the validity range.\n"
-          + "Units are SI unless stated next to the field. Leave optional inputs empty.");
+      out.setText(name + "\n\nEnter the inputs, then Compute.");
       showText(out.getText());   // at once (the listener only refreshes later changes)
     }
 

@@ -117,28 +117,20 @@ public class SimKit extends StarMacro {
       "Calculators", "", "Case tracker", "Guideline", "About", "Standard reports", "",
       "Mesh study", "Standard scenes", "Case report", "Run on cluster"};
   static final String[] TOOL_HELP = {"",
-      "Creates the case folder and saves this sim as <CASEID>_v01.sim (from a case: a new case with this one as parent)",
-      "Saves this simulation as the next run of its study (R008_...sim), based on this one at its iteration; the open "
-          + "file stays as it is. Not in a study yet: starts one. Your normal Save (Ctrl+S) keeps saving the current file",
-      "Lists what would spoil a run (mesh, continua, stopping criteria, names); changes nothing",
-      "Writes monitor plots (CSV), scenes (PNG) and report values (CSV) to the case results folder",
-      "y+ and prism layers, Reynolds, time step, properties, ... (values ready to paste in STAR-CCM+)",
       "",
-      "Every version of every case in the folder: ID, comment, status, based on, description; set a status "
-          + "and write comments (saved in the case folders); export to CSV for Google Sheets",
-      "Opens the team guideline", "SimKit version, share and STAR-CCM+ release",
-      "Mass balance, inlet/outlet pressure and temperature, wall heat flow, y+, Courant: reports, "
-          + "monitors and plots built from the IN_/OUT_/OPEN_/WALL_ surface names (you choose; nothing is replaced)",
+      "Saves the next run of the study (R008_<name>.sim) from this one; the open file is kept. No study yet: creates one",
       "",
-      "Parametrize only: the absolute mesh sizes you tick follow one factor p_meshScale (1 = today's mesh). "
-          + "Mesh levels: one case per mesh you define (coarse, medium, fine, ...; sizes per level editable) for a "
-          + "sensitivity study or GCI",
-      "Same views for every case: y+ and temperature on the WALL_ surfaces, velocity, pressure, temperature and mesh "
-          + "on a mid-plane (you choose; existing scenes are never changed). Export results saves them as images",
-      "One HTML page for the current version: identity, key results, "
-          + "averages, images (in the case record folder, opened in your browser)",
-      "Saves this file and submits it to the cluster with the team's command (config/cluster.csv): choose the "
-          + "number of CPUs; Linux: runs it in a terminal opened in the file's folder"};
+      "Monitor plots (CSV), scenes (PNG), report values (CSV) to results/",
+      "y+, prism layers, Reynolds, time step, properties, GCI",
+      "",
+      "Runs of the study: status, comments, based on, family tree",
+      "Team guideline", "SimKit version, kit location, STAR-CCM+ release",
+      "Mass balance, pressures, temperatures, wall heat, y+, Courant: reports, monitors, plots (from IN_ / OUT_ / WALL_ names)",
+      "",
+      "Coarse / medium / fine levels as runs, for a mesh sensitivity check (GCI)",
+      "Same views every run: walls (y+, T), mid-plane (U, p, T, mesh)",
+      "One HTML page for the open run: identity, key results, averages, images",
+      "Saves the file and submits it (config/cluster.csv); Linux: in a terminal"};
 
   /** <CASEID>[_<label>]_v<nn>.sim ; label = free text, letters/digits, starts with a letter (old STAGE names fit). */
   /** <CASEID>[_<label>]_v<nn>.sim with CASEID = <PROJECT>-<NNN> (e.g. ISO-007). Cases made with SimKit 0.3 before
@@ -326,7 +318,7 @@ public class SimKit extends StarMacro {
   /** Shows the outcome of the last tool on the status line (amber: cancelled or items skipped, red: error). */
   void showStatus() {
     if (statusLine == null) return;
-    statusLine.setText(lastStatus == null ? "Ready." : lastStatus);
+    statusLine.setText(lastStatus == null ? "Ready" : lastStatus);
     statusLine.setToolTipText(lastStatus);
     statusLine.setForeground(lastLevel == 2 ? new java.awt.Color(0xB0, 0x20, 0x20)
         : lastLevel == 1 ? new java.awt.Color(0x8A, 0x5A, 0x00) : new java.awt.Color(0x2E, 0x6B, 0x2E));
@@ -356,10 +348,10 @@ public class SimKit extends StarMacro {
       {"Results", new int[] {4, 14}},
       {"Tools", new int[] {5, 8, 9}}};
   static final String[] TOOL_SHORT = {"",
-      "Start a case folder (v01)", "Next run, based on this one", "", "Plots, images, values, averages",
-      "y+, Re, time step, properties, GCI", "", "All versions, comments, status",
-      "Team guideline", "Version and kit location", "Mass balance, p, T, y+ ...", "",
-      "Parametrize, or mesh levels", "Same views for every case", "One page for reviews", "Submit with bsub"};
+      "", "New run from this one", "", "Plots, images, values",
+      "y+, Re, time step, GCI ...", "", "Runs, status, comments",
+      "Team guideline", "Version, kit location", "Mass balance, p, T, y+ ...", "",
+      "Mesh levels", "Same views every run", "One page per run", "Submit with bsub"};
 
   JLabel headTitle, headSub, headPath, statusLine;
   JButton detailsButton;
@@ -442,7 +434,7 @@ public class SimKit extends StarMacro {
     }
     root.add(cols, BorderLayout.CENTER);
 
-    statusLine = new JLabel("Ready. Hover over a button to see what it does.");
+    statusLine = new JLabel("Ready");
     statusLine.setForeground(java.awt.Color.GRAY);
     JButton close = new JButton("Close");
     close.addActionListener(e -> d.dispose());
@@ -480,7 +472,8 @@ public class SimKit extends StarMacro {
     CaseInfo c = caseOrNull();
     if (c != null && c.study) {
       Map<String, String> r = readIdentity(c);
-      headTitle.setText("Run " + c.caseId + (c.label.isEmpty() ? "" : "  \u00B7  " + c.label) + "  \u00B7  iteration " + currentIteration());
+      headTitle.setText("<html>" + (c.label.isEmpty() ? "Run " + c.caseId : html(c.label) + "&nbsp;&nbsp;<font color='#6B7580'>" + c.caseId + "</font>")
+          + "<font color='#6B7580'>&nbsp;&nbsp;\u00B7&nbsp;&nbsp;iteration " + currentIteration() + "</font></html>");
       headTitle.setForeground(java.awt.Color.BLACK);
       String note = r.getOrDefault("comment", "");
       headSub.setText("Study " + c.caseDir.getFileName() + (r.getOrDefault("based_on", "").isEmpty() ? "" : "  \u00B7  based on "
@@ -493,9 +486,9 @@ public class SimKit extends StarMacro {
       headSub.setText(desc.isEmpty() ? " " : Md.plain(desc));
       headPath.setText(path);
     } else {
-      headTitle.setText("Not in a study yet");
+      headTitle.setText("No study");
       headTitle.setForeground(new java.awt.Color(0x8A, 0x5A, 0x00));
-      headSub.setText("Start with Save run: it creates the study folder and saves this simulation as run R001.");
+      headSub.setText("Save run creates one (this simulation becomes R001).");
       headPath.setText(path.isEmpty() ? "(simulation not saved yet)" : path);
     }
     for (int id : NEEDS_CASE) {   // greyed until the sim is a case
@@ -648,7 +641,23 @@ public class SimKit extends StarMacro {
 
   static final String STUDY_FILE = "simkit_study.txt", P_RUN = "p_simkit_run", P_FROM = "p_simkit_from",
       P_FROM_IT = "p_simkit_from_iteration", ITER_SEP = "_iter_";
-  static final Pattern RUN_FILE = Pattern.compile("^R([0-9]{3,4})(?:_([A-Za-z][A-Za-z0-9]{0,19}))?(?:(?:_iter_|@).*)?\\.sim$");
+  static final Pattern RUN_FILE = Pattern.compile("^R([0-9]{3,4})(?:_([A-Za-z0-9][A-Za-z0-9_-]{0,39}?))?(?:(?:_iter_|@)[^/\\\\]*)?\\.sim$");
+
+  /** A run name as it goes in the file name: spaces become _, then letters, digits, _ and - (up to 40). */
+  static String runName(String typed) {
+    String n = typed == null ? "" : typed.trim().replaceAll("\\s+", "_");
+    if (n.isEmpty()) throw new Cancel("Name the run (e.g. finer_mesh).");
+    if (!n.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,39}") || n.contains("_iter_") || n.endsWith("_")) {
+      throw new Cancel("Name: letters, digits, _ and - only (40 max).");
+    }
+    return n;
+  }
+
+  /** The name part of a run file (R007_finer_mesh_iter_05000.sim -> finer_mesh), or "". */
+  static String nameOf(String file) {
+    Matcher m = RUN_FILE.matcher(file == null ? "" : file.substring(file.lastIndexOf('/') + 1));
+    return m.matches() && m.group(2) != null ? m.group(2) : "";
+  }
 
   static String runId(int n) { return String.format(Locale.ROOT, "R%03d", n); }
 
@@ -681,6 +690,7 @@ public class SimKit extends StarMacro {
     c.nnn = n;
     c.version = n;
     c.label = m.matches() && m.group(2) != null ? m.group(2) : "";
+    if (c.label.isEmpty()) c.label = readIdentity(runRecord(st, n)).getOrDefault("name", "");
     c.casesDir = st;
     c.caseDir = st;
     c.simFile = f;
@@ -905,11 +915,12 @@ public class SimKit extends StarMacro {
       final JTextField n = new JTextField(String.valueOf(cpus0), 5);
       final JLabel queue = Ui.muted(" "), cmd = new JLabel(" ");
       cmd.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+      cmd.setForeground(new java.awt.Color(0x33, 0x3B, 0x45));
       final Runnable upd = () -> {
         String t = n.getText().trim();
         int k = t.matches("[0-9]{1,5}") ? Integer.parseInt(t) : 0;
         String[] sc = submitCommand(f, Math.max(1, k));
-        queue.setText(k <= 0 ? "a whole number of CPUs" : k == 1 ? "serial, queue " + sc[1] : "parallel, queue " + sc[1]);
+        queue.setText(k <= 0 ? "whole number" : (k == 1 ? "serial" : "parallel") + "  \u00B7  queue " + sc[1]);
         cmd.setText("<html><div style='width:520px'>" + Html.esc(sc[0]) + "</div></html>");
       };
       n.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
@@ -924,8 +935,8 @@ public class SimKit extends StarMacro {
       row.add(queue);
       JPanel body = new JPanel();
       body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
-      JButton copy = Ui.link("Copy the command");
-      JButton go = Ui.primary(linux ? "Submit" : "Copy the command");
+      JButton copy = Ui.link("Copy");
+      JButton go = Ui.primary(linux ? "Submit" : "Copy command");
       copy.addActionListener(e -> {
         String t = n.getText().trim();
         if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return;
@@ -933,17 +944,18 @@ public class SimKit extends StarMacro {
         copy.setText("Copied");
       });
       String base = f.getFileName().toString().replaceFirst("\\.sim$", "");
-      for (javax.swing.JComponent k : new javax.swing.JComponent[] {row, Ui.muted("Command"), cmd, copy,
-          Ui.muted("The file is saved first. Files that come back are named " + base + ITER_SEP + "<iteration>.sim."),
-          Ui.muted(linux ? "Submit opens a terminal in " + shortPath(f.getParent().toString()) + " and runs the command there."
-              : "On Windows the command is copied; paste it in a terminal on the cluster.")}) {
+      JPanel cmdRow = new JPanel(new BorderLayout(10, 0));
+      cmdRow.add(cmd, BorderLayout.CENTER);
+      cmdRow.add(copy, BorderLayout.EAST);
+      for (javax.swing.JComponent k : new javax.swing.JComponent[] {row, cmdRow,
+          Ui.muted("Returns as " + base + ITER_SEP + "<n>.sim")}) {
         k.setAlignmentX(0f);
         body.add(k);
         body.add(javax.swing.Box.createVerticalStrut(6));
       }
-      return Ui.sheet("Run on the cluster", c.caseId + "  \u00B7  " + f.getFileName(), body, go, () -> {
+      return Ui.sheet("Run on cluster", f.getFileName().toString(), body, go, () -> {
         String t = n.getText().trim();
-        if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return "CPUs: a whole number, 1 or more.";
+        if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return "CPUs: 1 or more.";
         cpus[0] = Integer.parseInt(t);
         run[0] = linux;
         return null;
@@ -1157,7 +1169,7 @@ public class SimKit extends StarMacro {
     final Path study = r != null ? r.caseDir : null;
     if (!gui) {
       if (study == null) throw new Cancel("not in a study yet: start one with Save run in the STAR-CCM+ window");
-      saveRun(study, r.label, "");
+      saveRun(study, r.label.isEmpty() ? "next" : r.label, "");
       return;
     }
     final int it = currentIteration();
@@ -1173,76 +1185,125 @@ public class SimKit extends StarMacro {
   /** The Save run window (Swing thread). In a study: {name, comment}; not yet: {name, description, study folder}. */
   Object[] runWindow(final CaseInfo r, final Path study, final int it, Path parent0) {
     final boolean first = study == null;
-    final JTextField name = Ui.hintField(r == null ? "" : r.label, "optional, e.g. baseline, finer", 16);
-    final JTextField note = Ui.hintField("", first ? "what the study is for, in one line" : "what changes, in one line (optional)", 34);
+    final JTextField name = Ui.hintField("", "e.g. finer_mesh", 22);
+    name.setFont(name.getFont().deriveFont(Font.BOLD, 15f));
+    final JTextField note = Ui.hintField("", first ? "one line" : "optional", 30);
     final JTextField sname = Ui.hintField("", "e.g. ISO_rebuild_2026", 22);
-    final JTextField where = new JTextField(parent0.toString(), 26);
-    JButton browse = new JButton("Browse...");
+    final JTextField where = new JTextField(parent0.toString(), 24);
+    JButton browse = new JButton("...");
+    browse.setToolTipText("Choose the folder");
     browse.addActionListener(e -> {
       JFileChooser fc = new JFileChooser(where.getText());
       fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-      fc.setDialogTitle("Folder for the study folder");
+      fc.setDialogTitle("Folder of the study");
       if (fc.showOpenDialog(where) == JFileChooser.APPROVE_OPTION) where.setText(fc.getSelectedFile().getPath());
     });
     final int n = first ? 1 : nextRun(study);
-    final JLabel file = new JLabel(" "), folder = Ui.muted(" ");
-    file.setFont(file.getFont().deriveFont(Font.BOLD));
+    final JLabel file = new JLabel(" ");
+    file.setFont(file.getFont().deriveFont(Font.BOLD, 13f));
     final Runnable upd = () -> {
       String t = name.getText().trim();
-      file.setText(runId(n) + (t.isEmpty() ? "" : "_" + t) + ".sim");
+      if (t.isEmpty()) {
+        file.setForeground(Ui.MUTED);
+        file.setText(runId(n) + "_\u2026.sim");
+      } else {
+        try {
+          file.setText(runId(n) + "_" + runName(t) + ".sim");
+          file.setForeground(new java.awt.Color(0x1D, 0x27, 0x33));
+        } catch (Cancel x) {
+          file.setText("Name: letters, digits, _ and - only");
+          file.setForeground(Ui.RED);
+        }
+      }
       String sep = java.io.File.separator, w = where.getText().trim(), sn = sname.getText().trim();
-      String st = first ? (w.isEmpty() ? "?" : w.replaceAll("[\\\\/]+$", "")) + sep + (sn.isEmpty() ? "<study>" : sn) : study.toString();
-      folder.setText("in " + shortPath(st + sep + "sims"));   // text only: what is typed may not be a valid path yet
+      String st = first ? (w.isEmpty() ? "?" : w.replaceAll("[\\\\/]+$", "")) + sep + (sn.isEmpty() ? "\u2026" : sn) : study.toString();
+      file.setToolTipText(st + sep + "sims");   // text only: what is typed may not be a valid path yet
+    };
+    // where the new run goes: the study's family tree with a dashed card under the open run
+    final RunTree tree = first ? null : new RunTree();
+    JScrollPane treeView = null;
+    if (tree != null) {
+      final String sn0 = study.getFileName().toString();
+      tree.source = () -> studyRows(study);
+      tree.shown = x -> x.matches(".*\\.v[0-9]+$") ? runId(runOf(x)) : x;
+      tree.study = true;
+      tree.openId = sn0 + ".v" + String.format(Locale.ROOT, "%03d", r.nnn);
+      tree.ghost = new String[] {sn0 + ".v" + String.format(Locale.ROOT, "%03d", n), "", tree.openId};
+      tree.relayout();
+      treeView = new JScrollPane(tree);
+      treeView.setBorder(BorderFactory.createLineBorder(new java.awt.Color(0xE3, 0xE7, 0xEC)));
+      treeView.getViewport().setBackground(java.awt.Color.WHITE);
+      java.awt.Dimension pd = tree.getPreferredSize();
+      treeView.setPreferredSize(new java.awt.Dimension(Math.min(640, pd.width + 4), Math.min(230, pd.height + 4)));
+      treeView.setAlignmentX(0f);
+      final JScrollPane tv = treeView;
+      javax.swing.SwingUtilities.invokeLater(() -> {
+        java.awt.Rectangle gb = tree.ghostBox();
+        if (gb != null) tree.scrollRectToVisible(new java.awt.Rectangle(gb.x - 260, gb.y - 40, gb.width + 300, gb.height + 80));
+        tv.repaint();
+      });
+    }
+    final Runnable upd2 = () -> {
+      upd.run();
+      if (tree != null) {
+        String t = name.getText().trim().replaceAll("\\s+", "_");
+        tree.ghost[1] = t;
+        tree.repaint();
+      }
     };
     javax.swing.event.DocumentListener dl = new javax.swing.event.DocumentListener() {
-      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
-      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
-      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { upd2.run(); }
+      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { upd2.run(); }
+      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { upd2.run(); }
     };
     for (JTextField k : new JTextField[] {name, sname, where}) k.getDocument().addDocumentListener(dl);
     JPanel form = new JPanel(new java.awt.GridBagLayout());
     java.awt.GridBagConstraints g = new java.awt.GridBagConstraints();
-    g.insets = new java.awt.Insets(4, 0, 4, 10);
+    g.insets = new java.awt.Insets(5, 0, 5, 12);
     g.anchor = java.awt.GridBagConstraints.WEST;
     g.fill = java.awt.GridBagConstraints.HORIZONTAL;
     int y = 0;
     if (first) {
-      g.gridy = y++; form.add(new JLabel("Study"), g); form.add(sname, g);
-      g.gridy = y++; form.add(new JLabel("Description"), g); form.add(note, g);
-      g.gridy = y++; form.add(new JLabel("In folder"), g); form.add(where, g); form.add(browse, g);
+      g.gridy = y++; form.add(Ui.muted("Study"), g); form.add(sname, g);
+      g.gridy = y++; form.add(Ui.muted("Description"), g); form.add(note, g);
+      JPanel wp = new JPanel(new BorderLayout(4, 0));
+      wp.add(where, BorderLayout.CENTER);
+      wp.add(browse, BorderLayout.EAST);
+      g.gridy = y++; form.add(Ui.muted("Folder"), g); form.add(wp, g);
     }
-    g.gridy = y++; form.add(new JLabel("Name in the file"), g); form.add(name, g);
-    if (!first) { g.gridy = y; form.add(new JLabel("Comment"), g); form.add(note, g); }
+    g.gridy = y++; form.add(Ui.muted(first ? "First run" : "Name"), g); form.add(name, g);
+    if (!first) { g.gridy = y; form.add(Ui.muted("Comment"), g); form.add(note, g); }
     JPanel body = new JPanel();
     body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
     JPanel formRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
     formRow.add(form);
     javax.swing.JSeparator sep = new javax.swing.JSeparator();
-    String basis = r == null ? "The open file stays as it is." : "Based on " + r.caseId + " at iteration " + it + ". The open file stays as it is.";
-    for (javax.swing.JComponent k : new javax.swing.JComponent[] {formRow, sep, file, folder, Ui.muted(basis)}) {
+    List<javax.swing.JComponent> parts = new ArrayList<>();
+    if (treeView != null) parts.add(treeView);
+    parts.addAll(Arrays.asList(formRow, sep, file));
+    for (javax.swing.JComponent k : parts) {
       k.setAlignmentX(0f);
       body.add(k);
-      body.add(javax.swing.Box.createVerticalStrut(k == formRow ? 10 : 3));
+      body.add(javax.swing.Box.createVerticalStrut(k == formRow || k == treeView ? 10 : 6));
     }
     upd.run();
-    String title = first ? "Start a study" : "Save run";
-    String sub = first ? "A folder for one piece of work (a test rebuild, a design analysis); this simulation becomes run R001."
-        : "Study " + study.getFileName() + "  \u00B7  now " + r.caseId + (r.label.isEmpty() ? "" : " " + r.label) + ", iteration " + it;
-    boolean go = Ui.sheet(title, sub, body, Ui.primary(first ? "Start the study" : "Save run"), () -> {
-      try { checkLabel(name.getText()); } catch (Cancel x) { return "Name: letters and digits, starting with a letter (e.g. baseline)."; }
+    String title = first ? "New study" : "Save run";
+    String sub = first ? "" : study.getFileName() + "  \u00B7  from " + r.caseId + (r.label.isEmpty() ? "" : " " + r.label) + "  \u00B7  it " + it;
+    boolean go = Ui.sheet(title, sub, body, Ui.primary(first ? "Create" : "Save run"), () -> {
+      try { runName(name.getText()); } catch (Cancel x) { return x.getMessage(); }
       if (!first) return null;
       String sn = sname.getText().trim();
-      if (!sn.matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,59}")) return "Study: letters, digits, _ . - (no spaces), e.g. ISO_rebuild_2026.";
-      if (where.getText().trim().isEmpty()) return "Choose the folder for the study.";
+      if (!sn.matches("[A-Za-z0-9][A-Za-z0-9_.-]{0,59}")) return "Study: letters, digits, _ . - (no spaces).";
+      if (where.getText().trim().isEmpty()) return "Choose the folder.";
       Path d;
       try { d = Paths.get(where.getText().trim()).toAbsolutePath().normalize().resolve(sn); }
-      catch (RuntimeException x) { return "In folder: not a valid folder path."; }
-      if (Fs.under(d, Fs.kit()) || Fs.same(d, Fs.kit())) return "A study cannot go inside the kit folder.";
-      if (Files.exists(d.resolve(STUDY_FILE))) return "There is already a study " + sn + " there.";
+      catch (RuntimeException x) { return "Folder: not a valid path."; }
+      if (Fs.under(d, Fs.kit()) || Fs.same(d, Fs.kit())) return "Not inside the kit folder.";
+      if (Files.exists(d.resolve(STUDY_FILE))) return "Study " + sn + " already exists there.";
       return null;
     });
     if (!go) return null;
-    String nm = checkLabel(name.getText());
+    String nm = runName(name.getText());
     if (!first) return new Object[] {nm, Fmt.oneLine(note.getText())};
     return new Object[] {nm, Fmt.oneLine(note.getText()),
         Paths.get(where.getText().trim()).toAbsolutePath().normalize().resolve(sname.getText().trim())};
@@ -1909,6 +1970,214 @@ public class SimKit extends StarMacro {
     };
   }
 
+  /** Runs drawn as a family tree: generations left to right, each card to the right of the run it is based on, soft
+   *  curved links. Used by the tracker (Family tree) and by Save run, where a dashed blue card shows the run about to
+   *  be saved (ghost = {id, name, parent id}). */
+  static final class RunTree extends javax.swing.JComponent {
+    private static final long serialVersionUID = 1L;
+    static final int CW = 172, CH = 54, HG = 50, VG = 16, M = 20;
+    java.util.function.Supplier<List<String[]>> source = ArrayList::new;
+    java.util.function.Function<String, String> shown = x -> x;
+    java.util.function.BiConsumer<String, Integer> onClick;
+    boolean study;
+    String openId, picked;
+    String[] ghost;
+    final Map<String, java.awt.Rectangle> box = new LinkedHashMap<>();
+    final Map<String, String> parent = new HashMap<>();
+    final Map<String, String[]> byId = new HashMap<>();
+    static final java.awt.Color INK = new java.awt.Color(0x1D, 0x27, 0x33), EDGE = new java.awt.Color(0xC3, 0xCB, 0xD5),
+        FRAME = new java.awt.Color(0xD5, 0xD9, 0xDE);
+
+    RunTree() {
+      setOpaque(true);
+      setBackground(java.awt.Color.WHITE);
+      javax.swing.ToolTipManager.sharedInstance().registerComponent(this);
+      addMouseListener(new java.awt.event.MouseAdapter() {
+        @Override public void mouseClicked(java.awt.event.MouseEvent e) {
+          String id = at(e.getPoint());
+          if (id == null || onClick == null || ghost != null && id.equals(ghost[0])) return;
+          picked = id;
+          repaint();
+          onClick.accept(id, e.getClickCount());
+        }
+      });
+      addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+        @Override public void mouseMoved(java.awt.event.MouseEvent e) {
+          boolean hand = onClick != null && at(e.getPoint()) != null;
+          setCursor(java.awt.Cursor.getPredefinedCursor(hand ? java.awt.Cursor.HAND_CURSOR : java.awt.Cursor.DEFAULT_CURSOR));
+        }
+      });
+    }
+
+    String at(java.awt.Point p) {
+      for (Map.Entry<String, java.awt.Rectangle> e : box.entrySet()) if (e.getValue().contains(p)) return e.getKey();
+      return null;
+    }
+
+    @Override public String getToolTipText(java.awt.event.MouseEvent e) {
+      String id = at(e.getPoint());
+      String[] r = id == null ? null : byId.get(id);
+      if (r == null) return null;
+      String c = Md.plain(r[COL_COMMENT]);
+      return "<html><b>" + html(shown.apply(id)) + "</b>  " + html(fileLabel(r[COL_FILE])) + "<br>" + html(r[COL_FILE])
+          + (c.isEmpty() ? "" : "<br><br>" + html(Fmt.cut(c, 160))) + "</html>";
+    }
+
+    java.awt.Rectangle ghostBox() { return ghost == null ? null : box.get(ghost[0]); }
+
+    /** Places the cards: children in the next column, a parent centred on its children. */
+    void relayout() {
+      box.clear();
+      parent.clear();
+      byId.clear();
+      List<String> ids = new ArrayList<>();
+      for (String[] r : source.get()) { ids.add(r[COL_ID]); byId.put(r[COL_ID], r); }
+      Set<String> all = new HashSet<>(ids);
+      Map<String, List<String>> kids = new LinkedHashMap<>();
+      List<String> roots = new ArrayList<>();
+      for (String id : ids) {
+        String b = byId.get(id)[COL_BASED];
+        if (!b.isEmpty() && all.contains(b) && !b.equals(id)) {
+          parent.put(id, b);
+          kids.computeIfAbsent(b, k -> new ArrayList<>()).add(id);
+        } else {
+          roots.add(id);
+        }
+      }
+      if (ghost != null) {
+        if (ghost[2] != null && all.contains(ghost[2])) {
+          parent.put(ghost[0], ghost[2]);
+          kids.computeIfAbsent(ghost[2], k -> new ArrayList<>()).add(ghost[0]);
+        } else {
+          roots.add(ghost[0]);
+        }
+      }
+      int[] slot = {0};
+      Set<String> seen = new HashSet<>();
+      for (String r : roots) place(r, 0, kids, slot, seen);
+      for (String id : ids) if (!seen.contains(id)) place(id, 0, kids, slot, seen);   // a loop in the records: drawn as roots
+      int wMax = M, hMax = M;
+      for (java.awt.Rectangle b : box.values()) { wMax = Math.max(wMax, b.x + b.width + M); hMax = Math.max(hMax, b.y + b.height + M); }
+      setPreferredSize(new java.awt.Dimension(wMax, hMax));
+      revalidate();
+      repaint();
+    }
+
+    int place(String id, int depth, Map<String, List<String>> kids, int[] slot, Set<String> seen) {
+      seen.add(id);
+      List<Integer> ys = new ArrayList<>();
+      for (String k : kids.getOrDefault(id, Collections.emptyList())) if (!seen.contains(k)) ys.add(place(k, depth + 1, kids, slot, seen));
+      int cy = ys.isEmpty() ? M + slot[0]++ * (CH + VG) + CH / 2 : (ys.get(0) + ys.get(ys.size() - 1)) / 2;
+      box.put(id, new java.awt.Rectangle(M + depth * (CW + HG), cy - CH / 2, CW, CH));
+      return cy;
+    }
+
+    @Override protected void paintComponent(java.awt.Graphics g0) {
+      java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+      g.setColor(java.awt.Color.WHITE);
+      g.fillRect(0, 0, getWidth(), getHeight());
+      g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+      g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+      String gid = ghost == null ? null : ghost[0];
+      java.awt.Stroke solid = new java.awt.BasicStroke(1.6f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND);
+      java.awt.Stroke dash = new java.awt.BasicStroke(1.8f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND, 1f,
+          new float[] {5f, 4f}, 0f);
+      for (Map.Entry<String, String> e : parent.entrySet()) {
+        java.awt.Rectangle a = box.get(e.getValue()), b = box.get(e.getKey());
+        if (a == null || b == null) continue;
+        boolean gh = e.getKey().equals(gid);
+        g.setStroke(gh ? dash : solid);
+        g.setColor(gh ? Ui.BLUE : EDGE);
+        double x1 = a.x + a.width, y1 = a.y + a.height / 2.0, x2 = b.x, y2 = b.y + b.height / 2.0, mx = (x1 + x2) / 2;
+        g.draw(new java.awt.geom.CubicCurve2D.Double(x1, y1, mx, y1, mx, y2, x2, y2));
+        g.fill(new java.awt.geom.Ellipse2D.Double(x2 - 3, y2 - 3, 6, 6));
+      }
+      Font f = getFont() == null ? new Font(Font.SANS_SERIF, Font.PLAIN, 12) : getFont();
+      Font bold = f.deriveFont(Font.BOLD, 13f), small = f.deriveFont(Font.PLAIN, 11f);
+      for (Map.Entry<String, java.awt.Rectangle> e : box.entrySet()) {
+        String id = e.getKey();
+        java.awt.Rectangle b = e.getValue();
+        boolean gh = id.equals(gid);
+        String[] r = byId.get(id);
+        if (r == null && !gh) continue;
+        String st = gh ? "" : r[COL_STATUS];
+        java.awt.Color[] sc = statusColors(st);
+        boolean dropped = st.equals("dropped"), open = id.equals(openId), sel = id.equals(picked);
+        java.awt.geom.RoundRectangle2D card = new java.awt.geom.RoundRectangle2D.Double(b.x, b.y, b.width, b.height, 12, 12);
+        if (!gh) {
+          g.setColor(new java.awt.Color(0, 0, 0, 18));   // a soft shadow
+          g.fill(new java.awt.geom.RoundRectangle2D.Double(b.x + 1, b.y + 2, b.width, b.height, 12, 12));
+        }
+        g.setColor(gh ? Ui.PALE : dropped ? new java.awt.Color(0xF7, 0xF7, 0xF8) : java.awt.Color.WHITE);
+        g.fill(card);
+        if (!gh) {
+          java.awt.Shape clip = g.getClip();
+          g.clip(card);   // the status colour as a band on the left
+          g.setColor(sc == null ? FRAME : sc[1]);
+          g.fillRect(b.x, b.y, 5, b.height);
+          g.setClip(clip);
+        }
+        g.setColor(gh || sel ? Ui.BLUE : FRAME);
+        g.setStroke(gh ? dash : new java.awt.BasicStroke(sel ? 2f : 1f));
+        g.draw(card);
+        int tx = b.x + 14, right = b.x + b.width - 10 - (open ? 14 : 0);
+        String head = shown.apply(id), nm = gh ? ghost[1] : study ? nameOf(r[COL_FILE]) : fileLabel(r[COL_FILE]);
+        String itx = gh || !study ? "" : iterOf(r[COL_FILE]);
+        if (study) {   // the run number as a small tag, then its name
+          g.setFont(small.deriveFont(Font.BOLD));
+          int tw = g.getFontMetrics().stringWidth(head);
+          g.setColor(gh ? new java.awt.Color(0xD6, 0xE4, 0xF7) : new java.awt.Color(0xEC, 0xEF, 0xF3));
+          g.fill(new java.awt.geom.RoundRectangle2D.Double(tx - 3, b.y + 8, tw + 8, 17, 6, 6));
+          g.setColor(gh ? Ui.BLUE : new java.awt.Color(0x4A, 0x55, 0x63));
+          g.drawString(head, tx + 1, b.y + 21);
+          int nx = tx + tw + 11;
+          g.setFont(bold);
+          g.setColor(gh ? Ui.BLUE : dropped ? new java.awt.Color(0x9A, 0xA2, 0xAB) : INK);
+          g.drawString(fit(g, nm == null || nm.isEmpty() ? "\u2026" : nm, right - nx), nx, b.y + 21);
+        } else {
+          g.setFont(bold);
+          g.setColor(dropped ? new java.awt.Color(0x9A, 0xA2, 0xAB) : INK);
+          g.drawString(head, tx, b.y + 21);
+          int hw = g.getFontMetrics().stringWidth(head);
+          g.setFont(small);
+          g.setColor(Ui.MUTED);
+          g.drawString(fit(g, nm, right - tx - hw - 6), tx + hw + 6, b.y + 21);
+        }
+        if (open) {
+          g.setColor(new java.awt.Color(0x2E, 0x9E, 0x4F));
+          g.fillOval(b.x + b.width - 16, b.y + 13, 8, 8);
+        }
+        int x2 = tx;
+        if (sc != null) {
+          g.setFont(small.deriveFont(Font.BOLD));
+          int sw = g.getFontMetrics().stringWidth(st);
+          g.setColor(sc[0]);
+          g.fill(new java.awt.geom.RoundRectangle2D.Double(x2 - 3, b.y + 29, sw + 10, 16, 16, 16));
+          g.setColor(sc[1]);
+          g.drawString(st, x2 + 2, b.y + 41);
+          x2 += sw + 14;
+        }
+        g.setFont(small);
+        g.setColor(gh ? Ui.BLUE : Ui.MUTED);
+        String line2 = gh ? "new run" : (itx.isEmpty() ? "" : "it " + itx + "  \u00B7  ") + Md.plain(r[COL_COMMENT]).replace(" / ", "  ");
+        g.drawString(fit(g, line2, b.x + b.width - 8 - x2), x2, b.y + 41);
+      }
+      if (box.isEmpty()) {
+        g.setColor(Ui.MUTED);
+        g.drawString("Nothing to show yet.", M, M + 20);
+      }
+      g.dispose();
+    }
+
+    static String fit(java.awt.Graphics2D g, String s, int w) {
+      if (s == null || w <= 10) return "";
+      java.awt.FontMetrics fm = g.getFontMetrics();
+      if (fm.stringWidth(s) <= w) return s;
+      while (s.length() > 1 && fm.stringWidth(s + "\u2026") > w) s = s.substring(0, s.length() - 1);
+      return s + "\u2026";
+    }
+  }
+
   /** The standard template of a comment: four headings, each with an empty bullet. */
   static final String COMMENT_TEMPLATE = "**Goal:**\n- \n**Changes:**\n- \n**Result:**\n- \n**Next:**\n- ";
 
@@ -2354,6 +2623,11 @@ public class SimKit extends StarMacro {
       summary.setForeground(grey);
       JPanel topRight = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 10, 0));
       topRight.add(summary);
+      JButton treeBtn = new JButton("Family tree", treeIcon());
+      treeBtn.setToolTipText("Runs drawn as a family tree");
+      flat(treeBtn);
+      treeBtn.addActionListener(e -> showTree());
+      topRight.add(treeBtn);
       JPanel top = new JPanel(new BorderLayout());
       top.add(topLeft, BorderLayout.WEST);
       top.add(topRight, BorderLayout.EAST);
@@ -2550,6 +2824,76 @@ public class SimKit extends StarMacro {
       rebuild();
     }
 
+    // ----- family tree: each run (or version) under the one it is based on -----
+
+    /** A small icon: three linked boxes. */
+    javax.swing.Icon treeIcon() {
+      return new javax.swing.Icon() {
+        @Override public int getIconWidth() { return 18; }
+        @Override public int getIconHeight() { return 16; }
+        @Override public void paintIcon(java.awt.Component c, java.awt.Graphics g0, int x, int y) {
+          java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+          g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+          g.translate(x, y);
+          g.setColor(new java.awt.Color(0x4A, 0x55, 0x63));
+          g.setStroke(new java.awt.BasicStroke(1.3f));
+          g.drawRoundRect(1, 6, 5, 4, 2, 2);
+          g.drawRoundRect(12, 1, 5, 4, 2, 2);
+          g.drawRoundRect(12, 11, 5, 4, 2, 2);
+          g.draw(new java.awt.geom.CubicCurve2D.Double(6, 8, 9, 8, 9, 3, 12, 3));
+          g.draw(new java.awt.geom.CubicCurve2D.Double(6, 8, 9, 8, 9, 13, 12, 13));
+          g.dispose();
+        }
+      };
+    }
+
+    JDialog treeWin;
+
+    void showTree() {
+      if (treeWin != null && treeWin.isDisplayable()) {
+        treeWin.toFront();
+        return;
+      }
+      final RunTree ft = new RunTree();
+      ft.source = () -> {
+        List<String[]> l = new ArrayList<>();
+        for (String[] r : rows) if (showHidden.isSelected() || !(hidden(r) || caseHidden(caseOf(r[COL_ID])))) l.add(r);
+        return l;
+      };
+      ft.shown = this::shown;
+      ft.study = study;
+      ft.openId = openId;
+      ft.onClick = (id, n) -> {
+        jumpTo(id);
+        if (n == 2) openSelected();
+      };
+      treeWin = new JDialog(w, "Family tree  -  " + dir.getFileName(), java.awt.Dialog.ModalityType.MODELESS);
+      treeWin.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+      JScrollPane sp = new JScrollPane(ft);
+      sp.getViewport().setBackground(java.awt.Color.WHITE);
+      sp.setBorder(BorderFactory.createEmptyBorder());
+      sp.getVerticalScrollBar().setUnitIncrement(16);
+      sp.getHorizontalScrollBar().setUnitIncrement(16);
+      JLabel hint = new JLabel("Click: select  \u00B7  double-click: open in STAR-CCM+");
+      hint.setForeground(grey);
+      hint.setBorder(BorderFactory.createEmptyBorder(6, 12, 8, 12));
+      JPanel root = new JPanel(new BorderLayout());
+      root.setBackground(java.awt.Color.WHITE);
+      root.add(sp, BorderLayout.CENTER);
+      root.add(hint, BorderLayout.SOUTH);
+      treeWin.setContentPane(root);
+      treeWin.addWindowFocusListener(new java.awt.event.WindowAdapter() {
+        @Override public void windowGainedFocus(java.awt.event.WindowEvent e) { ft.relayout(); }   // after edits in the tracker
+      });
+      ft.relayout();
+      java.awt.Dimension d = ft.getPreferredSize();
+      sp.setPreferredSize(new java.awt.Dimension(Math.min(1250, d.width + 20), Math.min(720, d.height + 20)));
+      treeWin.pack();
+      treeWin.setLocationRelativeTo(w);
+      Env.track(treeWin);
+      treeWin.setVisible(true);
+    }
+
     void jumpTo(String id) {
       String[] r = byId(id);
       if (r == null) return;
@@ -2659,7 +3003,8 @@ public class SimKit extends StarMacro {
             + (id.getOrDefault("mesh_cells", "").isEmpty() ? "" : ", " + id.get("mesh_cells") + " cells"));
         if (r[COL_ID].equals(openId)) bits.add("open in STAR-CCM+");
         if (hidden(r) || caseHidden(sel.get(0).caseId)) bits.add("hidden");
-        headline.setText("<html>" + html(shown(r[COL_ID])) + "<br><font color='#6B7580'>" + html(String.join("  ·  ", bits))
+        headline.setText("<html>" + html(shown(r[COL_ID])) + (study && !nameOf(r[COL_FILE]).isEmpty() ? "&nbsp;&nbsp;" + html(nameOf(r[COL_FILE])) : "")
+            + "<br><font color='#6B7580'>" + html(String.join("  ·  ", bits))
             + "</font></html>");
         areaLabel.setText("Comments");
         key = r[COL_ID];
@@ -2671,7 +3016,7 @@ public class SimKit extends StarMacro {
         if (!text.equals(liveMd())) setLive(text);
         live.setEditable(key != null);
         live.setBackground(key != null ? java.awt.Color.WHITE : new java.awt.Color(0xF4, 0xF5, 0xF7));
-        hint = key == null ? "" : key.startsWith("case:") ? "Click here to describe the case" : "Click here to write a comment";
+        hint = key == null ? "" : key.startsWith("case:") ? (study ? "Description of the study" : "Description of the case") : "Comment";
         live.repaint();
       }
       for (JButton b : fmtButtons) b.setEnabled(key != null);
@@ -3356,7 +3701,13 @@ public class SimKit extends StarMacro {
             setIconTextGap(6);
             if (s.equals(openId)) setToolTipText("Open in STAR-CCM+ now");
             String lab = fileLabel(it.r[COL_FILE]);
-            setText(lab.isEmpty() ? shown(s) : "<html>" + html(shown(s)) + "&nbsp;&nbsp;<font color='#8A94A0'>" + html(lab) + "</font></html>");
+            if (study) {
+              String nm = nameOf(it.r[COL_FILE]), itx = iterOf(it.r[COL_FILE]);
+              setText("<html>" + html(shown(s)) + (nm.isEmpty() ? "" : "&nbsp;&nbsp;<b>" + html(nm) + "</b>")
+                  + (itx.isEmpty() ? "" : "&nbsp;&nbsp;<font color='#8A94A0'>it " + html(itx) + "</font>") + "</html>");
+            } else {
+              setText(lab.isEmpty() ? shown(s) : "<html>" + html(shown(s)) + "&nbsp;&nbsp;<font color='#8A94A0'>" + html(lab) + "</font></html>");
+            }
             setToolTipText(it.r[COL_FILE] + (s.equals(openId) ? "  (open in STAR-CCM+ now)" : ""));
             return this;
           }
@@ -3895,8 +4246,7 @@ public class SimKit extends StarMacro {
     boolean any = false;
     for (StdReport x : all) any |= x.why == null;
     if (!any) {
-      if (gui) Ui.sheet("Standard reports", "Nothing to add to this simulation.", Ui.muted("<html>Every standard report is already there, or "
-          + "the surfaces are not named yet: IN_..., OUT_..., OPEN_..., WALL_....</html>"),
+      if (gui) Ui.sheet("Standard reports", "Nothing to add", Ui.muted("All present, or no IN_ / OUT_ / OPEN_ / WALL_ surfaces."),
           Ui.primary("OK"), null);
       log.line("nothing to add.");
       for (StdReport x : all) log.line(String.format("  %-22s %s", x.def[0], x.why));
@@ -4037,7 +4387,7 @@ public class SimKit extends StarMacro {
         JScrollPane sp = new JScrollPane(list);
         sp.setPreferredSize(new java.awt.Dimension(420, 280));
         JPanel p = new JPanel(new BorderLayout(0, 6));
-        p.add(Ui.muted("Surfaces for " + x.def[0] + " (Ctrl+click to add or remove):"), BorderLayout.NORTH);
+        p.add(Ui.muted("Ctrl+click to add or remove"), BorderLayout.NORTH);
         p.add(sp, BorderLayout.CENTER);
         if (JOptionPane.showConfirmDialog(table, p, x.def[0], JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) return;
         if (list.getSelectedIndices().length == 0) return;
@@ -4052,10 +4402,9 @@ public class SimKit extends StarMacro {
     sp.getViewport().setBackground(java.awt.Color.WHITE);
     JPanel body = new JPanel(new BorderLayout(0, 8));
     body.add(sp, BorderLayout.CENTER);
-    body.add(Ui.muted("<html>Each report gets a monitor; each group one plot (pl_...). Nothing already in the simulation is changed. "
-        + "Grey rows cannot be made here; the reason is on the right. The list is the team's: config/standard_reports.csv.</html>"),
+    body.add(Ui.muted("One monitor per report, one plot per group  \u00B7  double-click surfaces to change  \u00B7  config/standard_reports.csv"),
         BorderLayout.SOUTH);
-    return Ui.sheet("Standard reports", "The same reports, monitors and plots in every case, so results compare directly.", body, ok, null);
+    return Ui.sheet("Standard reports", "", body, ok, null);
   }
 
   static int[] allIndices(int n) {
@@ -4425,9 +4774,8 @@ public class SimKit extends StarMacro {
       return;
     }
     if (c == null) {
-      boolean go = Ui.sheet("Mesh study", "Coarser and finer copies of this simulation, to check that the results do not depend on the mesh.",
-          Ui.muted("The levels are saved as runs of a study, so this simulation has to be in a study first."),
-          Ui.primary("Start a study..."), null);
+      boolean go = Ui.sheet("Mesh study", "Needs a study", Ui.muted("Levels are saved as runs."),
+          Ui.primary("New study..."), null);
       if (!go) throw new Cancel(null);
       toolSave();
       c = caseOrNull();
@@ -4542,7 +4890,7 @@ public class SimKit extends StarMacro {
     tools.add(ratio);
     // sizes that follow the factor
     final List<javax.swing.JCheckBox> boxes = new ArrayList<>();
-    final javax.swing.JCheckBox prism = new javax.swing.JCheckBox("Scale the prism layers too  (off: same first-cell height, so y+ stays the same)");
+    final javax.swing.JCheckBox prism = new javax.swing.JCheckBox("Scale prism layers too  (off: same y+)");
     JPanel sizes = new JPanel(new GridLayout(0, 1, 0, 1));
     for (String n : linked.keySet()) {
       javax.swing.JCheckBox b = new javax.swing.JCheckBox(n.substring("p_mesh_".length()) + "   (already follows the factor)", true);
@@ -4566,7 +4914,7 @@ public class SimKit extends StarMacro {
         b.setSelected(prism.isSelected());
       }
     });
-    final javax.swing.JCheckBox meshNow = new javax.swing.JCheckBox("Mesh each level now (shows the cell counts; takes the meshing time)", true);
+    final javax.swing.JCheckBox meshNow = new javax.swing.JCheckBox("Mesh now (cell counts)", true);
     final JLabel files = new JLabel(" ");
     final JButton ok = Ui.primary("Create levels");
     final boolean[] only = {false};
@@ -4586,7 +4934,7 @@ public class SimKit extends StarMacro {
     };
     model.addTableModelListener(e -> upd.run());
     upd.run();
-    JButton onlyLink = Ui.link("Only link the sizes to the factor (no levels)");
+    JButton onlyLink = Ui.link("Link sizes only (no levels)");
     onlyLink.setToolTipText("The sizes ticked below follow one parameter, " + MESH_SCALE + " (1 = today's mesh); vary it yourself later");
     onlyLink.addActionListener(e -> {
       only[0] = true;
@@ -4597,14 +4945,14 @@ public class SimKit extends StarMacro {
     body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
     JLabel h1 = new JLabel("Levels");
     h1.setFont(h1.getFont().deriveFont(Font.BOLD));
-    JLabel n1 = Ui.muted("Mesh factor 1 = today's mesh; 1.41 = cells 1.41 times larger. Type a factor, or pick a refinement ratio.");
-    JLabel h2 = new JLabel("Sizes that follow the factor");
+    JLabel n1 = Ui.muted("Factor 1 = current mesh  \u00B7  1.41 = cells 1.41\u00D7 larger");
+    JLabel h2 = new JLabel("Sizes scaled by the factor");
     h2.setFont(h2.getFont().deriveFont(Font.BOLD));
-    JLabel n2 = Ui.muted("Sizes relative to the base size follow it anyway.");
+    JLabel n2 = Ui.muted("Relative sizes follow the base size.");
     List<javax.swing.JComponent> parts = new ArrayList<>(Arrays.asList(h1, n1, sp, tools, h2, n2, sizes));
     if (anyPrism) parts.add(prism);
     javax.swing.JSeparator sep = new javax.swing.JSeparator();
-    parts.addAll(Arrays.asList(meshNow, sep, files, Ui.muted("Saved next to " + c.caseId + "; the open file stays as it is; you continue in the last level."), onlyLink));
+    parts.addAll(Arrays.asList(meshNow, sep, files, onlyLink));
     for (javax.swing.JComponent k : parts) {
       k.setAlignmentX(0f);
       if (k == h2 || k == meshNow || k == sep || k == onlyLink) body.add(javax.swing.Box.createVerticalStrut(12));
@@ -4612,7 +4960,7 @@ public class SimKit extends StarMacro {
       body.add(javax.swing.Box.createVerticalStrut(4));
     }
     final List<MeshLevel> out = new ArrayList<>();
-    boolean go = Ui.sheet("Mesh study", "Coarser and finer copies of " + c.caseId + ", to check that the results do not depend on the mesh.",
+    boolean go = Ui.sheet("Mesh study", "Levels from " + c.caseId + (c.label.isEmpty() ? "" : " " + c.label),
         body, ok, () -> {
           if (table.isEditing()) table.getCellEditor().stopCellEditing();
           boolean any = !linked.isEmpty();
@@ -5853,7 +6201,7 @@ public class SimKit extends StarMacro {
      *  'check' runs on the button: a message keeps the window open (nothing typed is lost), null closes it. */
     static boolean sheet(String title, String sub, javax.swing.JComponent body, final JButton ok, final java.util.function.Supplier<String> check) {
       return edt(() -> {
-        final JDialog d = new JDialog(owner(), title, java.awt.Dialog.ModalityType.APPLICATION_MODAL);
+        final JDialog d = new JDialog(owner(), "SimKit", java.awt.Dialog.ModalityType.APPLICATION_MODAL);
         d.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
         final boolean[] done = {false};
         JPanel root = new JPanel(new BorderLayout(0, 14));
