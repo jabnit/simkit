@@ -450,4 +450,11 @@ C. RESULTS SO FAR
   Save as new run (window only): open file with unsaved changes (Simulation.isModified) -> warning "Unsaved
   changes": changes saved in the new run only, the open file keeps its last saved state; Cancel stops. Not
   reached in batch (batch saves without asking); compiled against 21.04.009; offline render checked.
+  Tracker hide redesigned (user: broken in the tree, no way back, the whole-project question useless): Hide / Unhide
+  button with text; no question; Undo in the message line; a project is never hidden as a whole (only its runs; a
+  project hidden by an earlier SimKit is shown again by Unhide); "Hidden (n)" toggle in the top bar (only when
+  something is hidden) shows hidden runs faded in the list and the tree; in the tree a run whose parent is hidden
+  is linked to the nearest shown run (dashed); right-click menu in the tree. Offline HideTest: 9 checks ok.
+  Standard reports fix: a tick in the right pane no longer clears the selected report (row updated only);
+  offline ReportsTickTest ok. STAR regression SKT72: all 15 exit codes 0, no exception.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.

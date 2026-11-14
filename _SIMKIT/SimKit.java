@@ -2090,6 +2090,13 @@ public class SimKit extends StarMacro {
     java.util.function.Supplier<List<String[]>> source = ArrayList::new;
     java.util.function.Function<String, String> shown = x -> x;
     java.util.function.BiConsumer<String, Integer> onClick;
+    /** Right click on a card: (id, event). */
+    java.util.function.BiConsumer<String, java.awt.event.MouseEvent> onMenu;
+    /** All runs, the hidden ones included: a run whose parent is hidden is linked to the nearest shown ancestor. */
+    java.util.function.Supplier<List<String[]>> lineage;
+    /** Hidden runs (drawn faded when shown). */
+    java.util.function.Predicate<String> isHidden = x -> false;
+    final Set<String> bridged = new HashSet<>();   // links that pass over hidden runs (dashed)
     boolean study;
     String openId, picked;
     String[] ghost;
@@ -2104,7 +2111,18 @@ public class SimKit extends StarMacro {
       setBackground(java.awt.Color.WHITE);
       javax.swing.ToolTipManager.sharedInstance().registerComponent(this);
       addMouseListener(new java.awt.event.MouseAdapter() {
+        @Override public void mousePressed(java.awt.event.MouseEvent e) { menu(e); }
+        @Override public void mouseReleased(java.awt.event.MouseEvent e) { menu(e); }
+        void menu(java.awt.event.MouseEvent e) {
+          if (!e.isPopupTrigger() || onMenu == null) return;
+          String id = at(e.getPoint());
+          if (id == null || ghost != null && id.equals(ghost[0])) return;
+          picked = id;
+          repaint();
+          onMenu.accept(id, e);
+        }
         @Override public void mouseClicked(java.awt.event.MouseEvent e) {
+          if (!javax.swing.SwingUtilities.isLeftMouseButton(e)) return;
           String id = at(e.getPoint());
           if (id == null || onClick == null || ghost != null && id.equals(ghost[0])) return;
           picked = id;
@@ -2170,13 +2188,20 @@ public class SimKit extends StarMacro {
       box.clear();
       parent.clear();
       byId.clear();
+      bridged.clear();
       List<String> ids = new ArrayList<>();
       for (String[] r : source.get()) { ids.add(r[COL_ID]); byId.put(r[COL_ID], r); }
       Set<String> all = new HashSet<>(ids);
+      Map<String, String> basedAll = new HashMap<>();
+      if (lineage != null) for (String[] r : lineage.get()) basedAll.put(r[COL_ID], r[COL_BASED]);
       Map<String, List<String>> kids = new LinkedHashMap<>();
       List<String> roots = new ArrayList<>();
       for (String id : ids) {
         String b = byId.get(id)[COL_BASED];
+        for (int k = 0; k < 50 && !b.isEmpty() && !all.contains(b) && basedAll.containsKey(b); k++) {   // over hidden runs
+          b = basedAll.get(b);
+          if (all.contains(b)) bridged.add(id);
+        }
         if (!b.isEmpty() && all.contains(b) && !b.equals(id)) {
           parent.put(id, b);
           kids.computeIfAbsent(b, k -> new ArrayList<>()).add(id);
@@ -2225,8 +2250,8 @@ public class SimKit extends StarMacro {
       for (Map.Entry<String, String> e : parent.entrySet()) {
         java.awt.Rectangle a = box.get(e.getValue()), b = box.get(e.getKey());
         if (a == null || b == null) continue;
-        boolean gh = e.getKey().equals(gid);
-        g.setStroke(gh ? dash : solid);
+        boolean gh = e.getKey().equals(gid), over = bridged.contains(e.getKey());
+        g.setStroke(gh || over ? dash : solid);
         g.setColor(gh ? Ui.BLUE : EDGE);
         double x1 = a.x + a.width, y1 = a.y + a.height / 2.0, x2 = b.x, y2 = b.y + b.height / 2.0, mx = (x1 + x2) / 2;
         g.draw(new java.awt.geom.CubicCurve2D.Double(x1, y1, mx, y1, mx, y2, x2, y2));
@@ -2242,6 +2267,9 @@ public class SimKit extends StarMacro {
         if (r == null && !gh) continue;
         String st = gh ? "" : r[COL_STATUS];
         java.awt.Color[] sc = statusColors(st);
+        boolean hid = !gh && isHidden.test(id);
+        java.awt.Composite comp0 = g.getComposite();
+        if (hid) g.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.45f));
         boolean dropped = st.equals("dropped"), open = id.equals(openId), sel = id.equals(picked);
         java.awt.geom.RoundRectangle2D card = new java.awt.geom.RoundRectangle2D.Double(b.x, b.y, b.width, b.height, 12, 12);
         if (!gh) {
@@ -2299,8 +2327,14 @@ public class SimKit extends StarMacro {
         }
         g.setFont(small);
         g.setColor(gh ? Ui.BLUE : Ui.MUTED);
-        String line2 = gh ? "new run" : (itx.isEmpty() ? "" : "it " + itx + "  \u00B7  ") + Md.plain(r[COL_COMMENT]).replace(" / ", "  ");
+        List<String> parts = new ArrayList<>();
+        if (hid) parts.add("hidden");
+        if (!itx.isEmpty()) parts.add("it " + itx);
+        String cm = gh ? "" : Md.plain(r[COL_COMMENT]).replace(" / ", "  ").trim();
+        if (!cm.isEmpty()) parts.add(cm);
+        String line2 = gh ? "new run" : String.join("  \u00B7  ", parts);
         g.drawString(fit(g, line2, b.x + b.width - 8 - x2), x2, b.y + 41);
+        g.setComposite(comp0);
       }
       if (box.isEmpty()) {
         g.setColor(Ui.MUTED);
@@ -2456,7 +2490,10 @@ public class SimKit extends StarMacro {
     final JTextField filter;
     final JComboBox<String> statusFilter = new JComboBox<>(new String[] {"All statuses", "Active (planned, meshing, running)",
         "Done", "Dropped", "No status", "Diverged"});
-    final javax.swing.JCheckBox showHidden = new javax.swing.JCheckBox("Show hidden");
+    /** "Hidden (n)": shows the hidden runs or versions, faded (only there when something is hidden). */
+    final javax.swing.JToggleButton showHidden = new javax.swing.JToggleButton("Hidden");
+    final JButton undoBtn = Ui.link("Undo");
+    Runnable undoAction;
     final JLabel summary = new JLabel(), message = new JLabel(" "), folderName = new JLabel(), headline = new JLabel(" "),
         areaLabel = new JLabel("Comment");
     /** The comment box: shows the formatting itself, no marks (the file keeps the marks: **bold** ...). */
@@ -2631,8 +2668,18 @@ public class SimKit extends StarMacro {
         @Override public void focusLost(java.awt.event.FocusEvent e) { filter.repaint(); }
       });
       statusFilter.addActionListener(e -> rebuild());
-      showHidden.setToolTipText("Hidden cases and versions (their files are kept) are shown in grey");
+      showHidden.setToolTipText("Show the hidden " + (study ? "runs" : "cases and versions") + ", faded (the files are not changed)");
+      showHidden.setIcon(actionIcon(5));
+      showHidden.setFocusable(false);
+      showHidden.setMargin(new java.awt.Insets(2, 8, 2, 8));
       showHidden.addActionListener(e -> rebuild());
+      undoBtn.setVisible(false);
+      undoBtn.addActionListener(e -> {
+        Runnable u = undoAction;
+        undoAction = null;
+        undoBtn.setVisible(false);
+        if (u != null) u.run();
+      });
 
       live.setFont(table.getFont());
       live.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
@@ -2737,6 +2784,7 @@ public class SimKit extends StarMacro {
       simBtn.setFocusPainted(false);
       simBtn.setMargin(new java.awt.Insets(4, 12, 4, 12));
       hideBtn.addActionListener(e -> hideOrShow());
+      hideBtn.setText("Hide");
       headline.setFont(headline.getFont().deriveFont(Font.BOLD));
       areaLabel.setForeground(grey);
 
@@ -2822,7 +2870,10 @@ public class SimKit extends StarMacro {
       JPanel btns = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 6, 0));
       btns.add(export);
       btns.add(close);
-      bottom.add(message, BorderLayout.CENTER);
+      JPanel msgRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+      msgRow.add(message);
+      msgRow.add(undoBtn);
+      bottom.add(msgRow, BorderLayout.CENTER);
       bottom.add(btns, BorderLayout.EAST);
 
       JPanel root = new JPanel(new BorderLayout(0, 8));
@@ -2837,12 +2888,18 @@ public class SimKit extends StarMacro {
         for (String[] r : rows) if (showHidden.isSelected() || !(hidden(r) || caseHidden(caseOf(r[COL_ID])))) l.add(r);
         return l;
       };
+      runTree.lineage = () -> rows;
+      runTree.isHidden = id -> { String[] r = byId(id); return r != null && (hidden(r) || caseHidden(caseOf(id))); };
       runTree.shown = this::shown;
       runTree.study = study;
       runTree.openId = openId;
       runTree.onClick = (id, n) -> {
         selectQuiet(id);
         if (n == 2) openSelected();
+      };
+      runTree.onMenu = (id, e) -> {
+        selectQuiet(id);
+        showMenu(runTree, e.getX(), e.getY(), true);
       };
       JScrollPane treeScroll = new JScrollPane(runTree);
       treeScroll.getViewport().setBackground(java.awt.Color.WHITE);
@@ -2940,7 +2997,7 @@ public class SimKit extends StarMacro {
       return v == null || v.isEmpty() ? "" : v.get(0)[COL_DESC];
     }
 
-    boolean caseHidden(String caseId) { return "yes".equals(ids.getOrDefault(caseId, new HashMap<>()).get("hidden")); }
+    boolean caseHidden(String caseId) { return !study && "yes".equals(ids.getOrDefault(caseId, new HashMap<>()).get("hidden")); }
 
     boolean hidden(String[] r) { return isHidden(ids.getOrDefault(caseOf(r[COL_ID]), new HashMap<>()), verOf(r[COL_ID])); }
 
@@ -3004,7 +3061,10 @@ public class SimKit extends StarMacro {
       if (runTree != null && "tree".equals(leftView)) runTree.relayout();
       summary.setText((study ? "" : nCases + (nCases == 1 ? " case" : " cases") + "  ·  ") + nVers + (study ? (nVers == 1 ? " run" : " runs")
           : nVers == 1 ? " version" : " versions")
-          + (nRunning > 0 ? "  ·  " + nRunning + " meshing or running" : "") + (nHidden > 0 ? "  ·  " + nHidden + " hidden" : ""));
+          + (nRunning > 0 ? "  ·  " + nRunning + " meshing or running" : ""));
+      if (nHidden == 0 && showHidden.isSelected()) showHidden.setSelected(false);
+      showHidden.setText("Hidden (" + nHidden + ")");
+      showHidden.setVisible(nHidden > 0);
       showDetails();
     }
 
@@ -3080,6 +3140,8 @@ public class SimKit extends StarMacro {
         for (String[] r : rows) if (showHidden.isSelected() || !(hidden(r) || caseHidden(caseOf(r[COL_ID])))) l.add(r);
         return l;
       };
+      ft.lineage = () -> rows;
+      ft.isHidden = id -> { String[] r = byId(id); return r != null && (hidden(r) || caseHidden(caseOf(id))); };
       ft.shown = this::shown;
       ft.study = study;
       ft.openId = openId;
@@ -3166,6 +3228,8 @@ public class SimKit extends StarMacro {
     void say(String s, java.awt.Color c) {
       message.setForeground(c);
       message.setText(s);
+      undoAction = null;
+      undoBtn.setVisible(false);
     }
 
     // ----- details of the selection -----
@@ -3179,19 +3243,20 @@ public class SimKit extends StarMacro {
     void showDetails() {
       flushArea();   // a comment being typed is saved before the details change
       List<Item> sel = selected();
-      boolean allHidden = !sel.isEmpty();
-      for (Item it : sel) allHidden &= it.isCase() ? caseHidden(it.caseId) : caseHidden(it.caseId) || hidden(it.r);
-      hideBtn.setIcon(actionIcon(allHidden ? 5 : 4));
-      hideBtn.setToolTipText(allHidden ? "Show again: bring the selection back into the tracker and the case list"
-          : "Hide: take the selection out of the tracker and the case list; the files stay where they are");
-      hideBtn.setEnabled(!sel.isEmpty());
+      List<Item> hs = hideable(sel);
+      boolean unhide = unhideMode(hs);
+      hideBtn.setIcon(actionIcon(unhide ? 5 : 4));
+      hideBtn.setText(unhide ? "Unhide" : "Hide");
+      hideBtn.setToolTipText(hs.isEmpty() ? (study ? "Select runs to hide" : "Select cases or versions to hide")
+          : unhide ? "Show again in the tracker" : "Hide from the tracker (the files are not changed; Hidden shows them again)");
+      hideBtn.setEnabled(!hs.isEmpty());
       folderBtn.setEnabled(!sel.isEmpty());
       copyBtn.setEnabled(!sel.isEmpty());
       simBtn.setEnabled(sel.size() == 1 && !opening);
       showChips(sel);
       String key = null, text = "";
       if (sel.isEmpty()) {
-        headline.setText("Select a case or a version to see its details");
+        headline.setText(study ? "Select a run to see its details" : "Select a case or a version to see its details");
         areaLabel.setText("Comments");
       } else if (sel.size() > 1) {
         headline.setText("<html>" + sel.size() + " rows selected&nbsp;&nbsp;<font color='#6B7580'>right-click: set their status, "
@@ -3731,51 +3796,66 @@ public class SimKit extends StarMacro {
       try { Ui.browse(fd.toUri().toString()); } catch (Throwable t) { say("Cannot open: " + reason(t), red); }
     }
 
+    /** What Hide acts on: runs of a project (never the project itself), cases and versions otherwise. */
+    List<Item> hideable(List<Item> sel) {
+      List<Item> out = new ArrayList<>();
+      for (Item it : sel) if (!(study && it.isCase())) out.add(it);
+      return out;
+    }
+
+    /** True when every item is hidden: the button unhides. */
+    boolean unhideMode(List<Item> items) {
+      if (items.isEmpty()) return false;
+      for (Item it : items) if (!(it.isCase() ? caseHidden(it.caseId) : caseHidden(it.caseId) || hidden(it.r))) return false;
+      return true;
+    }
+
+    /** Hide or unhide the selection at once; the message line offers Undo. */
     void hideOrShow() {
-      List<Item> sel = selected();
-      if (sel.isEmpty()) return;
+      final List<Item> items = hideable(selected());
+      if (items.isEmpty()) return;
+      final boolean hide = !unhideMode(items);
       try {
-        if (hideBtn.getToolTipText() != null && hideBtn.getToolTipText().startsWith("Show")) {
-          List<String> done = new ArrayList<>();
-          for (Item it : sel) {
-            if (it.isCase() || caseHidden(it.caseId)) setHidden(dir, it.caseId, null, false);
-            else setHidden(dir, it.caseId, verOf(it.r[COL_ID]), false);
-            done.add(it.isCase() ? it.caseId : it.r[COL_ID]);
-          }
-          updateCaseList(dir);
-          reload();
-          say("Shown again: " + String.join(", ", done), green);
-          return;
-        }
-        Set<String> cases = new LinkedHashSet<>();
-        List<String> vers = new ArrayList<>();
-        for (Item it : sel) if (it.isCase()) cases.add(it.caseId); else vers.add(it.r[COL_ID]);
-        vers.removeIf(v -> cases.contains(caseOf(v)));
-        boolean whole;
-        if (vers.isEmpty()) {
-          whole = JOptionPane.showConfirmDialog(w, "Hide " + String.join(", ", cases) + " and all its versions?\n"
-              + "It leaves the tracker and the case list; the files stay where they are.\nShow hidden + Show again brings it back.",
-              "Hide", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE) == JOptionPane.OK_OPTION;
-          if (!whole) return;
-        } else {
-          Set<String> their = new LinkedHashSet<>(cases);
-          for (String v : vers) their.add(caseOf(v));
-          int how = JOptionPane.showOptionDialog(w, "Hide from the tracker (the files stay where they are):\n" + String.join(", ", vers)
-              + "\n\nShow hidden + Show again brings them back.", "Hide", JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null,
-              new String[] {"These versions", "The whole case" + (their.size() > 1 ? "s" : "") + " (" + String.join(", ", their) + ")", "Cancel"},
-              "These versions");
-          if (how < 0 || how == 2) return;
-          whole = how == 1;
-          if (whole) cases.addAll(their);
-        }
-        for (String cid : cases) setHidden(dir, cid, null, true);
-        if (!whole) for (String v : vers) setHidden(dir, caseOf(v), verOf(v), true);
-        updateCaseList(dir);
-        reload();
-        say("Hidden: " + String.join(", ", whole ? new ArrayList<>(cases) : vers) + "  (files kept; tick Show hidden to see them)", green);
+        String names = applyHidden(items, hide);
+        sayUndo((hide ? "Hidden: " : "Shown again: ") + names + (hide && !showHidden.isSelected() ? "  (Hidden in the top bar shows it)" : ""),
+            () -> {
+              try {
+                applyHidden(items, !hide);
+                say((hide ? "Shown again: " : "Hidden again: ") + names, green);
+              } catch (Throwable t) {
+                say("NOT changed: " + reason(t), red);
+              }
+            });
       } catch (Throwable t) {
         say("NOT changed: " + reason(t), red);
       }
+    }
+
+    String applyHidden(List<Item> items, boolean hide) throws IOException {
+      List<String> names = new ArrayList<>();
+      for (Item it : items) {
+        if (it.isCase()) {
+          setHidden(dir, it.caseId, null, hide);
+          names.add(it.caseId);
+        } else {
+          if (!hide && !study && caseHidden(it.caseId)) setHidden(dir, it.caseId, null, false);
+          setHidden(dir, it.caseId, verOf(it.r[COL_ID]), hide);
+          names.add(shown(it.r[COL_ID]));
+        }
+      }
+      if (study && !hide) {   // a project hidden by an earlier SimKit: shown again with its runs
+        Map<String, String> m = readIdentity(studyFile(dir));
+        if (m.remove("hidden") != null) Fs.write(studyFile(dir), identityText(m));
+      }
+      updateCaseList(dir);
+      reload();
+      return String.join(", ", names);
+    }
+
+    void sayUndo(String s, Runnable undo) {
+      say(s, green);
+      undoAction = undo;
+      undoBtn.setVisible(true);
     }
 
     void changeFolder() {
@@ -3797,17 +3877,23 @@ public class SimKit extends StarMacro {
       if (!e.isPopupTrigger()) return;
       int row = table.rowAtPoint(e.getPoint());
       if (row >= 0 && !table.isRowSelected(row)) table.setRowSelectionInterval(row, row);
+      showMenu(table, e.getX(), e.getY(), row >= 0);
+    }
+
+    /** The context menu of the selection (table or tree). */
+    void showMenu(java.awt.Component on, int x, int y, boolean hasRow) {
+      Item cur = current();
+      int row = hasRow && cur != null ? view.indexOf(cur) : -1;
       javax.swing.JPopupMenu m = new javax.swing.JPopupMenu();
       javax.swing.JMenuItem openSim = new javax.swing.JMenuItem("Open in STAR-CCM+...");
       openSim.addActionListener(a -> openSelected());
       openSim.setEnabled(row >= 0 && !opening);
       javax.swing.JMenuItem open = new javax.swing.JMenuItem("Open case folder");
       open.addActionListener(a -> openFolder());
-      javax.swing.JMenuItem hide = new javax.swing.JMenuItem(hideBtn.getToolTipText() != null
-          && hideBtn.getToolTipText().startsWith("Show") ? "Show again" : "Hide...");
+      javax.swing.JMenuItem hide = new javax.swing.JMenuItem(hideBtn.getText(), hideBtn.getIcon());
       hide.addActionListener(a -> hideOrShow());
       open.setEnabled(row >= 0);
-      hide.setEnabled(row >= 0);
+      hide.setEnabled(row >= 0 && hideBtn.isEnabled());
       javax.swing.JMenuItem ex = new javax.swing.JMenuItem("Unfold all cases");
       ex.addActionListener(a -> { expanded.addAll(byCase.keySet()); rebuild(); });
       javax.swing.JMenuItem co = new javax.swing.JMenuItem("Fold all cases");
@@ -3837,10 +3923,12 @@ public class SimKit extends StarMacro {
       m.add(status);
       m.add(pin);
       m.add(hide);
-      m.addSeparator();
-      m.add(ex);
-      m.add(co);
-      m.show(table, e.getX(), e.getY());
+      if (on == table) {
+        m.addSeparator();
+        m.add(ex);
+        m.add(co);
+      }
+      m.show(on, x, y);
     }
 
     // ----- look -----
@@ -4621,12 +4709,9 @@ public class SimKit extends StarMacro {
     final JButton dflt = Ui.link("Default"), allB = Ui.link("All"), none = Ui.link("None");
     final StdReport[] cur = {null};
     final Runnable[] fill = {null};
-    final Runnable refreshRow = () -> {
-      model.fireTableDataChanged();
-      if (cur[0] != null) {
-        int i = rows.indexOf(cur[0]);
-        if (i >= 0) table.setRowSelectionInterval(i, i);
-      }
+    final Runnable refreshRow = () -> {   // only the row of the report: the selection (and the right pane) stays
+      int i = cur[0] == null ? -1 : rows.indexOf(cur[0]);
+      if (i >= 0) model.fireTableRowsUpdated(i, i);
     };
     fill[0] = () -> {
       list.removeAll();
