@@ -6272,19 +6272,22 @@ public class SimKit extends StarMacro {
       qChips.add(b);
     };
     for (ObjQty q : qs) addQ.accept(q);
+    // one other scalar field at a time: choosing one replaces the previous one (the list of quantities stays fixed)
     List<String> on = new ArrayList<>();
-    on.add("Add field…");
+    on.add("None");
     for (ObjQty q : others) on.add(q.label);
     final JComboBox<String> other = new JComboBox<>(on.toArray(new String[0]));
-    other.setToolTipText("Add another scalar field. Its function name is used in the report name.");
+    other.setToolTipText("One more scalar field, in addition to the quantities above. Its function name is used in the report name.");
+    final ObjQty[] extra = {null};
     other.addActionListener(e -> {
+      if (extra[0] != null) { qs.remove(extra[0]); extra[0].pick = false; extra[0] = null; }
       int i = other.getSelectedIndex();
-      if (i <= 0) return;
-      ObjQty q = others.get(i - 1);
-      if (!qs.contains(q)) { q.pick = true; qs.add(q); addQ.accept(q); qChips.revalidate(); qChips.repaint(); }
-      other.setSelectedIndex(0);
+      if (i > 0) { extra[0] = others.get(i - 1); extra[0].pick = true; qs.add(extra[0]); }
       refresh[0].run();
     });
+    final JPanel otherRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+    otherRow.add(new JLabel("Other field"));
+    otherRow.add(other);
 
     // 2 statistics
     final JPanel sChips = Ui.flow(400);
@@ -6489,9 +6492,10 @@ public class SimKit extends StarMacro {
     qChips.setAlignmentX(0f);
     left.add(qChips);
     left.add(javax.swing.Box.createVerticalStrut(4));
-    other.setAlignmentX(0f);
-    other.setMaximumSize(new java.awt.Dimension(200, other.getPreferredSize().height));
-    left.add(other);
+    other.setPreferredSize(new java.awt.Dimension(220, other.getPreferredSize().height));
+    otherRow.setAlignmentX(0f);
+    otherRow.setMaximumSize(new java.awt.Dimension(400, otherRow.getPreferredSize().height));
+    left.add(otherRow);
     left.add(javax.swing.Box.createVerticalStrut(16));
     left.add(step("2", "Statistics"));
     left.add(javax.swing.Box.createVerticalStrut(4));

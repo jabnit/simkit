@@ -567,3 +567,5 @@ C. RESULTS SO FAR
   and button off while working; Space toggles; Esc clears a search field, else closes; Close drawn flat (all SimKit
   windows). SKT87: exit codes 0 (08b/08c skipped: STAR-CCM+ window open). Offline: three tabs rendered (RepShot).
   Not run: the window in the STAR-CCM+ GUI.
+  Per object: "Add field..." (added a chip per field, the window could grow without limit) replaced by "Other field"
+  (None, or one scalar field; a new choice replaces the previous one). Offline: rendered, Density adds its reports.
