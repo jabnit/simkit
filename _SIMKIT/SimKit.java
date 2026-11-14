@@ -767,10 +767,13 @@ public class SimKit extends StarMacro {
   /** Saves the open simulation as the next run of a study: R<nnn>[_name].sim in sims/, numbers inside the sim, the
    *  run record (record/R<nnn>.txt), the run label on the scenes. The open file stays as it is on disk. */
   CaseInfo saveRun(Path study, String name, String comment) throws IOException {
-    CaseInfo from = runOrNull();
+    return saveRun(study, name, comment, runOrNull(), null);
+  }
+
+  CaseInfo saveRun(Path study, String name, String comment, CaseInfo from, Map<String, String> extra) throws IOException {
     int it = currentIteration();
     double time = physicalTime();
-    String source = sessionPath();
+    String source = from != null ? from.simFile.toString() : sessionPath();
     int n = nextRun(study);
     String id = runId(n);
     Path f = study.resolve("sims").resolve(id + (name.isEmpty() ? "" : "_" + name) + ".sim");
@@ -793,6 +796,7 @@ public class SimKit extends StarMacro {
     r.put("created", Fmt.iso());
     r.put("created_by", Env.user());
     r.put("file", study.relativize(f).toString().replace('\\', '/'));
+    if (extra != null) r.putAll(extra);
     Fs.write(study.resolve("record").resolve(id + ".txt"), identityText(r));
     log.line("saved " + f + "\n" + id + (from == null ? "" : " is based on " + from.caseId + " at iteration " + it)
         + "; the file you came from is unchanged. Ctrl+S keeps saving " + f.getFileName() + ".");
@@ -828,7 +832,25 @@ public class SimKit extends StarMacro {
         + readIdentity(r2).get("from_iteration") + "; auto-save separator "
         + sim.getSimulationIterator().getAutoSave().getSeparator());
     String[] cmd = submitCommand(r2.simFile, 4);
-    log.line("submit command (not run): " + cmd[0] + "\nscript: " + writeSubmitScript(r2.simFile, cmd[0]));
+    log.line("submit command (not run): " + cmd[0]);
+    log.line("submit script: " + writeSubmitScript(r2.simFile, cmd[0]));
+    // a copy as the cluster sends it back: a job folder, the file renamed with _iter_
+    Path back = dir.resolve("job_12345_host_07").resolve(r2.simFile.getFileName().toString().replace(".sim", ITER_SEP + "00050.sim"));
+    Fs.mkdirs(back.getParent());
+    Files.copy(r2.simFile, back, StandardCopyOption.REPLACE_EXISTING);
+    setIdentityKey(dir, dir.getFileName().toString(), "comment_v002", "**finer** mesh near the liner");
+    // mesh study inside the study: runs coarse and medium, based on R002
+    if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) toolParametrizeMesh();
+    if (!meshParams().isEmpty() && findParam(MESH_SCALE) != null) {
+      createMeshRuns(r2, meshParams(), new ArrayList<>(Arrays.asList(new MeshLevel("coarse", 2.0), new MeshLevel("medium", 1.0))), true);
+    }
+    for (String[] r : trackerRows(dir)) {
+      log.line(String.format("study row %s  file %-40s based on %-8s comment %s", runId(runOf(r[COL_ID])), r[COL_FILE],
+          r[COL_BASED].isEmpty() ? "-" : runOf(r[COL_BASED]) > 0 ? runId(runOf(r[COL_BASED])) : r[COL_BASED], r[COL_COMMENT].replace("\n", " | ")));
+    }
+    log.line("study row label of the returned file: " + fileLabel(back.getFileName().toString()));
+    writeTrackerCsv(dir, trackerRows(dir));
+    log.line("study tracker csv: " + dir.resolve(TRACKER_CSV));
   }
 
   // ----- Run on cluster -----
@@ -1470,14 +1492,119 @@ public class SimKit extends StarMacro {
     Map<String, Map<String, String>> ids = new HashMap<>();
     for (String[] r : rows) {
       String cid = caseOf(r[COL_ID]);
-      Map<String, String> id = ids.computeIfAbsent(cid, k -> readIdentity(casesDir.resolve(k).resolve("sim").resolve("case_identity.txt")));
+      Map<String, String> id = ids.computeIfAbsent(cid, k -> identityOf(casesDir, k));
       if (isHidden(id, verOf(r[COL_ID]))) out.add(r[COL_FILE]);
     }
     return out;
   }
 
+  // ----- a study in the tracker: one group (the study) whose rows are its runs; ID <study>.v007, shown as R007 -----
+
+  static boolean isStudy(Path dir) { return dir != null && Files.isRegularFile(dir.resolve(STUDY_FILE)); }
+
+  /** Run number of a tracker row of a study (the part after .v). */
+  static int runOf(String versionId) {
+    try { return Integer.parseInt(verOf(versionId)); } catch (NumberFormatException e) { return -1; }
+  }
+
+  /** The record of the run of key "<what>_v<nnn>" of a study, and the key in it ("comment", "status", "hidden"). */
+  static Path runRecord(Path study, int run) { return study.resolve("record").resolve(runId(run) + ".txt"); }
+
+  /** The identity of a case, or for a study: the study's file plus each run's comment_v / status_v / hidden_v. */
+  static Map<String, String> identityOf(Path dir, String caseId) {
+    if (!isStudy(dir)) return readIdentity(dir.resolve(caseId).resolve("sim").resolve("case_identity.txt"));
+    Map<String, String> m = readIdentity(dir.resolve(STUDY_FILE));
+    for (Path f : Fs.list(dir.resolve("record"), "R*.txt")) {
+      Matcher x = Pattern.compile("^R([0-9]{3,4})\\.txt$").matcher(f.getFileName().toString());
+      if (!x.matches()) continue;
+      String v = String.format(Locale.ROOT, "%03d", Integer.parseInt(x.group(1)));
+      for (Map.Entry<String, String> e : readIdentity(f).entrySet()) m.put(e.getKey() + "_v" + v, e.getValue());
+    }
+    return m;
+  }
+
+  /** Every .sim of a study by run number (the saved run and the copies that came back, anywhere below the study). */
+  static Map<Integer, List<Path>> studyFiles(Path study) {
+    Map<Integer, List<Path>> out = new TreeMap<>();
+    try (java.util.stream.Stream<Path> w = Files.walk(study, 6)) {
+      w.filter(p -> p.getFileName().toString().endsWith(".sim") && !p.toString().contains(".simkit")).forEach(p -> {
+        Matcher m = RUN_FILE.matcher(p.getFileName().toString());
+        if (m.matches()) out.computeIfAbsent(Integer.parseInt(m.group(1)), k -> new ArrayList<>()).add(p);
+      });
+    } catch (IOException e) { /* nothing readable */ }
+    for (List<Path> l : out.values()) {   // oldest first; same time (a copy keeps its date): the higher iteration last
+      l.sort((a, b) -> {
+        int k = Long.compare(mtime(a), mtime(b));
+        return k != 0 ? k : Double.compare(iterNum(a.getFileName().toString()), iterNum(b.getFileName().toString()));
+      });
+    }
+    return out;
+  }
+
+  static long mtime(Path p) {
+    try { return Files.getLastModifiedTime(p).toMillis(); } catch (IOException e) { return 0; }
+  }
+
+  static double iterNum(String file) {
+    String it = iterOf(file);
+    try { return it.isEmpty() ? -1 : Double.parseDouble(it); } catch (NumberFormatException e) { return -1; }
+  }
+
+  /** Iteration (or time) in a file name written during or after a run: R007_x_iter_05000.sim, or STAR's @05000. */
+  static String iterOf(String file) {
+    Matcher m = Pattern.compile("(?:_iter_|@)([0-9.eE+-]+?)(?:-[0-9_]+)?\\.sim$").matcher(file);
+    return m.find() ? m.group(1).replaceFirst("^0+(?=[0-9])", "") : "";
+  }
+
+  /** One row per run of a study: its latest file (what you continue from), comment, status, based on. */
+  static List<String[]> studyRows(Path study) {
+    List<String[]> rows = new ArrayList<>();
+    String name = study.getFileName().toString();
+    Map<Integer, List<Path>> files = studyFiles(study);
+    Set<Integer> runs = new TreeSet<>(files.keySet());
+    for (Path f : Fs.list(study.resolve("record"), "R*.txt")) {
+      Matcher x = Pattern.compile("^R([0-9]{3,4})\\.txt$").matcher(f.getFileName().toString());
+      if (x.matches()) runs.add(Integer.parseInt(x.group(1)));
+    }
+    String desc = readIdentity(study.resolve(STUDY_FILE)).getOrDefault("description", "");
+    for (int n : runs) {
+      Map<String, String> r0 = readIdentity(runRecord(study, n));
+      List<Path> fs = files.getOrDefault(n, Collections.emptyList());
+      String[] r = new String[TRACKER_COLS.length];
+      Arrays.fill(r, "");
+      r[COL_ID] = name + ".v" + String.format(Locale.ROOT, "%03d", n);
+      r[COL_COMMENT] = r0.getOrDefault("comment", "");
+      r[COL_STATUS] = r0.getOrDefault("status", "");
+      Matcher b = Pattern.compile("^R([0-9]{3,4})$").matcher(r0.getOrDefault("based_on", ""));
+      r[COL_BASED] = b.matches() ? name + ".v" + String.format(Locale.ROOT, "%03d", Integer.parseInt(b.group(1))) : r0.getOrDefault("based_on", "");
+      r[COL_DESC] = desc;
+      Path last = fs.isEmpty() ? null : fs.get(fs.size() - 1);
+      if (last != null) {
+        r[COL_SAVED] = new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date(mtime(last)));
+        r[COL_FILE] = study.relativize(last).toString().replace('\\', '/');
+      } else {
+        r[COL_SAVED] = r0.getOrDefault("created", "");
+        r[COL_FILE] = r0.getOrDefault("file", "");
+      }
+      rows.add(r);
+    }
+    return rows;
+  }
+
+  /** The file of a tracker row: <case>/sim/<file>, or for a study the path below the study folder. */
+  static Path fileOf(Path dir, String[] r) {
+    return isStudy(dir) ? dir.resolve(r[COL_FILE]) : dir.resolve(caseOf(r[COL_ID])).resolve("sim").resolve(r[COL_FILE]);
+  }
+
   /** Hides or shows again a whole case (v == null) or one version; only case_identity.txt changes. */
   static void setHidden(Path casesDir, String caseId, String v, boolean hide) throws IOException {
+    if (isStudy(casesDir)) {
+      Path f = v == null ? casesDir.resolve(STUDY_FILE) : runRecord(casesDir, Integer.parseInt(v));
+      Map<String, String> m = readIdentity(f);
+      if (hide) m.put("hidden", "yes"); else m.remove("hidden");
+      Fs.write(f, identityText(m));
+      return;
+    }
     Path idf = casesDir.resolve(caseId).resolve("sim").resolve("case_identity.txt");
     Map<String, String> id = readIdentity(idf);
     if (v == null) {
@@ -1493,6 +1620,7 @@ public class SimKit extends StarMacro {
 
   /** One row per version file in casesDir/<CASEID>/sim/. Reads only files; never the simulation. */
   static List<String[]> trackerRows(Path casesDir) {
+    if (isStudy(casesDir)) return studyRows(casesDir);
     List<String[]> rows = new ArrayList<>();
     for (Path d : Fs.list(casesDir, "*")) {
       if (!CASE_ID.matcher(d.getFileName().toString()).matches()) continue;
@@ -1590,7 +1718,7 @@ public class SimKit extends StarMacro {
       log.line("open sim: STAR-CCM+ Load dialog NOT found (" + reason(t) + "): the tracker loads with default options");
     }
     for (String[] r : trackerRows(c.casesDir)) {
-      Path f = c.casesDir.resolve(caseOf(r[COL_ID])).resolve("sim").resolve(r[COL_FILE]);
+      Path f = fileOf(c.casesDir, r);
       if (Fs.same(f, c.simFile)) continue;
       Simulation s = openSim(f);
       log.line("open sim: " + f.getFileName() + " -> " + (s == null ? "already open" : "loaded as '" + s.getPresentationName()
@@ -1616,7 +1744,8 @@ public class SimKit extends StarMacro {
     }
     log.line("case tracker: " + rows.size() + " version(s) in " + dir + " (window open)");
     result("case tracker open, " + rows.size() + " version(s)");
-    final String openId = c != null ? versionId(c) : null;
+    final String openId = c == null ? null : c.study ? c.caseDir.getFileName() + ".v" + String.format(Locale.ROOT, "%03d", c.nnn)
+        : versionId(c);
     Ui.edt(() -> {
       TrackerWindow t = new TrackerWindow(dir, openId);
       t.w.setLocationRelativeTo(Ui.owner());
@@ -1642,6 +1771,14 @@ public class SimKit extends StarMacro {
 
   /** Sets one key of a case's case_identity.txt, read just before writing so other keys (a colleague's edits) are kept. */
   static void setIdentityKey(Path casesDir, String caseId, String key, String value) throws IOException {
+    if (isStudy(casesDir)) {   // a run's comment / status in record/R<nnn>.txt; the description in the study file
+      Matcher m = Pattern.compile("^([a-z]+)_v([0-9]+)$").matcher(key);
+      Path f = m.matches() ? runRecord(casesDir, Integer.parseInt(m.group(2))) : casesDir.resolve(STUDY_FILE);
+      Map<String, String> id = readIdentity(f);
+      id.put(m.matches() ? m.group(1) : key, value == null ? "" : value);
+      Fs.write(f, identityText(id));
+      return;
+    }
     Path idf = casesDir.resolve(caseId).resolve("sim").resolve("case_identity.txt");
     Map<String, String> id = readIdentity(idf);
     id.put(key, value == null ? "" : value);
@@ -1723,6 +1860,12 @@ public class SimKit extends StarMacro {
 
   /** The optional name in a version file: ISO-007_cold_v03.sim -> "cold". */
   static String fileLabel(String file) {
+    String f = file == null ? "" : file.substring(file.lastIndexOf('/') + 1);
+    Matcher r = RUN_FILE.matcher(f);
+    if (r.matches()) {   // a run: its name, and the iteration of a file that came back from a run
+      String it = iterOf(f);
+      return (r.group(2) == null ? "" : r.group(2)) + (it.isEmpty() ? "" : (r.group(2) == null ? "" : "  \u00B7  ") + "it " + it);
+    }
     Matcher m = SIM_NAME.matcher(file == null ? "" : file);
     return m.matches() && m.group(5) != null ? m.group(5) : "";
   }
@@ -1944,8 +2087,15 @@ public class SimKit extends StarMacro {
     }
     String areaKey = null;   // what the details text area edits: version ID (comment) or "case:<id>" (description)
 
+    /** A study: the rows are runs (R007); else cases and versions. */
+    boolean study;
+
+    /** An ID as shown: R007 for a run of a study, else as it is. */
+    String shown(String id) { return study && id.matches(".*\\.v[0-9]+$") ? runId(runOf(id)) : id; }
+
     TrackerWindow(Path dir0, String openId) {
       this.dir = dir0;
+      this.study = isStudy(dir0);
       this.openId = openId;
       if (openId != null) expanded.add(caseOf(openId));
       for (String p : Env.pref("trackerPins").split("\n")) if (!p.trim().isEmpty()) pins.add(p.trim());
@@ -2191,7 +2341,7 @@ public class SimKit extends StarMacro {
       close.addActionListener(e -> w.dispose());
 
       JPanel topLeft = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
-      JLabel casesIn = new JLabel("Cases in");
+      final JLabel casesIn = new JLabel(study ? "Study" : "Cases in");
       casesIn.setForeground(grey);
       folderName.setFont(folderName.getFont().deriveFont(Font.BOLD));
       topLeft.add(casesIn);
@@ -2321,7 +2471,7 @@ public class SimKit extends StarMacro {
       byCase.clear();
       ids.clear();
       for (String[] r : rows) byCase.computeIfAbsent(caseOf(r[COL_ID]), k -> new ArrayList<>()).add(r);
-      for (String cid : byCase.keySet()) ids.put(cid, readIdentity(dir.resolve(cid).resolve("sim").resolve("case_identity.txt")));
+      for (String cid : byCase.keySet()) ids.put(cid, identityOf(dir, cid));
       if (openId == null && expanded.isEmpty()) expanded.addAll(byCase.keySet());
       w.setTitle("Case tracker  -  cases in " + dir);
       folderName.setText(dir.getFileName() == null ? dir.toString() : dir.getFileName().toString());
@@ -2376,7 +2526,7 @@ public class SimKit extends StarMacro {
           else { nVers++; if (r[COL_STATUS].equals("running") || r[COL_STATUS].equals("meshing")) nRunning++; }
           if (h && !showHidden.isSelected()) continue;
           if (!statusOk(r[COL_STATUS])) continue;
-          String all = (String.join(" ", r) + " " + cid).toLowerCase(Locale.ROOT);
+          String all = (String.join(" ", r) + " " + cid + " " + shown(r[COL_ID])).toLowerCase(Locale.ROOT);
           if (!t.isEmpty() && !all.contains(t)) continue;
           vis.add(r);
         }
@@ -2388,7 +2538,8 @@ public class SimKit extends StarMacro {
       model.fireTableDataChanged();
       rowHeights();
       for (int i = 0; i < view.size(); i++) if (sel.contains(view.get(i).key())) table.addRowSelectionInterval(i, i);
-      summary.setText(nCases + (nCases == 1 ? " case" : " cases") + "  ·  " + nVers + (nVers == 1 ? " version" : " versions")
+      summary.setText((study ? "" : nCases + (nCases == 1 ? " case" : " cases") + "  ·  ") + nVers + (study ? (nVers == 1 ? " run" : " runs")
+          : nVers == 1 ? " version" : " versions")
           + (nRunning > 0 ? "  ·  " + nRunning + " meshing or running" : "") + (nHidden > 0 ? "  ·  " + nHidden + " hidden" : ""));
       showDetails();
     }
@@ -2423,9 +2574,9 @@ public class SimKit extends StarMacro {
         setIdentityKey(dir, caseOf(r[COL_ID]), key + "_v" + verOf(r[COL_ID]), value);
         r[col] = value;
         if (col == COL_COMMENT && r[COL_ID].equals(areaKey) && !value.equals(liveMd())) setLive(value);   // else the box would put the old text back
-        afterSave("Saved: " + key + " of " + r[COL_ID]);
+        afterSave("Saved: " + key + " of " + shown(r[COL_ID]));
       } catch (Throwable t) {
-        say("NOT saved (" + key + " of " + r[COL_ID] + "): " + reason(t), red);
+        say("NOT saved (" + key + " of " + shown(r[COL_ID]) + "): " + reason(t), red);
       }
     }
 
@@ -2502,13 +2653,13 @@ public class SimKit extends StarMacro {
         Map<String, String> id = ids.getOrDefault(sel.get(0).caseId, new HashMap<>());
         List<String> bits = new ArrayList<>();
         bits.add("file " + r[COL_FILE]);
-        bits.add(r[COL_BASED].isEmpty() ? "first version" : "based on " + r[COL_BASED]);
+        bits.add(r[COL_BASED].isEmpty() ? (study ? "first run" : "first version") : "based on " + shown(r[COL_BASED]));
         bits.add("saved " + r[COL_SAVED]);
         if (!id.getOrDefault("mesh_level", "").isEmpty()) bits.add("mesh: " + id.get("mesh_level")
             + (id.getOrDefault("mesh_cells", "").isEmpty() ? "" : ", " + id.get("mesh_cells") + " cells"));
         if (r[COL_ID].equals(openId)) bits.add("open in STAR-CCM+");
         if (hidden(r) || caseHidden(sel.get(0).caseId)) bits.add("hidden");
-        headline.setText("<html>" + html(r[COL_ID]) + "<br><font color='#6B7580'>" + html(String.join("  ·  ", bits))
+        headline.setText("<html>" + html(shown(r[COL_ID])) + "<br><font color='#6B7580'>" + html(String.join("  ·  ", bits))
             + "</font></html>");
         areaLabel.setText("Comments");
         key = r[COL_ID];
@@ -2881,7 +3032,7 @@ public class SimKit extends StarMacro {
       List<String> lines = new ArrayList<>();
       for (Item it : selected()) {
         if (it.isCase()) lines.add(it.caseId + "  " + dir.resolve(it.caseId).toAbsolutePath().normalize());
-        else lines.add(it.r[COL_ID] + "  " + dir.resolve(it.caseId).resolve("sim").resolve(it.r[COL_FILE]).toAbsolutePath().normalize());
+        else lines.add(shown(it.r[COL_ID]) + "  " + fileOf(dir, it.r).toAbsolutePath().normalize());
       }
       if (lines.isEmpty()) return;
       try {
@@ -2898,7 +3049,7 @@ public class SimKit extends StarMacro {
     void openResults() {
       List<Item> sel = selected();
       if (sel.isEmpty()) return;
-      Path res = dir.resolve(sel.get(0).caseId).resolve("results");
+      Path res = (study ? dir : dir.resolve(sel.get(0).caseId)).resolve("results");
       if (!Files.isDirectory(res)) { say("No results yet for " + sel.get(0).caseId + ": run Export results on it", grey); return; }
       try { Ui.browse(res.toUri().toString()); } catch (Throwable t) { say("Cannot open: " + reason(t), red); }
     }
@@ -2940,7 +3091,7 @@ public class SimKit extends StarMacro {
         if (v == null || v.isEmpty()) return null;
         r = v.get(v.size() - 1);
       }
-      return dir.resolve(caseOf(r[COL_ID])).resolve("sim").resolve(r[COL_FILE]);
+      return fileOf(dir, r);
     }
 
     /** Opens the selected version in a STAR-CCM+ tab. Already open with its tab: that tab comes to the front. Else
@@ -3006,7 +3157,7 @@ public class SimKit extends StarMacro {
     void openFolder() {
       List<Item> sel = selected();
       if (sel.isEmpty()) return;
-      try { Ui.browse(dir.resolve(sel.get(0).caseId).toUri().toString()); } catch (Throwable t) { say("Cannot open: " + reason(t), red); }
+      try { Ui.browse((study ? dir : dir.resolve(sel.get(0).caseId)).toUri().toString()); } catch (Throwable t) { say("Cannot open: " + reason(t), red); }
     }
 
     void hideOrShow() {
@@ -3061,6 +3212,7 @@ public class SimKit extends StarMacro {
         Path d = Ui.chooseDir("Case tracker: folder that holds the case folders", dir);
         Fs.allow(d);
         dir = d;
+        study = isStudy(d);
         expanded.clear();
         reload();
         updateCaseList(dir);
@@ -3188,7 +3340,7 @@ public class SimKit extends StarMacro {
             int n = byCase.get(it.caseId).size();
             setFont(f);
             setForeground(grey);
-            s = n + (n == 1 ? " version" : " versions");
+            s = n + (study ? (n == 1 ? " run" : " runs") : n == 1 ? " version" : " versions");
           }
           setText(s);
           return this;
@@ -3204,7 +3356,7 @@ public class SimKit extends StarMacro {
             setIconTextGap(6);
             if (s.equals(openId)) setToolTipText("Open in STAR-CCM+ now");
             String lab = fileLabel(it.r[COL_FILE]);
-            setText(lab.isEmpty() ? s : "<html>" + html(s) + "&nbsp;&nbsp;<font color='#8A94A0'>" + html(lab) + "</font></html>");
+            setText(lab.isEmpty() ? shown(s) : "<html>" + html(shown(s)) + "&nbsp;&nbsp;<font color='#8A94A0'>" + html(lab) + "</font></html>");
             setToolTipText(it.r[COL_FILE] + (s.equals(openId) ? "  (open in STAR-CCM+ now)" : ""));
             return this;
           }
@@ -3215,10 +3367,10 @@ public class SimKit extends StarMacro {
           case T_BASED:
             if (s.isEmpty()) { setForeground(pale); setText("—"); }
             else if (byId(s) != null) {
-              setText("<html><u>" + html(s) + "</u></html>");
+              setText("<html><u>" + html(shown(s)) + "</u></html>");
               if (!sel && !h) setForeground(link);
-              setToolTipText("Go to " + s);
-            } else setText(s);
+              setToolTipText("Go to " + shown(s));
+            } else setText(shown(s));
             return this;
           default:
             setText(shortDate(s));
@@ -3286,6 +3438,7 @@ public class SimKit extends StarMacro {
 
   /** Rebuilds <cases folder>/case_list.csv from every case_identity.txt. Never stops the calling tool. */
   Path updateCaseList(Path casesDir) {
+    if (isStudy(casesDir)) return null;   // a study has its tracker; the case list is for case folders
     try {
       Path f = casesDir.resolve(CASE_LIST);
       Csv.write(f, caseListHeader(), caseRows(casesDir));
@@ -4264,9 +4417,8 @@ public class SimKit extends StarMacro {
    *  follow the factor, then one case per level next to this one, meshed and saved. */
   void toolMeshStudy() throws IOException {
     CaseInfo c = caseOrNull();
-    if (c != null && c.study) throw new Cancel("mesh levels as runs of a study come with the next step (the new tracker); not yet available in a study");
     if (!gui) {
-      if (c == null) throw new Cancel("mesh levels are saved as cases next to this one: start a case first");
+      if (c == null) throw new Cancel("mesh levels are saved as runs of a study: start a study first");
       if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) toolParametrizeMesh();
       if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) throw new Cancel("no mesh size follows " + MESH_SCALE + ": nothing to vary");
       createMeshLevels(c, meshParams(), new ArrayList<>(Arrays.asList(new MeshLevel("coarse", 2.0), new MeshLevel("medium", 1.0))), true);
@@ -4274,8 +4426,8 @@ public class SimKit extends StarMacro {
     }
     if (c == null) {
       boolean go = Ui.sheet("Mesh study", "Coarser and finer copies of this simulation, to check that the results do not depend on the mesh.",
-          Ui.muted("The levels are saved as cases next to this one, so this simulation has to be a case first."),
-          Ui.primary("Start a case..."), null);
+          Ui.muted("The levels are saved as runs of a study, so this simulation has to be in a study first."),
+          Ui.primary("Start a study..."), null);
       if (!go) throw new Cancel(null);
       toolSave();
       c = caseOrNull();
@@ -4425,9 +4577,11 @@ public class SimKit extends StarMacro {
         if (Boolean.TRUE.equals(model.getValueAt(i, 0))) { n++; names.add(String.valueOf(model.getValueAt(i, 1)).trim()); }
       }
       ok.setText(n == 1 ? "Create 1 level" : "Create " + n + " levels");
-      int no = nextCaseNo(c.casesDir, c.proj);
+      int no = c.study ? nextRun(c.caseDir) : nextCaseNo(c.casesDir, c.proj);
       List<String> fs = new ArrayList<>();
-      for (int i = 0; i < names.size() && i < 4; i++) fs.add(String.format(Locale.ROOT, "%s-%03d_%s_v01.sim", c.proj, no + i, names.get(i)));
+      for (int i = 0; i < names.size() && i < 4; i++) {
+        fs.add(c.study ? runId(no + i) + "_" + names.get(i) + ".sim" : String.format(Locale.ROOT, "%s-%03d_%s_v01.sim", c.proj, no + i, names.get(i)));
+      }
       files.setText(String.join(",  ", fs) + (names.size() > 4 ? ", ..." : ""));
     };
     model.addTableModelListener(e -> upd.run());
@@ -4488,6 +4642,10 @@ public class SimKit extends StarMacro {
   /** Saves one case per level: p_meshScale and the edited sizes set, solution cleared, mesh generated (or cleared),
    *  case folder + identity (parent, mesh_study, mesh_level, mesh_scale, cells). */
   void createMeshLevels(CaseInfo c, Map<String, ScalarGlobalParameter> params, List<MeshLevel> levels, boolean mesh) throws IOException {
+    if (c.study) {
+      createMeshRuns(c, params, levels, mesh);
+      return;
+    }
     ScalarGlobalParameter scale = findParam(MESH_SCALE);
     Map<String, Double> base = new LinkedHashMap<>();
     for (Map.Entry<String, ScalarGlobalParameter> e : params.entrySet()) base.put(e.getKey(), e.getValue().getQuantity().getValue());
@@ -4544,6 +4702,42 @@ public class SimKit extends StarMacro {
     updateCaseList(c.casesDir);
     log.line("mesh levels saved; " + c.simBase() + " is unchanged on disk (" + MESH_SCALE + " = " + shortNum(scale0) + ").\n"
         + "Run each level, Export results, then Calculators > Grid convergence (GCI) > From cases.");
+    result(made.size() + " mesh level(s): " + String.join(", ", made) + (last == null ? "" : ". Now in " + last.simFile.getFileName()));
+  }
+
+  /** Mesh levels in a study: one run per level (R008_coarse, R009_medium ...), each based on the run you started from,
+   *  with mesh_study, mesh_level, mesh_scale and mesh_cells in its record. The open file stays as it is on disk. */
+  void createMeshRuns(CaseInfo c, Map<String, ScalarGlobalParameter> params, List<MeshLevel> levels, boolean mesh) throws IOException {
+    ScalarGlobalParameter scale = findParam(MESH_SCALE);
+    double scale0 = scale.getQuantity().getValue();
+    String study = c.caseId + " " + Fmt.iso();
+    star.meshing.MeshPipelineController pipe = sim.get(star.meshing.MeshPipelineController.class);
+    List<String> made = new ArrayList<>();
+    CaseInfo last = null;
+    log.line("mesh study from " + c.caseId + ": " + levels.size() + " level(s)" + (mesh ? ", meshed now" : ", saved without a mesh"));
+    for (MeshLevel L : levels) {
+      scale.getQuantity().setValue(L.scale);
+      try { sim.getSolution().clearSolution(); } catch (Throwable t) { log.na("clear the solution", t); }
+      String cells = "";
+      if (mesh) {
+        log.line("  " + L.name + ": meshing with " + MESH_SCALE + " = " + shortNum(L.scale) + " ...");
+        pipe.generateVolumeMesh();
+        String n = cellCount();
+        cells = n == null ? "" : shortNum(Fmt.parse(n));
+      } else {
+        try { pipe.clearGeneratedMeshes(); } catch (Throwable t) { log.na("clear the mesh", t); }
+      }
+      Map<String, String> extra = new LinkedHashMap<>();
+      extra.put("mesh_study", study);
+      extra.put("mesh_level", L.name);
+      extra.put("mesh_scale", shortNum(L.scale));
+      if (!cells.isEmpty()) extra.put("mesh_cells", cells);
+      CaseInfo n = saveRun(c.caseDir, L.name, "mesh study: " + L.name + " (mesh factor " + shortNum(L.scale) + ")", c, extra);
+      made.add((n == null ? "?" : n.caseId) + " " + L.name + (cells.isEmpty() ? "" : " " + cells + " cells"));
+      last = n;
+    }
+    log.line("mesh levels saved as runs; " + c.simFile.getFileName() + " is unchanged on disk (" + MESH_SCALE + " = " + shortNum(scale0)
+        + ").\nRun each level, Export results, then Calculators > Grid convergence (GCI) > From cases.");
     result(made.size() + " mesh level(s): " + String.join(", ", made) + (last == null ? "" : ". Now in " + last.simFile.getFileName()));
   }
 

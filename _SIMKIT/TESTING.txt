@@ -382,4 +382,11 @@ C. RESULTS SO FAR
   SimKit_RunOnCluster.java (+ icon); installer list updated. Batch step 11c (studytest): study, R001, R002, the command
   and script (no bsub). Not yet: tracker of runs, mesh study and GCI on runs, report markers (step 3); a real LSF round
   trip and konsole are untested here (Windows).
+  Studies step 3: tracker on a study (one group = the study, rows = runs, ID <study>.v007 shown as R007; latest file
+  of each run found anywhere below the study (returned copies, same date -> higher iteration); comment / status /
+  hidden in record/R<nnn>.txt, description in simkit_study.txt; filter by run number; results and folder buttons on the
+  study). Mesh study in a study: one run per level based on the starting run (record: mesh_study, mesh_level,
+  mesh_scale, mesh_cells). Calculators: a study is the folder for calc_log (record/), GCI From cases reads the runs'
+  record/key_results_R*.csv. Batch 11c extended: returned copy in job_12345_host_07/, comment via the tracker,
+  coarse + medium runs, study rows and case_tracker.csv. Offline StudyShot (tracker on a study, filter R004) passed.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.

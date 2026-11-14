@@ -249,6 +249,8 @@ public class SimKitCalc extends StarMacro {
     if (simPath == null || simPath.trim().isEmpty()) return null;
     try {
       Path f = Paths.get(simPath).toAbsolutePath().normalize();
+      Path d = f.getParent();   // a study (simkit_study.txt in the folder or up to 5 above): its record/ holds calc_log.csv
+      for (int k = 0; d != null && k < 6; k++, d = d.getParent()) if (Files.isRegularFile(d.resolve("simkit_study.txt"))) return d;
       Path simDir = f.getParent();
       if (simDir == null || !simDir.getFileName().toString().equalsIgnoreCase("sim")) return null;
       Path cd = simDir.getParent();
@@ -1290,19 +1292,64 @@ public class SimKitCalc extends StarMacro {
     return kv;
   }
 
+  /** Run number of the open simulation (parameter p_simkit_run), or -1. */
+  int currentRun() {
+    try {
+      for (Object o : sim.get(star.common.GlobalParameterManager.class).getObjects()) {
+        if (o instanceof star.common.ScalarGlobalParameter && "p_simkit_run".equals(((star.common.ScalarGlobalParameter) o).getPresentationName())) {
+          return (int) Math.round(((star.common.ScalarGlobalParameter) o).getQuantity().getRawValue());
+        }
+      }
+    } catch (Throwable t) { /* none */ }
+    return -1;
+  }
+
   /** GCI from 3 SimKit cases (mesh levels): reads each case's record/key_results.csv (written by Export results:
    *  cells, p_meshScale and every report value), lets the user pick the 3 cases and the quantity, fills the form. */
   void gciFromCases(Form a, Tab t) {
     try {
-      java.io.File start = caseDir != null && caseDir.getParent() != null ? caseDir.getParent().toFile() : null;
-      JFileChooser fc = new JFileChooser(start);
-      fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-      fc.setDialogTitle("Folder that holds the case folders of the mesh levels");
-      if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) return;
-      Path dir = fc.getSelectedFile().toPath();
+      Path dir;
+      boolean isStudy = caseDir != null && Files.isRegularFile(caseDir.resolve("simkit_study.txt"));
+      if (isStudy) {
+        dir = caseDir;   // the runs of this study
+      } else {
+        java.io.File start = caseDir != null && caseDir.getParent() != null ? caseDir.getParent().toFile() : null;
+        JFileChooser fc = new JFileChooser(start);
+        fc.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        fc.setDialogTitle("Folder that holds the case folders of the mesh levels, or a study");
+        if (fc.showOpenDialog(dlg) != JFileChooser.APPROVE_OPTION) return;
+        dir = fc.getSelectedFile().toPath();
+        isStudy = Files.isRegularFile(dir.resolve("simkit_study.txt"));
+      }
       List<String> names = new ArrayList<>(), studies = new ArrayList<>();
       List<Map<String, String>> data = new ArrayList<>();
-      try (java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
+      String mine0 = "";
+      if (isStudy) {   // one entry per run: its latest record/key_results_R<nnn>....csv (written by Export results)
+        Map<Integer, Path> latest = new java.util.TreeMap<>();
+        try (java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(dir.resolve("record"), "key_results_R*.csv")) {
+          for (Path p : ds) {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("^key_results_R([0-9]{3,4}).*\\.csv$").matcher(p.getFileName().toString());
+            if (!m.matches()) continue;
+            int n = Integer.parseInt(m.group(1));
+            Path o = latest.get(n);
+            if (o == null || Files.getLastModifiedTime(p).compareTo(Files.getLastModifiedTime(o)) > 0) latest.put(n, p);
+          }
+        } catch (IOException e) { /* no results yet */ }
+        try { mine0 = identity(dir.resolve("record").resolve(String.format(Locale.ROOT, "R%03d.txt", currentRun()))).getOrDefault("mesh_study", ""); }
+        catch (Throwable x) { /* not a run */ }
+        for (Map.Entry<Integer, Path> e : latest.entrySet()) {
+          Map<String, String> m = new LinkedHashMap<>();
+          List<String[]> rows = Csv.parse(Fs.read(e.getValue()));
+          for (int i = 1; i < rows.size(); i++) if (rows.get(i).length >= 2) m.put(rows.get(i)[0], rows.get(i)[1]);
+          if (!m.containsKey("cells")) continue;
+          Map<String, String> idm = identity(dir.resolve("record").resolve(String.format(Locale.ROOT, "R%03d.txt", e.getKey())));
+          names.add(String.format("R%03d  %-8s cells %-10s factor %-6s (%s)", e.getKey(), idm.getOrDefault("mesh_level", idm.getOrDefault("name", "")),
+              m.get("cells"), m.getOrDefault("p_meshScale", "-"), e.getValue().getFileName()));
+          studies.add(idm.getOrDefault("mesh_study", ""));
+          data.add(m);
+        }
+      }
+      if (!isStudy) try (java.nio.file.DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {
         for (Path d : ds) {
           Path kr = d.resolve("record").resolve("key_results.csv");
           if (!CASE_ID.matcher(d.getFileName().toString()).matches() || !Files.isRegularFile(kr)) continue;
@@ -1320,15 +1367,15 @@ public class SimKitCalc extends StarMacro {
         }
       }
       if (data.size() < 3) {
-        t.out.setText("GCI from cases: found " + data.size() + " case(s) with results in " + dir + ".\n"
-            + "Each mesh level needs its own case and an Export results after its run (that writes cells and the values).");
+        t.out.setText("GCI from cases: found " + data.size() + (isStudy ? " run(s)" : " case(s)") + " with results in " + dir + ".\n"
+            + "Each mesh level needs its own run (or case) and an Export results after its run (that writes cells and the values).");
         return;
       }
       javax.swing.JList<String> list = new javax.swing.JList<>(names.toArray(new String[0]));
       list.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
       list.setSelectionMode(javax.swing.ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
       // pre-select the levels of a mesh study (Mesh study > Create mesh levels): this case's study, else the only one
-      String mine = caseDir == null ? "" : identity(caseDir.resolve("sim").resolve("case_identity.txt")).getOrDefault("mesh_study", "");
+      String mine = isStudy ? mine0 : caseDir == null ? "" : identity(caseDir.resolve("sim").resolve("case_identity.txt")).getOrDefault("mesh_study", "");
       Set<String> distinct = new HashSet<>(studies);
       distinct.remove("");
       if (mine.isEmpty() && distinct.size() == 1) mine = distinct.iterator().next();
