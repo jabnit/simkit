@@ -583,3 +583,13 @@ C. RESULTS SO FAR
   when a parametrized sim is parametrized again (parameters already in another folder stay there). SKT88: exit codes 0
   (08b/08c skipped: STAR-CCM+ window open); 07c: Mesh study 2 objects, Mesh sizes 1 (p_mesh_MO30autoMesh_baseSize).
   Not run: the tree view in the GUI.
+  Mesh study window after a UI review (2026-11-14): Levels table (Level, Size factor, Base size, Cells (est.) = current
+  count x (current factor / factor)^3, Saved as), Refinement ratio + "Current mesh is the coarsest / middle / finest
+  level" set the factors, levels saved coarse to fine; amber note (p_meshScale not 1, sizes set by an expression,
+  ratio below 1.3, fewer than 3 levels); Mesh sizes table with every size and its status (Link / Linked / Not scaled /
+  Relative to base size / Expression); prism rows unticked (no master checkbox); same-factor check; "Parametrize sizes
+  only" bottom left; own links no longer reported as foreign expressions. New: mesh_study_R00n/mesh_study.csv (level,
+  run, size_factor, base_size, cells, phi; fine first, for the GCI calculator). Batch levels: coarse 1.41 and medium 1.
+  SKT89: exit codes 0 (08b/08c skipped: STAR-CCM+ window open); mesh_study.csv: medium R003 14655 cells, coarse R002
+  7962 cells. Offline: window rendered (MeshShot). Not run: the window in the STAR-CCM+ GUI. Not done (reviewer
+  options): keep the solution as starting field (needs a check of the solution mapping), GCI from a finished study.

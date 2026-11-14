@@ -6618,6 +6618,8 @@ public class SimKit extends StarMacro {
     String pName, def = "", note = "";
     double raw;
     Object units;
+    String state = "link";                 // link (can be linked) | linked (follows p_meshScale) | relative | expr (other expression)
+    boolean pick;                          // ticked in the window: linked to the factor
   }
 
   /** Size settings: class, label, kind. BaseSize / PrismWallThickness are quantities; the others are
@@ -6635,7 +6637,7 @@ public class SimKit extends StarMacro {
   void toolParametrizeMesh() {
     List<MeshSetting> found = new ArrayList<>();
     List<String> relative = new ArrayList<>(), already = new ArrayList<>();
-    scanMesh(found, relative, already);
+    scanMesh(found, relative, already, null);
     StringBuilder info = new StringBuilder();
     if (!relative.isEmpty()) info.append("Relative to the base size (follow it automatically, nothing to do):\n  ")
         .append(String.join("\n  ", relative)).append('\n');
@@ -6654,21 +6656,21 @@ public class SimKit extends StarMacro {
 
   /** Every absolute mesh length of the automated mesh operations (default values, custom controls, custom prism
    *  values); relative ones and those already set by a parameter or expression go to the two lists. */
-  void scanMesh(List<MeshSetting> found, List<String> relative, List<String> already) {
+  void scanMesh(List<MeshSetting> found, List<String> relative, List<String> already, List<MeshSetting> info) {
     for (Object op : sim.get(MeshOperationManager.class).getObjects()) {
       if (!(op instanceof AutoMeshOperation)) continue;
       String opName = nm(op);
-      try { scanMeshValues(Reflect.invoke(op, "getDefaultValues"), opName, "", found, relative, already); }
+      try { scanMeshValues(Reflect.invoke(op, "getDefaultValues"), opName, "", found, relative, already, info); }
       catch (Throwable t) { log.na("default values of " + opName, t); }
       try {
         for (Object cc : ((AutoMeshOperation) op).getCustomMeshControls().getObjects()) {
           Object cv = Reflect.tryCall(cc, "getCustomValues");
           if (cv == null) continue;
-          scanMeshValues(cv, opName, nm(cc), found, relative, already);
+          scanMeshValues(cv, opName, nm(cc), found, relative, already, info);
           Object prism = null;
           try { prism = Reflect.invoke(cv, "get", Reflect.cls("star.prismmesher.CustomPrismValuesManager")); }
           catch (Throwable t) { /* no custom prism values on this control */ }
-          if (prism != null) scanMeshValues(prism, opName, nm(cc), found, relative, already);
+          if (prism != null) scanMeshValues(prism, opName, nm(cc), found, relative, already, info);
         }
       } catch (Throwable t) { log.na("custom controls of " + opName, t); }
     }
@@ -6731,7 +6733,6 @@ public class SimKit extends StarMacro {
   static final class MeshLevel {
     String name;
     double scale;
-    final Map<String, Double> sizes = new LinkedHashMap<>();   // edited sizes only: parameter -> size in its units
 
     MeshLevel(String name, double scale) {
       this.name = name;
@@ -6753,15 +6754,43 @@ public class SimKit extends StarMacro {
     return t.contains("e") || !t.contains(".") ? t : t.replaceAll("0+$", "").replaceAll("\\.$", "");
   }
 
-  /** Mesh study (one window): the levels (coarse, medium, fine ...) as a table of mesh factors, the mesh sizes that
-   *  follow the factor, then one case per level next to this one, meshed and saved. */
+  /** Readable name of a size setting. */
+  static String meshLabel(String what) {
+    switch (what) {
+      case "baseSize": return "Base size";
+      case "targetSize": return "Target surface size";
+      case "minSize": return "Minimum surface size";
+      case "volSize": return "Volume size";
+      case "prismThick": return "Prism total thickness";
+      case "prismFirst": return "Prism first layer";
+      default: return what;
+    }
+  }
+
+  /** A number with 4 significant digits, trailing zeros removed ("" for NaN). */
+  static String num4(double v) {
+    if (Double.isNaN(v) || Double.isInfinite(v)) return "";
+    if (v == 0) return "0";
+    java.math.BigDecimal b = new java.math.BigDecimal(v).round(new java.math.MathContext(4)).stripTrailingZeros();
+    return Math.abs(v) >= 1e-4 && Math.abs(v) < 1e7 ? b.toPlainString() : b.toString();
+  }
+
+  /** A cell count, short ("2.4 M", "850 k"). */
+  static String cellsShort(double n) {
+    return n >= 1e6 ? String.format(Locale.ROOT, "%.1f M", n / 1e6) : n >= 1e3 ? String.format(Locale.ROOT, "%.0f k", n / 1e3)
+        : String.format(Locale.ROOT, "%.0f", n);
+  }
+
+  /** Mesh study (one window): the levels (coarse, medium, fine ...) as a table of size factors, the mesh sizes and
+   *  whether they follow the factor, then one run per level next to this one, meshed and saved. */
   void toolMeshStudy() throws IOException {
     CaseInfo c = caseOrNull();
     if (!gui) {
       if (c == null) throw new Cancel("mesh levels are saved as runs of a project: start a project first");
       if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) toolParametrizeMesh();
       if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) throw new Cancel("no mesh size follows " + MESH_SCALE + ": nothing to vary");
-      createMeshRuns(c, meshParams(), new ArrayList<>(Arrays.asList(new MeshLevel("coarse", 2.0), new MeshLevel("medium", 1.0))), true);
+      // batch (test): two levels of the GUI defaults, to keep the test short
+      createMeshRuns(c, meshParams(), new ArrayList<>(Arrays.asList(new MeshLevel("coarse", 1.41), new MeshLevel("medium", 1.0))), true);
       return;
     }
     if (c == null) {
@@ -6772,15 +6801,20 @@ public class SimKit extends StarMacro {
       c = caseOrNull();
       if (c == null) throw new Cancel(null);
     }
-    final List<MeshSetting> found = new ArrayList<>();
+    final List<MeshSetting> found = new ArrayList<>(), info = new ArrayList<>();
     List<String> relative = new ArrayList<>(), already = new ArrayList<>();
-    scanMesh(found, relative, already);
+    scanMesh(found, relative, already, info);
     final Map<String, ScalarGlobalParameter> linked = meshParams();
     if (found.isEmpty() && linked.isEmpty()) {
       throw new Cancel("no absolute mesh size in the automated mesh operations (sizes relative to the base size only, or none): nothing to vary");
     }
+    double n0 = Double.NaN;
+    try { String n = cellCount(); if (n != null) n0 = Fmt.parse(n); } catch (Throwable t) { /* no mesh */ }
+    final double cells0 = n0 > 0 ? n0 : Double.NaN;
+    ScalarGlobalParameter sp = findParam(MESH_SCALE);
+    final double scale0 = sp == null ? 1 : sp.getQuantity().getValue();
     final CaseInfo cc = c;
-    Object[] r = Ui.edt(() -> meshWindow(cc, found, linked));
+    Object[] r = Ui.edt(() -> meshWindow(cc, found, linked, info, cells0, scale0));
     if (r == null) throw new Cancel(null);
     @SuppressWarnings("unchecked") List<MeshSetting> link = (List<MeshSetting>) r[0];
     @SuppressWarnings("unchecked") List<MeshLevel> levels = (List<MeshLevel>) r[1];
@@ -6790,12 +6824,16 @@ public class SimKit extends StarMacro {
       result("mesh sizes follow " + MESH_SCALE + " (" + meshParams().size() + "); no level created");
       return;
     }
+    levels.sort((a, b) -> Double.compare(b.scale, a.scale));   // coarse to fine: run numbers in that order
     createMeshRuns(c, meshParams(), levels, (Boolean) r[2]);
   }
 
-  /** The mesh study window (Swing thread). Returns {sizes to link, levels, mesh now, sizes only} or null. */
-  Object[] meshWindow(final CaseInfo c, final List<MeshSetting> found, final Map<String, ScalarGlobalParameter> linked) {
-    // the base size (for the "cell size" column): a linked one, else a found one
+  /** The mesh study window (Swing thread). info: sizes already linked to the factor, relative to the base size, or set
+   *  by another expression (shown, not changed). cells0 / scale0: cell count and p_meshScale of the open run (NaN: no
+   *  mesh). Returns {sizes to link, levels, mesh now, sizes only} or null. */
+  Object[] meshWindow(final CaseInfo c, final List<MeshSetting> found, final Map<String, ScalarGlobalParameter> linked,
+      final List<MeshSetting> info, final double cells0, final double scale0) {
+    // the base size at factor 1: a linked parameter, else a found size
     double b0 = Double.NaN;
     String bu = "";
     for (Map.Entry<String, ScalarGlobalParameter> e : linked.entrySet()) {
@@ -6804,186 +6842,310 @@ public class SimKit extends StarMacro {
         try { bu = nm(e.getValue().getQuantity().getUnits()); } catch (Throwable t) { /* none */ }
       }
     }
-    for (MeshSetting m : found) if (Double.isNaN(b0) && m.what.equals("baseSize")) { b0 = m.raw; bu = nm(m.units); }
+    for (MeshSetting m : found) if (Double.isNaN(b0) && m.what.equals("baseSize")) { b0 = m.raw / (scale0 > 0 ? scale0 : 1); bu = nm(m.units); }
     final double base = b0;
     final String unit = bu;
-    // levels
-    final javax.swing.table.DefaultTableModel model = new javax.swing.table.DefaultTableModel(new String[] {"", "level", "mesh factor",
-        "base size" + (unit.isEmpty() ? "" : " [" + unit + "]")}, 0) {
+    final int next = nextRun(c.caseDir);
+
+    // ----- levels -----
+    final List<String> names = new ArrayList<>();
+    final List<Double> factors = new ArrayList<>();
+    names.addAll(Arrays.asList("coarse", "medium", "fine"));
+    factors.addAll(Arrays.asList(1.41, 1.0, 1 / 1.41));
+    final java.util.function.IntFunction<Integer> rank = i -> {   // place of the row once sorted coarse to fine
+      int k = 0;
+      for (int j = 0; j < factors.size(); j++) {
+        double a = factors.get(j), b = factors.get(i);
+        if (a > b || (a == b && j < i) || (Double.isNaN(b) && !Double.isNaN(a))) k++;
+      }
+      return k;
+    };
+    final javax.swing.table.AbstractTableModel lm = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
-      @Override public Class<?> getColumnClass(int col) { return col == 0 ? Boolean.class : String.class; }
-      @Override public boolean isCellEditable(int row, int col) { return col < 3; }
-      @Override public void setValueAt(Object v, int row, int col) {
-        super.setValueAt(v, row, col);
-        if (col == 2) {
-          double k = Fmt.parse(String.valueOf(v));
-          super.setValueAt(Double.isNaN(base) || Double.isNaN(k) ? "" : shortNum(base * k), row, 3);
+      @Override public int getRowCount() { return names.size(); }
+      @Override public int getColumnCount() { return 5; }
+      @Override public String getColumnName(int col) {
+        return new String[] {"Level", "Size factor", "Base size" + (unit.isEmpty() ? "" : " [" + unit + "]"), "Cells (est.)", "Saved as"}[col];
+      }
+      @Override public boolean isCellEditable(int r, int col) { return col < 2; }
+      @Override public Object getValueAt(int r, int col) {
+        double f = factors.get(r);
+        switch (col) {
+          case 0: return names.get(r);
+          case 1: return num4(f);
+          case 2: return Double.isNaN(base) || Double.isNaN(f) ? "" : num4(base * f);
+          case 3:
+            if (Double.isNaN(cells0) || !(f > 0)) return "";
+            if (Math.abs(f / scale0 - 1) < 1e-6) return cellsShort(cells0);
+            return "~" + cellsShort(cells0 * Math.pow(scale0 / f, 3));
+          default:
+            String n = names.get(r).trim();
+            return n.isEmpty() ? "" : runId(next + rank.apply(r)) + "_" + n;
         }
       }
+      @Override public void setValueAt(Object v, int r, int col) {
+        if (col == 0) names.set(r, String.valueOf(v).trim());
+        else factors.set(r, Fmt.parse(String.valueOf(v)));
+        fireTableDataChanged();
+      }
     };
-    final java.util.function.BiConsumer<String, Double> addRow = (n, k) -> {
-      model.addRow(new Object[] {Boolean.TRUE, n, "", ""});
-      model.setValueAt(shortNum(k), model.getRowCount() - 1, 2);
-    };
-    addRow.accept("coarse", 1.41);
-    addRow.accept("medium", 1.0);
-    addRow.accept("fine", 0.71);
-    final javax.swing.JTable table = new javax.swing.JTable(model);
-    table.setRowHeight(24);
-    table.setShowVerticalLines(false);
-    table.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
+    final JTable table = plainTable(lm);
+    table.putClientProperty("simkit.empty", "No level. Add one.");
     table.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
-    table.getColumnModel().getColumn(0).setMaxWidth(30);
-    javax.swing.table.DefaultTableCellRenderer right = new javax.swing.table.DefaultTableCellRenderer();
-    right.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
-    table.getColumnModel().getColumn(2).setCellRenderer(right);
-    javax.swing.table.DefaultTableCellRenderer greyR = new javax.swing.table.DefaultTableCellRenderer();
-    greyR.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
-    greyR.setForeground(Ui.MUTED);
-    table.getColumnModel().getColumn(3).setCellRenderer(greyR);
-    JScrollPane sp = new JScrollPane(table);
-    sp.setPreferredSize(new java.awt.Dimension(440, 24 * 4 + 28));
-    sp.getViewport().setBackground(java.awt.Color.WHITE);
-    final JComboBox<String> ratio = new JComboBox<>(new String[] {"1.41", "1.5", "2", "1.3", "1.2"});
+    table.setDefaultRenderer(Object.class, textCell((r, col) -> col < 2 ? java.awt.Color.BLACK : Ui.MUTED));
+    final javax.swing.table.DefaultTableCellRenderer rightCell = textCell((r, col) -> col < 2 ? java.awt.Color.BLACK : Ui.MUTED);
+    rightCell.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
+    for (int col = 1; col <= 3; col++) table.getColumnModel().getColumn(col).setCellRenderer(rightCell);
+    int[] w = {120, 90, 110, 100, 180};
+    for (int i = 0; i < w.length; i++) table.getColumnModel().getColumn(i).setPreferredWidth(w[i]);
+    table.getTableHeader().setToolTipText("Cells (est.): current cell count × (current factor / size factor)³. Unscaled prism layers and "
+        + "expression sizes give a smaller change.");
+    if (Double.isNaN(cells0)) table.removeColumn(table.getColumnModel().getColumn(3));
+    if (Double.isNaN(base)) table.removeColumn(table.getColumnModel().getColumn(2));
+
+    final JComboBox<String> ratio = new JComboBox<>(new String[] {"1.2", "1.3", "1.41", "1.5", "2"});
     ratio.setEditable(true);
+    ratio.setSelectedItem("1.41");
+    ratio.setPreferredSize(new java.awt.Dimension(80, ratio.getPreferredSize().height));
+    ratio.setToolTipText("Size ratio between two neighbouring levels. 1.3 or more is recommended for GCI. 1.41 gives about 2.8 times the cells in 3-D.");
+    final JComboBox<String> ref = new JComboBox<>(new String[] {"coarsest", "middle", "finest"});
+    ref.setSelectedIndex(1);
+    ref.setToolTipText("The level that keeps the current sizes (factor 1).");
+    final java.util.function.DoubleSupplier rr = () -> {
+      double x = Fmt.parse(String.valueOf(ratio.getEditor().getItem()));
+      return x > 1 ? x : 1.41;
+    };
     final Runnable applyRatio = () -> {
       if (table.isEditing()) table.getCellEditor().stopCellEditing();
-      double rr = Fmt.parse(String.valueOf(ratio.getEditor().getItem()));
-      if (!(rr > 1)) return;
-      int ref = 0;
-      double best = Double.MAX_VALUE;
-      for (int i = 0; i < model.getRowCount(); i++) {
-        double k = Fmt.parse(String.valueOf(model.getValueAt(i, 2)));
-        if (!Double.isNaN(k) && Math.abs(Math.log(k)) < best) { best = Math.abs(Math.log(k)); ref = i; }
-      }
-      for (int i = 0; i < model.getRowCount(); i++) model.setValueAt(shortNum(Math.pow(rr, ref - i)), i, 2);
+      double x = Fmt.parse(String.valueOf(ratio.getEditor().getItem()));
+      if (!(x > 1)) return;
+      int n = factors.size(), r0 = ref.getSelectedIndex() == 0 ? 0 : ref.getSelectedIndex() == 2 ? n - 1 : (n - 1) / 2;
+      for (int i = 0; i < n; i++) factors.set(i, Math.pow(x, r0 - i));
+      lm.fireTableDataChanged();
     };
     ratio.addActionListener(e -> applyRatio.run());
-    JButton add = Ui.link("+ Add level");
+    ref.addActionListener(e -> applyRatio.run());
+    final JButton add = Ui.link("+ Add level"), del = Ui.link("Remove level");
+    del.setEnabled(false);
+    table.getSelectionModel().addListSelectionListener(e -> del.setEnabled(table.getSelectedRow() >= 0));
     add.addActionListener(e -> {
       if (table.isEditing()) table.getCellEditor().stopCellEditing();
-      double last = model.getRowCount() == 0 ? 1 : Fmt.parse(String.valueOf(model.getValueAt(model.getRowCount() - 1, 2)));
-      double rr = Fmt.parse(String.valueOf(ratio.getEditor().getItem()));
-      addRow.accept("level" + (model.getRowCount() + 1), (Double.isNaN(last) ? 1 : last) / (rr > 1 ? rr : 1.41));
+      String n = "level" + (names.size() + 1);
+      if (ref.getSelectedIndex() == 2 && !factors.isEmpty()) {   // current = finest: a coarser level at the top
+        names.add(0, n);
+        factors.add(0, factors.get(0) * rr.getAsDouble());
+      } else {
+        double last = factors.isEmpty() || Double.isNaN(factors.get(factors.size() - 1)) ? rr.getAsDouble() : factors.get(factors.size() - 1);
+        names.add(n);
+        factors.add(last / rr.getAsDouble());
+      }
+      lm.fireTableDataChanged();
     });
-    JButton del = Ui.link("Remove");
     del.addActionListener(e -> {
       int i = table.getSelectedRow();
       if (i < 0) return;
       if (table.isEditing()) table.getCellEditor().cancelCellEditing();
-      model.removeRow(i);
+      names.remove(i);
+      factors.remove(i);
+      lm.fireTableDataChanged();
     });
-    JPanel tools = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
-    tools.add(add);
-    tools.add(del);
-    tools.add(javax.swing.Box.createHorizontalStrut(16));
-    tools.add(Ui.muted("refinement ratio"));
-    tools.add(ratio);
-    // sizes that follow the factor
-    final List<javax.swing.JCheckBox> boxes = new ArrayList<>();
-    final javax.swing.JCheckBox prism = new javax.swing.JCheckBox("Scale prism layers too  (off: same y+)");
-    JPanel sizes = new JPanel(new GridLayout(0, 1, 0, 1));
-    for (String n : linked.keySet()) {
-      javax.swing.JCheckBox b = new javax.swing.JCheckBox(n.substring("p_mesh_".length()) + "   (already follows the factor)", true);
-      b.setEnabled(false);
-      sizes.add(b);
-    }
-    for (MeshSetting m : found) {
-      javax.swing.JCheckBox b = new javax.swing.JCheckBox(m.op + (m.control.isEmpty() ? "" : " / " + m.control) + "   " + m.what
-          + "   " + shortNum(m.raw) + " " + nm(m.units), m.kind.equals("size"));
-      b.putClientProperty("prism", m.kind.equals("prism"));
-      b.setEnabled(m.kind.equals("size"));
-      boxes.add(b);
-      sizes.add(b);
-    }
+
+    // ----- mesh sizes -----
+    final List<MeshSetting> rows = new ArrayList<>();
+    for (MeshSetting m : info) if (m.state.equals("linked")) rows.add(m);
+    for (MeshSetting m : found) { m.state = "link"; m.pick = m.kind.equals("size"); rows.add(m); }
+    for (MeshSetting m : info) if (m.state.equals("relative")) rows.add(m);
+    for (MeshSetting m : info) if (m.state.equals("expr")) rows.add(m);
+    final javax.swing.table.AbstractTableModel sm = new javax.swing.table.AbstractTableModel() {
+      private static final long serialVersionUID = 1L;
+      @Override public int getRowCount() { return rows.size(); }
+      @Override public int getColumnCount() { return 5; }
+      @Override public String getColumnName(int col) { return new String[] {"", "Operation / control", "Setting", "Value", "Status"}[col]; }
+      @Override public Class<?> getColumnClass(int col) { return col == 0 ? Boolean.class : String.class; }
+      @Override public boolean isCellEditable(int r, int col) { return col == 0 && rows.get(r).state.equals("link"); }
+      @Override public Object getValueAt(int r, int col) {
+        MeshSetting m = rows.get(r);
+        switch (col) {
+          case 0: return m.pick;
+          case 1: return m.op + (m.control.isEmpty() ? "" : " / " + m.control);
+          case 2: return meshLabel(m.what);
+          case 3: return Double.isNaN(m.raw) ? "" : num4(m.raw) + (m.units == null ? "" : " " + nm(m.units));
+          default: return "";
+        }
+      }
+      @Override public void setValueAt(Object v, int r, int col) {
+        rows.get(r).pick = Boolean.TRUE.equals(v);
+        fireTableRowsUpdated(r, r);
+      }
+    };
+    final JTable st = plainTable(sm);
+    st.putClientProperty("simkit.empty", "No absolute mesh size.");
+    st.setDefaultRenderer(String.class, textCell((r, col) -> rows.get(r).state.equals("link") && !rows.get(r).pick ? Ui.MUTED
+        : col == 3 ? Ui.MUTED : java.awt.Color.BLACK));
+    final Ui.PillCell pill = new Ui.PillCell();
+    pill.setFont(st.getFont());
+    st.getColumnModel().getColumn(4).setCellRenderer((tb, v, sel, foc, r, col) -> {
+      MeshSetting m = rows.get(r);
+      pill.setBackground(tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+      switch (m.state) {
+        case "linked": return pill.set("Linked", Ui.PILL_GREEN, null, null);
+        case "relative": return pill.set(null, null, "Relative to base size", Ui.MUTED);
+        case "expr":
+          pill.set("Expression", Ui.PILL_AMBER, "not scaled", Ui.MUTED);
+          pill.setToolTipText(m.def);
+          return pill;
+        default: return m.pick ? pill.set("Link", Ui.PILL_BLUE, null, null) : pill.set(null, null, "Not scaled", Ui.MUTED);
+      }
+    });
+    final JLabel doneMark = Ui.doneCell(), blank = new JLabel();
+    doneMark.setToolTipText("Already follows " + MESH_SCALE + ".");
+    blank.setOpaque(true);
+    final javax.swing.table.TableCellRenderer boxes = st.getDefaultRenderer(Boolean.class);
+    st.setDefaultRenderer(Boolean.class, (tb, v, sel, foc, r, col) -> {
+      java.awt.Color bg = tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE;
+      MeshSetting m = rows.get(r);
+      if (m.state.equals("linked")) { doneMark.setBackground(bg); return doneMark; }
+      if (!m.state.equals("link")) { blank.setBackground(bg); return blank; }
+      java.awt.Component k = boxes.getTableCellRendererComponent(tb, v, false, false, r, col);
+      k.setBackground(bg);
+      return k;
+    });
+    st.getColumnModel().getColumn(0).setMaxWidth(28);
+    st.getColumnModel().getColumn(0).setMinWidth(28);
+    int[] sw = {28, 200, 150, 100, 170};
+    for (int i = 1; i < sw.length; i++) st.getColumnModel().getColumn(i).setPreferredWidth(sw[i]);
+    spaceToggles(st);
     boolean anyPrism = false;
     for (MeshSetting m : found) anyPrism |= m.kind.equals("prism");
-    prism.addActionListener(e -> {
-      for (javax.swing.JCheckBox b : boxes) {
-        if (!Boolean.TRUE.equals(b.getClientProperty("prism"))) continue;
-        b.setEnabled(prism.isSelected());
-        b.setSelected(prism.isSelected());
-      }
-    });
-    final javax.swing.JCheckBox meshNow = new javax.swing.JCheckBox("Mesh now (cell counts)", true);
-    final JLabel files = new JLabel(" ");
-    final JButton ok = Ui.primary("Create levels");
+    int nExpr = 0;
+    for (MeshSetting m : rows) if (m.state.equals("expr")) nExpr++;
+    final int exprCount = nExpr;
+
+    // ----- notes, button -----
+    final JLabel note = new JLabel(" ");
+    note.setForeground(Ui.AMBER);
+    final JButton ok = Ui.primary("Create 3 levels");
     final boolean[] only = {false};
     final Runnable upd = () -> {
-      int n = 0;
-      List<String> names = new ArrayList<>();
-      for (int i = 0; i < model.getRowCount(); i++) {
-        if (Boolean.TRUE.equals(model.getValueAt(i, 0))) { n++; names.add(String.valueOf(model.getValueAt(i, 1)).trim()); }
-      }
+      int n = names.size();
       ok.setText(n == 1 ? "Create 1 level" : "Create " + n + " levels");
-      int no = nextRun(c.caseDir);
-      List<String> fs = new ArrayList<>();
-      for (int i = 0; i < names.size() && i < 4; i++) fs.add(runId(no + i) + "_" + names.get(i) + ".sim");
-      files.setText(String.join(",  ", fs) + (names.size() > 4 ? ", ..." : ""));
+      ok.setEnabled(n > 0);
+      String t = " ";
+      List<Double> sorted = new ArrayList<>();
+      for (double f : factors) if (f > 0) sorted.add(f);
+      sorted.sort(java.util.Collections.reverseOrder());
+      String low = null;
+      for (int i = 0; i + 1 < sorted.size() && low == null; i++) {
+        double q = sorted.get(i) / sorted.get(i + 1);
+        if (q < 1.3 && q > 1 + 1e-9) low = "Ratio " + num4(q) + " between factors " + num4(sorted.get(i)) + " and " + num4(sorted.get(i + 1))
+            + ": below 1.3, GCI is sensitive to solver noise.";
+      }
+      if (Math.abs(scale0 - 1) > 1e-9) t = MESH_SCALE + " is " + num4(scale0) + " in this run: factor 1 is the parametrized mesh, not the current one.";
+      else if (exprCount > 0) t = exprCount + (exprCount == 1 ? " size set by an expression will not scale" : " sizes set by an expression will not scale")
+          + ": the refinement is not uniform.";
+      else if (low != null) t = low;
+      else if (n > 0 && n < 3) t = n + (n == 1 ? " level" : " levels") + ": GCI needs 3.";
+      note.setText(t);
     };
-    model.addTableModelListener(e -> upd.run());
+    lm.addTableModelListener(e -> upd.run());
     upd.run();
-    JButton onlyLink = Ui.link("Link sizes only (no levels)");
-    onlyLink.setToolTipText("The sizes ticked below follow one parameter, " + MESH_SCALE + " (1 = today's mesh); vary it yourself later");
+    final javax.swing.JCheckBox meshNow = new javax.swing.JCheckBox("Mesh each level now", true);
+    meshNow.setFont(meshNow.getFont().deriveFont(Font.PLAIN));
+    JButton onlyLink = Ui.link("Parametrize sizes only");
+    onlyLink.setToolTipText("Links the ticked sizes to " + MESH_SCALE + " (1 = current sizes) and closes. No run is created.");
     onlyLink.addActionListener(e -> {
       only[0] = true;
       ok.doClick();
     });
 
+    // ----- layout -----
     JPanel body = new JPanel();
     body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
-    JLabel h1 = new JLabel("Levels");
-    h1.setFont(h1.getFont().deriveFont(Font.BOLD));
-    JLabel n1 = Ui.muted("Factor 1 = current mesh  \u00B7  1.41 = cells 1.41\u00D7 larger");
-    JLabel h2 = new JLabel("Sizes scaled by the factor");
-    h2.setFont(h2.getFont().deriveFont(Font.BOLD));
-    JLabel n2 = Ui.muted("Relative sizes follow the base size.");
-    List<javax.swing.JComponent> parts = new ArrayList<>(Arrays.asList(h1, n1, sp, tools, h2, n2, sizes));
-    if (anyPrism) parts.add(prism);
-    javax.swing.JSeparator sep = new javax.swing.JSeparator();
-    parts.addAll(Arrays.asList(meshNow, sep, files, onlyLink));
+    java.util.function.Function<String, JLabel> head = s -> {
+      JLabel l = new JLabel(s);
+      l.setFont(l.getFont().deriveFont(Font.BOLD));
+      return l;
+    };
+    JPanel ratioRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+    ratioRow.add(new JLabel("Refinement ratio"));
+    ratioRow.add(ratio);
+    ratioRow.add(javax.swing.Box.createHorizontalStrut(16));
+    ratioRow.add(new JLabel("Current mesh is the"));
+    ratioRow.add(ref);
+    ratioRow.add(new JLabel("level"));
+    JPanel links = new JPanel(new BorderLayout());
+    JPanel ll = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+    ll.add(add);
+    ll.add(del);
+    links.add(ll, BorderLayout.WEST);
+    links.add(Ui.muted("Size factor above 1: coarser. Below 1: finer."), BorderLayout.EAST);
+    JPanel meshPane = new JPanel();
+    meshPane.setLayout(new javax.swing.BoxLayout(meshPane, javax.swing.BoxLayout.Y_AXIS));
+    meshPane.add(meshNow);
+    JLabel mn1 = Ui.muted("Gives the cell count of each level. STAR-CCM+ is busy until the last mesh is done.");
+    mn1.setBorder(BorderFactory.createEmptyBorder(0, 24, 0, 0));
+    meshPane.add(mn1);
+    meshPane.add(javax.swing.Box.createVerticalStrut(6));
+    meshPane.add(Ui.muted("The solution is cleared in each level. " + c.caseId + " is unchanged on disk."));
+    for (java.awt.Component k : meshPane.getComponents()) ((javax.swing.JComponent) k).setAlignmentX(0f);
+    List<javax.swing.JComponent> parts = new ArrayList<>();
+    parts.add(head.apply("Levels"));
+    parts.add(ratioRow);
+    parts.add(plainScroll(table, 640, table.getRowHeight() * 5 + 6));
+    parts.add(links);
+    parts.add(note);
+    parts.add(head.apply("Mesh sizes"));
+    parts.add(plainScroll(st, 640, table.getRowHeight() * (Math.max(2, Math.min(rows.size(), 7)) + 1) + 6));
+    if (anyPrism) parts.add(Ui.muted("Prism rows not ticked: same near-wall mesh and y+ on every level."));
+    parts.add(meshPane);
     for (javax.swing.JComponent k : parts) {
       k.setAlignmentX(0f);
-      if (k == h2 || k == meshNow || k == sep || k == onlyLink) body.add(javax.swing.Box.createVerticalStrut(12));
+      if (k == parts.get(5) || k == meshPane) body.add(javax.swing.Box.createVerticalStrut(14));
       body.add(k);
-      body.add(javax.swing.Box.createVerticalStrut(4));
+      body.add(javax.swing.Box.createVerticalStrut(6));
     }
     final List<MeshLevel> out = new ArrayList<>();
-    boolean go = Ui.sheet("Mesh study", "Levels from " + c.caseId + (c.label.isEmpty() ? "" : " " + c.label),
-        body, ok, () -> {
-          if (table.isEditing()) table.getCellEditor().stopCellEditing();
-          boolean any = !linked.isEmpty();
-          for (javax.swing.JCheckBox b : boxes) any |= b.isSelected();
-          if (!any) { only[0] = false; return "Tick at least one size that follows the factor."; }
-          if (only[0]) return null;
-          out.clear();
-          Set<String> seen = new HashSet<>();
-          for (int i = 0; i < model.getRowCount(); i++) {
-            if (!Boolean.TRUE.equals(model.getValueAt(i, 0))) continue;
-            String n = String.valueOf(model.getValueAt(i, 1)).trim();
-            double k = Fmt.parse(String.valueOf(model.getValueAt(i, 2)));
-            if (n.isEmpty()) return "Row " + (i + 1) + ": give the level a name (it goes in the file name).";
-            try { n = runName(n); } catch (Cancel x) { return "Level '" + n + "': letters, digits, _ and - only."; }
-            if (!seen.add(n)) return "Two levels are called '" + n + "'.";
-            if (!(k > 0)) return "Level '" + n + "': the mesh factor must be a number above 0.";
-            out.add(new MeshLevel(n, k));
-          }
-          return out.isEmpty() ? "Tick at least one level." : null;
-        });
+    String sub = "From " + c.caseId + (c.label.isEmpty() ? "" : " " + c.label) + "  ·  runs saved in mesh_study_" + c.caseId + "/";
+    boolean go = Ui.sheet("Mesh study", sub, body, ok, () -> {
+      if (table.isEditing()) table.getCellEditor().stopCellEditing();
+      boolean any = !linked.isEmpty();
+      for (MeshSetting m : found) any |= m.pick;
+      if (!any) { only[0] = false; return "Tick at least one mesh size."; }
+      if (only[0]) return null;
+      out.clear();
+      Set<String> seen = new HashSet<>();
+      for (int i = 0; i < names.size(); i++) {
+        String n = names.get(i).trim();
+        double k = factors.get(i);
+        if (n.isEmpty()) return "Row " + (i + 1) + ": give the level a name (it goes in the file name).";
+        try { n = runName(n); } catch (Cancel x) { return "Level '" + n + "': letters, digits, _ and - only."; }
+        if (!seen.add(n)) return "Two levels are called '" + n + "'.";
+        if (!(k > 0)) return "Level '" + n + "': the size factor must be a number above 0.";
+        for (MeshLevel L : out) if (Math.abs(L.scale / k - 1) < 1e-3) return "Levels '" + L.name + "' and '" + n + "' have the same size factor.";
+        out.add(new MeshLevel(n, k));
+      }
+      return out.isEmpty() ? "Add at least one level." : null;
+    }, onlyLink);
     if (!go) return null;
     List<MeshSetting> link = new ArrayList<>();
-    for (int i = 0; i < found.size(); i++) if (boxes.get(i).isSelected()) link.add(found.get(i));
+    for (MeshSetting m : found) if (m.pick) link.add(m);
     return new Object[] {link, out, meshNow.isSelected(), only[0]};
   }
 
   /** Mesh levels in a study: one run per level (R008_coarse, R009_medium ...), each based on the run you started from,
-   *  with mesh_study, mesh_level, mesh_scale and mesh_cells in its record. The open file stays as it is on disk. */
+   *  with mesh_study, mesh_level, mesh_scale and mesh_cells in its record, and the table mesh_study.csv (fine level
+   *  first, as the GCI calculator takes them). The open file stays as it is on disk. */
   void createMeshRuns(CaseInfo c, Map<String, ScalarGlobalParameter> params, List<MeshLevel> levels, boolean mesh) throws IOException {
     ScalarGlobalParameter scale = findParam(MESH_SCALE);
     double scale0 = scale.getQuantity().getValue();
+    double base = Double.NaN;
+    for (Map.Entry<String, ScalarGlobalParameter> e : params.entrySet()) {
+      if (Double.isNaN(base) && e.getKey().endsWith("baseSize")) base = e.getValue().getQuantity().getValue();
+    }
     String study = c.caseId + " " + Fmt.iso();
     star.meshing.MeshPipelineController pipe = sim.get(star.meshing.MeshPipelineController.class);
     List<String> made = new ArrayList<>();
+    List<String[]> table = new ArrayList<>();
     CaseInfo last = null;
     log.line("mesh study from " + c.caseId + ": " + levels.size() + " level(s)" + (mesh ? ", meshed now" : ", saved without a mesh"));
     for (MeshLevel L : levels) {
@@ -7003,19 +7165,35 @@ public class SimKit extends StarMacro {
       extra.put("mesh_level", L.name);
       extra.put("mesh_scale", shortNum(L.scale));
       if (!cells.isEmpty()) extra.put("mesh_cells", cells);
-      CaseInfo n = saveRun(c.caseDir, L.name, "mesh study: " + L.name + " (mesh factor " + shortNum(L.scale) + ")", c, extra,
+      CaseInfo n = saveRun(c.caseDir, L.name, "mesh study: " + L.name + " (size factor " + shortNum(L.scale) + ")", c, extra,
           "mesh_study_" + c.caseId);
       made.add((n == null ? "?" : n.caseId) + " " + L.name + (cells.isEmpty() ? "" : " " + cells + " cells"));
+      table.add(0, new String[] {L.name, n == null ? "" : n.caseId, num4(L.scale), Double.isNaN(base) ? "" : num4(base * L.scale), cells, ""});
       last = n;
     }
+    String csvNote = "";
+    try {   // fine first: N1..N3 and phi1..phi3 of the GCI calculator
+      Path csv = c.caseDir.resolve("mesh_study_" + c.caseId).resolve("mesh_study.csv");
+      String[] headRow = {"level", "run", "size_factor", "base_size", "cells", "phi"};
+      List<String[]> all = new ArrayList<>();
+      if (Files.isRegularFile(csv)) {   // a second study from the same run: its rows below the first ones
+        List<String[]> old = Csv.parse(Fs.read(csv));
+        for (int i = 1; i < old.size(); i++) all.add(old.get(i));
+      }
+      all.addAll(table);
+      Csv.write(csv, headRow, all);
+      csvNote = "; table: mesh_study_" + c.caseId + "/mesh_study.csv";
+      log.line("  table of the levels: " + csv);
+    } catch (Throwable t) { log.na("mesh_study.csv", t); }
     log.line("mesh levels saved as runs; " + c.simFile.getFileName() + " is unchanged on disk (" + MESH_SCALE + " = " + shortNum(scale0)
         + ").");
-    result(made.size() + " mesh level(s): " + String.join(", ", made) + (last == null ? "" : ". Now in " + last.simFile.getFileName()));
+    result(made.size() + " mesh level(s): " + String.join(", ", made) + (last == null ? "" : ". Now in " + last.simFile.getFileName()) + csvNote);
   }
 
-  /** Looks for the known size objects in a values manager (default, custom or custom-prism values). */
+  /** Looks for the known size objects in a values manager (default, custom or custom-prism values). info (may be null):
+   *  also the sizes that are relative, already linked to p_meshScale, or set by another expression. */
   void scanMeshValues(Object values, String op, String control, List<MeshSetting> found, List<String> relative,
-      List<String> already) {
+      List<String> already, List<MeshSetting> info) {
     for (String[] s : MESH_SIZES) {
       Class<?> k = Reflect.cls(s[0]);
       if (k == null) continue;
@@ -7023,30 +7201,34 @@ public class SimKit extends StarMacro {
       try { v = Reflect.invoke(values, "get", k); } catch (Throwable t) { continue; }   // not present / not activated
       if (v == null) continue;
       String where = op + (control.isEmpty() ? "" : "/" + control) + " " + s[1];
-      Object q = v;
-      if (Reflect.has(v, "getRelativeOrAbsoluteOption")) {
-        Object opt = Reflect.tryCall(Reflect.tryCall(v, "getRelativeOrAbsoluteOption"), "getSelectedElement");
-        if (opt == null || !String.valueOf(opt).toUpperCase(Locale.ROOT).contains("ABSOLUTE")) {
-          relative.add(where);
-          continue;
-        }
-        q = Reflect.tryCall(v, "getAbsoluteSizeValue");
-      }
-      if (q == null || !Reflect.has(q, "setDefinition", String.class)) continue;
-      Object def = Reflect.tryCall(q, "getDefinition");
-      if (def != null && String.valueOf(def).contains("$")) {
-        already.add(where + " = " + def);
-        continue;
-      }
       MeshSetting m = new MeshSetting();
       m.op = op;
       m.control = control;
       m.what = s[1];
       m.kind = s[2];
-      m.q = q;
+      Object q = v;
+      if (Reflect.has(v, "getRelativeOrAbsoluteOption")) {
+        Object opt = Reflect.tryCall(Reflect.tryCall(v, "getRelativeOrAbsoluteOption"), "getSelectedElement");
+        if (opt == null || !String.valueOf(opt).toUpperCase(Locale.ROOT).contains("ABSOLUTE")) {
+          relative.add(where);
+          if (info != null) { m.state = "relative"; m.raw = Double.NaN; info.add(m); }
+          continue;
+        }
+        q = Reflect.tryCall(v, "getAbsoluteSizeValue");
+      }
+      if (q == null || !Reflect.has(q, "setDefinition", String.class)) continue;
       Object raw = Reflect.tryCall(q, "getRawValue");
       m.raw = raw instanceof Number ? ((Number) raw).doubleValue() : Double.NaN;
       m.units = Reflect.tryCall(q, "getUnits");
+      Object def = Reflect.tryCall(q, "getDefinition");
+      if (def != null && String.valueOf(def).contains("$")) {
+        m.def = String.valueOf(def);
+        boolean own = m.def.contains("${" + MESH_SCALE + "}");
+        if (!own) already.add(where + " = " + def);   // own links are not foreign expressions
+        if (info != null) { m.state = own ? "linked" : "expr"; info.add(m); }
+        continue;
+      }
+      m.q = q;
       m.pName = "p_mesh_" + Fs.fileSafe(op).replaceAll("[^A-Za-z0-9]", "")
           + (control.isEmpty() ? "" : "_" + Fs.fileSafe(control).replaceAll("[^A-Za-z0-9]", "")) + "_" + s[1];
       if (Double.isNaN(m.raw)) continue;
