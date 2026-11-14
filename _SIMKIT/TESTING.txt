@@ -523,3 +523,13 @@ C. RESULTS SO FAR
   Calculators: Materials removed (2026-11-14). The Materials page is removed, with the MatML reader
   (config/material_folders.csv, tests/matml_samples) and the solid and emissivity tables (data/materials.csv,
   data/emissivity.csv). The other pages keep their fluid list (data/fluids.csv). Older MatML notes above: history.
+
+  3D-CAD faces (2026-11-14; naming automation items 1, 2 and 5). Names > 3D-CAD faces...: one row per 3D-CAD body;
+  Name from body (unnamed faces -> TYPE_assembly_body), Set rest name (Body.setUnNamedFacesDefaultAttributeName:
+  TYPE_assembly_body_rest), check (unnamed without rest name, names without prefix), warning for a Unite feature with
+  Transfer face names off. Batch actions cadnames (log) and cadtest (test step 07i). SKT82: all 16 exit codes 0, no
+  exception. 07i: 3D-CAD model built in memory (3 blocks), face names set without the 3D-CAD edit mode; Name from body
+  10 faces, hand names IN_fuel / swirl kept, swirl flagged; rest name read back; Unite: Transfer face names on by
+  default; the touching blocks merge coplanar faces (one name each); with the flag off the warning shows; geometry part
+  surfaces = the face names (WALL_burner_draft-tube, swirl, WALL_burner_electrode-1_rest). Offline: window rendered,
+  NamesTickTest ALL OK. Not run: the window in the STAR-CCM+ GUI, a real CAD import.

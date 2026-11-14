@@ -141,6 +141,8 @@ public class SimKit extends StarMacro {
 
   boolean gui;
 
+  Runnable namesCad;   // opens 3D-CAD faces from the Names window (null: no 3D-CAD model)
+
   @Override
   public void execute() {
     int preloaded = preloadOwnClasses(getClass());   // before anything else: see preloadOwnClasses
@@ -204,7 +206,9 @@ public class SimKit extends StarMacro {
           break;
         }
         case "names": logNames(); break;
-        case "chttest": testCht(); break;   // test: solid region + interface in memory (not saved): Names, reports, pre-submit   // test: the Names table, written to the log (nothing renamed)
+        case "chttest": testCht(); break;   // test: solid region + interface in memory (not saved): Names, reports, pre-submit
+        case "cadnames": logCad(); break;   // the 3D-CAD bodies and their check, written to the log
+        case "cadtest": testCad(); break;   // test: 3D-CAD faces on a model built in memory (not saved)
         case "presubmit": for (String[] k : preSubmitChecks()) log.line("pre-submit " + k[0] + "  " + k[1]); break;
         case "tracker": toolTracker(); break;
         case "opensim": testOpenSim(); break;   // test: the tracker's Open in STAR-CCM+
@@ -3999,6 +4003,7 @@ public class SimKit extends StarMacro {
   /** Names: the table; Apply renames the ticked rows that have a new name. */
   void toolNames() {
     final List<NameRow> rows = nameRows();
+    namesCad = cadModels().isEmpty() ? null : this::openCad;
     final int[] total = {0}, types0 = {0};
     Ui.edt(() -> namesWindow(rows, list -> {
       int n = 0, bad = 0;
@@ -4281,6 +4286,14 @@ public class SimKit extends StarMacro {
       cats.add(javax.swing.Box.createVerticalStrut(4));
     }
     cats.add(javax.swing.Box.createVerticalGlue());
+    if (namesCad != null) {
+      JButton cadLink = Ui.link("3D-CAD faces\u2026");
+      cadLink.setToolTipText("Names the faces of the 3D-CAD bodies from the body names");
+      cadLink.setAlignmentX(0f);
+      cadLink.addActionListener(e -> namesCad.run());
+      cats.add(cadLink);
+      cats.add(javax.swing.Box.createVerticalStrut(8));
+    }
     JLabel src = Ui.muted("<html><div style='width:170px'>Prefixes: " + (Files.isRegularFile(Fs.config("naming.csv")) ? "config/naming.csv"
         : "built-in") + "</div></html>");
     src.setAlignmentX(0f);
@@ -4439,6 +4452,360 @@ public class SimKit extends StarMacro {
       work.accept(go.size() == 1 ? "Renaming 1 object..." : "Renaming " + go.size() + " objects...", () -> rename.apply(go));
     });
     return Ui.sheet("Names", "Only ticked rows are renamed.", body, apply, null);
+  }
+
+  // ----- 3D-CAD faces: names from the body names, a name for the unnamed faces, the check -----
+
+  /** One 3D-CAD body in the 3D-CAD faces window. */
+  static final class CadRow {
+    Object model, body;   // star.cadmodeler.CadModel, star.cadmodeler.Body
+    String modelName = "", name = "", rest = "", check = "";
+    int faces, unnamed;
+    final List<String> names = new ArrayList<>(), noPrefix = new ArrayList<>();
+    boolean pick, problem;
+  }
+
+  /** The 3D-CAD models of the simulation (none: empty). */
+  List<star.cadmodeler.CadModel> cadModels() {
+    List<star.cadmodeler.CadModel> out = new ArrayList<>();
+    try {
+      for (Object o : sim.get(star.cadmodeler.SolidModelManager.class).getObjects()) {
+        if (o instanceof star.cadmodeler.CadModel) out.add((star.cadmodeler.CadModel) o);
+      }
+    } catch (Throwable t) { /* no 3D-CAD module */ }
+    return out;
+  }
+
+  /** Face name for a body: TYPE_assembly_body (no assembly: TYPE_body); blanks, dots and slashes become '-'. */
+  static String cadName(String type, String assembly, String body) {
+    String a = assembly.trim().replaceAll("[\\s./\\\\]+", "-"), b = body.trim().replaceAll("[\\s./\\\\]+", "-");
+    return type + "_" + (a.isEmpty() ? "" : a + "_") + b;
+  }
+
+  /** The bodies of every 3D-CAD model: faces, unnamed faces, the name of the unnamed faces, the face names and the
+   *  check (unnamed faces without a rest name, names without a type prefix). */
+  List<CadRow> cadRows() {
+    List<CadRow> out = new ArrayList<>();
+    for (star.cadmodeler.CadModel m : cadModels()) {
+      for (star.cadmodeler.Body b : m.getBodyManager().getBodies()) {
+        CadRow x = new CadRow();
+        x.model = m;
+        x.body = b;
+        x.modelName = nm(m);
+        x.name = nm(b);
+        try { x.faces = b.getFaceManager().getFaces().size(); } catch (Throwable t) { log.na("faces of " + x.name, t); }
+        try {
+          String r = b.getUnNamedFacesDefaultAttributeName();
+          x.rest = r == null ? "" : r.trim();
+        } catch (Throwable t) { log.na("unnamed face name of " + x.name, t); }
+        try {
+          star.cadmodeler.NamedFacesManager nf = b.getNamedFacesManager();
+          star.cadmodeler.UnNamedFacesDefault u = nf.getUnNamedFacesDefault();
+          x.unnamed = u == null || !u.unNamedFacesArePresent() ? 0 : u.getFaces().size();
+          for (star.cadmodeler.NamedFaces g : nf.getNamedFaces()) {
+            if (g instanceof star.cadmodeler.UnNamedFacesDefault) continue;
+            String n = nm(g);
+            x.names.add(n + " (" + g.getFaces().size() + ")");
+            if (bcToken(n) == null) x.noPrefix.add(n);
+          }
+        } catch (Throwable t) { log.na("face names of " + x.name, t); }
+        List<String> k = new ArrayList<>();
+        if (x.unnamed > 0 && x.rest.isEmpty()) k.add(x.unnamed + " unnamed");
+        if (!x.noPrefix.isEmpty()) k.add("no prefix: " + String.join(", ", x.noPrefix));
+        x.problem = !k.isEmpty();
+        if (x.unnamed > 0 && !x.rest.isEmpty()) k.add(x.unnamed + " in " + x.rest);
+        x.check = String.join("; ", k);
+        out.add(x);
+      }
+    }
+    return out;
+  }
+
+  /** Unite features that do not keep the face names (Transfer face names off). */
+  List<String> cadWarnings() {
+    List<String> out = new ArrayList<>();
+    for (star.cadmodeler.CadModel m : cadModels()) {
+      Object fs = Reflect.tryCall(m.getFeatureManager(), "getObjects");
+      if (!(fs instanceof Collection)) continue;
+      for (Object f : (Collection<?>) fs) {
+        if (f instanceof star.cadmodeler.UniteBodiesFeature && !((star.cadmodeler.UniteBodiesFeature) f).isTransferFaceNames()) {
+          out.add(nm(m) + " / " + nm(f) + ": Transfer face names is off. Face names given before it are lost.");
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Runs a 3D-CAD change. If STAR-CCM+ refuses it outside 3D-CAD, it runs again inside an edit of the model. */
+  void cadChange(star.cadmodeler.CadModel m, Runnable r) {
+    try {
+      r.run();
+    } catch (RuntimeException first) {
+      star.cadmodeler.SolidModelManager smm = sim.get(star.cadmodeler.SolidModelManager.class);
+      if (smm.isEditing()) throw first;
+      smm.editCadModel(m);
+      try {
+        r.run();
+      } finally {
+        smm.endEditCadModel(m);
+      }
+      log.line("  3D-CAD: changed inside an edit of " + nm(m) + " (" + reason(first) + ")");
+    }
+  }
+
+  /** Names the faces of the bodies TYPE_assembly_body: the unnamed faces, or all faces if 'all'. */
+  String cadNameFromBody(List<CadRow> rows, String type, String assembly, boolean all) {
+    int n = 0, faces = 0, bad = 0;
+    for (CadRow x : rows) {
+      final star.cadmodeler.CadModel m = (star.cadmodeler.CadModel) x.model;
+      final star.cadmodeler.Body b = (star.cadmodeler.Body) x.body;
+      final String name = cadName(type, assembly, x.name);
+      try {
+        final List<star.cadmodeler.Face> fs = new ArrayList<>();
+        if (all) fs.addAll(b.getFaceManager().getFaces());
+        else {
+          star.cadmodeler.UnNamedFacesDefault u = b.getNamedFacesManager().getUnNamedFacesDefault();
+          if (u != null && u.unNamedFacesArePresent()) fs.addAll(u.getFaces());
+        }
+        if (fs.isEmpty()) continue;
+        cadChange(m, () -> m.setFaceNameAttributes(fs, name));
+        log.line("  3D-CAD " + x.modelName + " / " + x.name + ": " + fs.size() + " face(s) named " + name);
+        n++;
+        faces += fs.size();
+      } catch (Throwable t) {
+        log.na("3D-CAD names of " + x.name, t);
+        bad++;
+      }
+    }
+    return (faces == 1 ? "1 face" : faces + " faces") + " named on " + (n == 1 ? "1 body." : n + " bodies.")
+        + (bad > 0 ? " " + bad + " failed: see the Output window." : "") + " Parts take the names at the next part update.";
+  }
+
+  /** Unnamed faces of the bodies, now and after later CAD changes, take TYPE_assembly_body_rest. */
+  String cadSetRest(List<CadRow> rows, String type, String assembly) {
+    int n = 0, bad = 0;
+    for (CadRow x : rows) {
+      final star.cadmodeler.CadModel m = (star.cadmodeler.CadModel) x.model;
+      final star.cadmodeler.Body b = (star.cadmodeler.Body) x.body;
+      final String name = cadName(type, assembly, x.name) + "_rest";
+      try {
+        cadChange(m, () -> b.setUnNamedFacesDefaultAttributeName(name));
+        log.line("  3D-CAD " + x.modelName + " / " + x.name + ": unnamed faces named " + name);
+        n++;
+      } catch (Throwable t) {
+        log.na("3D-CAD rest name of " + x.name, t);
+        bad++;
+      }
+    }
+    return "Rest name set on " + (n == 1 ? "1 body." : n + " bodies.") + (bad > 0 ? " " + bad + " failed: see the Output window." : "")
+        + " Parts take the names at the next part update.";
+  }
+
+  /** a = {action "body" or "rest", type, assembly, "1" = also faces that have a name}. */
+  String cadAct(List<CadRow> rows, String[] a) {
+    return "rest".equals(a[0]) ? cadSetRest(rows, a[1], a[2]) : cadNameFromBody(rows, a[1], a[2], "1".equals(a[3]));
+  }
+
+  /** Writes the 3D-CAD bodies and the check to the log (batch action cadnames). */
+  void logCad() {
+    List<CadRow> rows = cadRows();
+    if (rows.isEmpty()) log.line("3D-CAD: no 3D-CAD body");
+    for (CadRow x : rows) {
+      log.line("3D-CAD " + x.modelName + " / " + x.name + ": " + x.faces + " faces, " + x.unnamed + " unnamed, rest name '" + x.rest
+          + "', names " + x.names + ", check: " + (x.check.isEmpty() ? "ok" : x.check) + (x.problem ? " (issue)" : ""));
+    }
+    for (String w : cadWarnings()) log.line("3D-CAD warning: " + w);
+  }
+
+  /** Opens the 3D-CAD faces window (Swing thread; the bodies are read in a worker thread). */
+  void openCad() {
+    Thread w = new Thread(() -> {
+      final List<CadRow> rows = new ArrayList<>();
+      final List<String> warn = new ArrayList<>();
+      try {
+        rows.addAll(cadRows());
+        warn.addAll(cadWarnings());
+      } catch (Throwable t) {
+        log.na("3D-CAD faces", t);
+      }
+      javax.swing.SwingUtilities.invokeLater(() -> cadWindow(rows, warn, this::cadAct, this::cadRows, this::cadWarnings));
+    }, "SimKit 3D-CAD");
+    w.setDaemon(true);
+    w.start();
+  }
+
+  /** The 3D-CAD faces window (Swing thread): one row per body; Name from body and Set rest name act on the ticked
+   *  bodies in a worker thread, then the rows are read again; the window stays open until Close. */
+  Boolean cadWindow(final List<CadRow> all, final List<String> warn, final java.util.function.BiFunction<List<CadRow>, String[], String> act,
+      final java.util.function.Supplier<List<CadRow>> reload, final java.util.function.Supplier<List<String>> rewarn) {
+    List<String> types = new ArrayList<>();
+    for (String[] p : prefixes) types.add(p[0]);
+    final javax.swing.JComboBox<String> type = new javax.swing.JComboBox<>(types.toArray(new String[0]));
+    type.setSelectedItem("WALL");
+    final JTextField asm = Ui.hintField("", "optional, e.g. burner", 14);
+    final JLabel preview = Ui.muted(" "), status = Ui.muted(" "), warnLbl = new JLabel(" ");
+    warnLbl.setForeground(new java.awt.Color(0x8A, 0x5A, 0x00));
+    final javax.swing.JCheckBox named = new javax.swing.JCheckBox("Also faces that have a name");
+    named.setOpaque(false);
+    named.setToolTipText("Off: faces that already have a name keep it");
+    final JButton fromBody = Ui.primary("Name from body");
+    fromBody.putClientProperty("simkit.stay", Boolean.TRUE);
+    fromBody.setToolTipText("Names the faces of the ticked bodies TYPE_assembly_body");
+    final JButton rest = new JButton("Set rest name");
+    rest.setToolTipText("The unnamed faces of the ticked bodies, now and after CAD changes, take TYPE_assembly_body_rest");
+    final JButton tickAll = Ui.link("Tick all");
+    final String[] lastMsg = {null};
+    final java.awt.Color amber = new java.awt.Color(0x8A, 0x5A, 0x00), green = new java.awt.Color(0x2E, 0x6B, 0x2E);
+    final java.util.function.Function<CadRow, String> newName = x -> cadName(String.valueOf(type.getSelectedItem()), asm.getText(), x.name);
+
+    final javax.swing.table.AbstractTableModel model = new javax.swing.table.AbstractTableModel() {
+      private static final long serialVersionUID = 1L;
+      @Override public int getRowCount() { return all.size(); }
+      @Override public int getColumnCount() { return 5; }
+      @Override public String getColumnName(int c) { return new String[] {"", "Body", "Faces", "Check", "Name from body"}[c]; }
+      @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
+      @Override public boolean isCellEditable(int r, int c) { return c == 0; }
+      @Override public Object getValueAt(int r, int c) {
+        CadRow x = all.get(r);
+        return c == 0 ? x.pick : c == 1 ? x.name : c == 2 ? x.faces + (x.unnamed > 0 ? " (" + x.unnamed + " unnamed)" : "")
+            : c == 3 ? (x.check.isEmpty() ? "ok" : x.check) : newName.apply(x);
+      }
+      @Override public void setValueAt(Object v, int r, int c) {
+        all.get(r).pick = Boolean.TRUE.equals(v);
+        fireTableRowsUpdated(0, all.size() - 1);
+      }
+    };
+    final JTable t = new JTable(model);
+    t.setRowHeight(26);
+    t.setShowVerticalLines(false);
+    t.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
+    t.setFillsViewportHeight(true);
+    t.getColumnModel().getColumn(0).setMaxWidth(30);
+    t.getColumnModel().getColumn(1).setPreferredWidth(220);
+    t.getColumnModel().getColumn(2).setPreferredWidth(120);
+    t.getColumnModel().getColumn(3).setPreferredWidth(260);
+    t.getColumnModel().getColumn(4).setPreferredWidth(260);
+    t.setDefaultRenderer(String.class, new javax.swing.table.DefaultTableCellRenderer() {
+      private static final long serialVersionUID = 1L;
+      @Override public java.awt.Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean f, int r, int c) {
+        super.getTableCellRendererComponent(tb, v, false, false, r, c);
+        CadRow x = all.get(r);
+        setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+        setBackground(tb.isRowSelected(r) ? Ui.PALE : java.awt.Color.WHITE);
+        setForeground(java.awt.Color.BLACK);
+        setFont(tb.getFont().deriveFont(Font.PLAIN));
+        setToolTipText(null);
+        if (c == 1) {
+          setText("<html><font color='#8A94A0'>" + Html.esc(x.modelName) + " / </font>" + Html.esc(x.name) + "</html>");
+          setToolTipText(x.names.isEmpty() ? "No named faces" : "<html>" + Html.esc(String.join(", ", x.names)) + "</html>");
+        } else if (c == 3) {
+          setForeground(x.problem ? amber : green);
+          setFont(tb.getFont().deriveFont(Font.BOLD, 11f));
+        } else if (c == 4) {
+          setForeground(x.pick ? Ui.BLUE : new java.awt.Color(0x7F, 0x9C, 0xC4));
+        }
+        return this;
+      }
+    });
+    final Runnable count = () -> {
+      int n = 0;
+      for (CadRow x : all) if (x.pick) n++;
+      if (n > 0) lastMsg[0] = null;
+      fromBody.setText(n == 0 ? "Name from body" : n == 1 ? "Name from body (1 body)" : "Name from body (" + n + " bodies)");
+      fromBody.setEnabled(n > 0);
+      rest.setEnabled(n > 0);
+      status.setForeground(Ui.MUTED);
+      status.setText(n == 0 && lastMsg[0] != null ? lastMsg[0] : n == 0 ? "No bodies ticked." : n == 1 ? "1 body ticked." : n + " bodies ticked.");
+      String ty = String.valueOf(type.getSelectedItem());
+      preview.setText("Names: " + cadName(ty, asm.getText(), "<body>") + "      Rest: " + cadName(ty, asm.getText(), "<body>") + "_rest");
+      warnLbl.setText(warn.isEmpty() ? " " : "<html>" + Html.esc(String.join("  ", warn)) + "</html>");
+    };
+    model.addTableModelListener(e -> count.run());
+    type.addActionListener(e -> { count.run(); t.repaint(); });
+    asm.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { count.run(); t.repaint(); }
+      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { count.run(); t.repaint(); }
+      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { count.run(); t.repaint(); }
+    });
+    tickAll.addActionListener(e -> { for (CadRow x : all) x.pick = true; model.fireTableRowsUpdated(0, Math.max(0, all.size() - 1)); });
+
+    final java.util.function.Consumer<String[]> work = a -> {
+      final List<CadRow> go = new ArrayList<>();
+      for (CadRow x : all) if (x.pick) go.add(x);
+      if (go.isEmpty()) return;
+      status.setText("rest".equals(a[0]) ? "Setting the rest name..." : "Naming faces...");
+      fromBody.setEnabled(false);
+      rest.setEnabled(false);
+      Thread w = new Thread(() -> {   // STAR-CCM+ calls off the Swing thread
+        String msg;
+        List<CadRow> fresh = null;
+        List<String> fw = null;
+        try {
+          msg = act.apply(go, a);
+          fresh = reload == null ? null : reload.get();
+          fw = rewarn == null ? null : rewarn.get();
+        } catch (Throwable x) {
+          msg = "Stopped: " + reason(x);
+        }
+        final String m = msg;
+        final List<CadRow> f = fresh;
+        final List<String> g = fw;
+        javax.swing.SwingUtilities.invokeLater(() -> {
+          if (f != null) {
+            all.clear();
+            all.addAll(f);
+          }
+          if (g != null) {
+            warn.clear();
+            warn.addAll(g);
+          }
+          for (CadRow x : all) x.pick = false;
+          lastMsg[0] = m;
+          model.fireTableDataChanged();
+          count.run();
+        });
+      }, "SimKit 3D-CAD");
+      w.setDaemon(true);
+      w.start();
+    };
+    fromBody.addActionListener(e -> work.accept(new String[] {"body", String.valueOf(type.getSelectedItem()), asm.getText(), named.isSelected() ? "1" : "0"}));
+    rest.addActionListener(e -> work.accept(new String[] {"rest", String.valueOf(type.getSelectedItem()), asm.getText(), "0"}));
+
+    JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+    row.add(new JLabel("Type"));
+    row.add(type);
+    row.add(javax.swing.Box.createHorizontalStrut(10));
+    row.add(new JLabel("Assembly"));
+    row.add(asm);
+    row.add(javax.swing.Box.createHorizontalStrut(10));
+    row.add(tickAll);
+    JPanel head = new JPanel();
+    head.setLayout(new javax.swing.BoxLayout(head, javax.swing.BoxLayout.Y_AXIS));
+    JLabel help = Ui.muted("<html><div style='width:700px'>Name from body: faces of the ticked bodies get TYPE_assembly_body "
+        + "(faces with a name keep it unless the box is ticked). Set rest name: their unnamed faces, now and after CAD changes, get "
+        + "TYPE_assembly_body_rest. Unite: turn on Transfer face names, or the face names are lost.</div></html>");
+    for (javax.swing.JComponent k : new javax.swing.JComponent[] {row, preview, help}) {
+      k.setAlignmentX(0f);
+      head.add(k);
+      head.add(javax.swing.Box.createVerticalStrut(8));
+    }
+    JScrollPane sp = new JScrollPane(t);
+    sp.getViewport().setBackground(java.awt.Color.WHITE);
+    sp.setBorder(BorderFactory.createLineBorder(new java.awt.Color(0xE3, 0xE7, 0xEC)));
+    JPanel acts = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
+    acts.add(named);
+    acts.add(rest);
+    JPanel south = new JPanel(new BorderLayout(10, 6));
+    south.add(warnLbl, BorderLayout.NORTH);
+    south.add(status, BorderLayout.CENTER);
+    south.add(acts, BorderLayout.EAST);
+    JPanel body = new JPanel(new BorderLayout(0, 6));
+    body.add(head, BorderLayout.NORTH);
+    body.add(sp, BorderLayout.CENTER);
+    body.add(south, BorderLayout.SOUTH);
+    body.setPreferredSize(new java.awt.Dimension(960, 480));
+    count.run();
+    return Ui.sheet("3D-CAD faces", "Face names from the 3D-CAD bodies. Parts take the names at the next part update.", body, fromBody, null);
   }
 
   static int[] append(int[] a, int v) {
@@ -5684,6 +6051,70 @@ public class SimKit extends StarMacro {
     }
     for (String[] k : preSubmitChecks()) log.line("cht: pre-submit " + k[0] + "  " + k[1]);
     log.line("cht: done (the simulation is not saved)");
+  }
+
+  /** Batch test of 3D-CAD faces, in memory (the sim is not saved): a 3D-CAD model with three blocks named like burner
+   *  parts, two faces named by hand (IN_fuel, swirl), Name from body on two bodies, Set rest name on the third, Unite
+   *  with Transfer face names, a geometry part from the united body; logs the rows, the check and the part surfaces. */
+  void testCad() {
+    star.cadmodeler.SolidModelManager smm = sim.get(star.cadmodeler.SolidModelManager.class);
+    final star.cadmodeler.CadModel m = smm.createSolidModel();
+    m.setPresentationName("CAD_test");
+    log.line("cad: model created, editing " + smm.isEditing());
+    star.common.Units u = (star.common.Units) sim.getUnitsManager().getObject("m");
+    String[] names = {"draft tube", "stator", "electrode.1"};
+    List<star.cadmodeler.Body> bodies = new ArrayList<>();
+    for (int i = 0; i < names.length; i++) {
+      star.cadmodeler.BlockPrimitiveFeature f = m.getFeatureManager().createBlockPrimitiveFeature();
+      f.setCoordinateSystem(sim.getCoordinateSystemManager().getLabCoordinateSystem());
+      f.getCenter().setCoordinate(u, u, u, new star.base.neo.DoubleVector(new double[] {0.1 * i, 0, 0}));
+      for (star.cadmodeler.CadModelScalarQuantity q : new star.cadmodeler.CadModelScalarQuantity[] {f.getLength(), f.getWidth(), f.getHeight()}) {
+        q.setUnits(u);
+        q.setValue(0.1);
+      }
+      m.getFeatureManager().execute(f);
+      star.cadmodeler.Body b = f.getBody();
+      b.setPresentationName(names[i]);
+      bodies.add(b);
+    }
+    log.line("cad: bodies " + bodies.size() + ", faces of the first " + bodies.get(0).getFaceManager().getFaces().size());
+    try {
+      star.cadmodeler.Face f0 = bodies.get(1).getFaceManager().getFaces().iterator().next();
+      m.setFaceNameAttributes(Collections.singletonList(f0), "IN_fuel");
+      star.cadmodeler.Face f1 = bodies.get(0).getFaceManager().getFaces().iterator().next();
+      m.setFaceNameAttributes(Collections.singletonList(f1), "swirl");
+      log.line("cad: faces named by hand: IN_fuel (stator), swirl (draft tube); assigned name read back '" + f0.getAssignedName()
+          + "', presentation '" + f0.getPresentationName() + "'");
+    } catch (Throwable t) { log.na("cad: names by hand", t); }
+    logCad();
+    List<CadRow> two = new ArrayList<>(), third = new ArrayList<>();
+    for (CadRow x : cadRows()) (x.name.startsWith("electrode") ? third : two).add(x);
+    log.line("cad: name from body -> " + cadNameFromBody(two, "WALL", "burner", false));
+    log.line("cad: rest name -> " + cadSetRest(third, "WALL", "burner"));
+    logCad();
+    try {
+      star.cadmodeler.UniteBodiesFeature uf = m.getFeatureManager().createUniteBodies2(bodies);
+      log.line("cad: unite, Transfer face names by default: " + uf.isTransferFaceNames());
+      uf.setTransferFaceNames(true);
+      m.getFeatureManager().execute(uf);
+      log.line("cad: united");
+      logCad();
+      uf.setTransferFaceNames(false);
+      for (String w : cadWarnings()) log.line("cad: with Transfer face names off: " + w);
+      uf.setTransferFaceNames(true);
+    } catch (Throwable t) { log.na("cad: unite", t); }
+    try {
+      smm.endEditCadModel(m);
+      m.createParts(new ArrayList<>(m.getBodyManager().getBodies()));
+      for (Object p : sim.get(SimulationPartManager.class).getParts()) {
+        if (!(p instanceof star.cadmodeler.SolidModelPart)) continue;
+        List<String> ps = new ArrayList<>();
+        Object s = Reflect.tryCall(p, "getPartSurfaces");
+        if (s instanceof Collection) for (Object o : (Collection<?>) s) ps.add(nm(o));
+        log.line("cad: part " + nm(p) + " surfaces " + ps);
+      }
+    } catch (Throwable t) { log.na("cad: parts", t); }
+    log.line("cad: done (the simulation is not saved)");
   }
 
   // =====================================================================================================

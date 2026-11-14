@@ -164,6 +164,7 @@ $rc["meshstudy"] = Invoke-Star "07e_SimKit_meshstudy"    ($common + @("-batch", 
 $rc["names"]    = Invoke-Star "07f_SimKit_names"         ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "names"
 $rc["presubmit"] = Invoke-Star "07g_SimKit_presubmit"    ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "presubmit"
 $rc["chttest"]  = Invoke-Star "07h_SimKit_chttest"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "chttest"
+$rc["cadtest"]  = Invoke-Star "07i_SimKit_cadtest"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "cadtest"
 $rc["button"]   = Invoke-Star "08_button_Tracker"       ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_CaseTracker.java")), (& $q $caseSim))) ""
 
 # Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
