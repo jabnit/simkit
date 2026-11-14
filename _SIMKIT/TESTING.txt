@@ -496,4 +496,11 @@ C. RESULTS SO FAR
   3 to look at (auto-save off, 1 default name, no run number in the test sim); 07a: 2 stopping criteria (off) and
   2 mean reports created; 07b adds nothing. Not run: Names window and Apply in the GUI, the update of a report after
   new surfaces, Run on cluster on Linux.
+  Names window, second version (2026-11-14). Left: Boundaries / Part surfaces / Default names with issue counts; rows
+  grouped by region / part / object type (heading: fold, tick = tick the group); issue as a coloured tag; filter;
+  "Issues only"; prefix buttons set the prefix on the ticked rows (none ticked: the selected rows); "Tick all
+  proposed"; Rename n objects = ticked rows with a new name. A tick stays on whether or not the row has a new name
+  (first version: a tick without a new name switched itself off). Text shortened (issues / total, "Filter by name",
+  "Issues only"). Offline: NamesTickTest (mouse clicks on row and heading ticks, prefix on ticked rows, fold) ALL OK;
+  renders of a 120-object model checked. STAR regression SKT76: all 14 exit codes 0, no exception.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.

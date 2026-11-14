@@ -1365,7 +1365,7 @@ public class SimKit extends StarMacro {
       }
       int warn = 0;
       for (String[] k : checks) if (!"ok".equals(k[0])) warn++;
-      JLabel ch = new JLabel("Pre-submit check: " + (checks.size() - warn) + " ok, " + warn + " to look at (the job is submitted either way)");
+      JLabel ch = new JLabel("Pre-submit check: " + (checks.size() - warn) + " ok, " + warn + " warning(s). Submission is not blocked.");
       ch.setFont(ch.getFont().deriveFont(Font.BOLD, 12f));
       ch.setBorder(BorderFactory.createEmptyBorder(8, 0, 2, 0));
       ch.setAlignmentX(0f);
@@ -3779,8 +3779,16 @@ public class SimKit extends StarMacro {
   static final class NameRow {
     Object o;
     String kind, path, name, state, proposed = "", typeClass = "";
+    String group = "", issue = "";   // region / part / object type; short issue ("" = ok)
+    int cat;                         // 0 boundaries, 1 part surfaces, 2 default names
     boolean pick, problem;
   }
+
+  static final String[] NAME_CATS = {"Boundaries", "Part surfaces", "Default names"};
+  static final String[] NAME_CAT_HELP = {
+      "The name prefix must match the boundary type. Standard reports select surfaces by prefix.",
+      "Boundary names are created from part surface names. Rename before assigning parts to regions.",
+      "Plots, reports and scenes display these names."};
 
   /** The name part a prefix goes on: the last dot-separated part of a boundary name ("Body 1.Surface 12" -> "Surface 12"). */
   static String lastPart(String n) { return n.substring(n.lastIndexOf('.') + 1); }
@@ -3807,13 +3815,17 @@ public class SimKit extends StarMacro {
           x.name = nm(b);
           x.path = nm(r) + " / " + x.name;
           x.typeClass = cls(b.getBoundaryType());
-          String t = bcToken(x.name), sug = prefixFor(x.typeClass);
+          x.group = nm(r);
+          x.cat = 0;
+          String t = bcToken(x.name), sug = prefixFor(x.typeClass), bt = nm(b.getBoundaryType()).toLowerCase(Locale.ROOT);
           if (t == null) {
             x.state = "no type prefix (" + nm(b.getBoundaryType()) + ")";
+            x.issue = "no prefix (" + bt + ")";
             x.problem = true;
             if (sug != null) x.proposed = withPrefix(x.name, sug);
           } else if (!typeFits(prefixRule(t), x.typeClass)) {
             x.state = t + "_ on a " + nm(b.getBoundaryType()) + " boundary";
+            x.issue = t + "_ on " + bt;
             x.problem = true;
             if (sug != null) x.proposed = withPrefix(x.name, sug);
           } else {
@@ -3834,8 +3846,11 @@ public class SimKit extends StarMacro {
             x.kind = "part surface";
             x.name = nm(ps);
             x.path = nm(o) + " / " + x.name;
+            x.group = nm(o);
+            x.cat = 1;
             boolean def = isDefaultName(x.name);
             x.state = bcToken(x.name) != null ? (def ? "default name" : "ok") : def ? "default name, no type prefix" : "no type prefix";
+            x.issue = "ok".equals(x.state) ? "" : def ? "default name" : "no prefix";
             x.problem = !"ok".equals(x.state);
             out.add(x);
           }
@@ -3867,6 +3882,9 @@ public class SimKit extends StarMacro {
     x.name = nm(o);
     x.path = path;
     x.state = "default name";
+    x.issue = "default name";
+    x.cat = 2;
+    x.group = kind.substring(0, 1).toUpperCase(Locale.ROOT) + kind.substring(1) + "s";
     x.problem = true;
     return x;
   }
@@ -3880,7 +3898,7 @@ public class SimKit extends StarMacro {
       log.line(String.format(Locale.ROOT, "names: %-13s %-45s %-36s %s", x.kind, Fmt.cut(x.path, 45), x.state,
           x.proposed.isEmpty() ? "" : "-> " + x.proposed));
     }
-    log.line("names: " + rows.size() + " row(s), " + bad + " to look at; prefixes " + prefixRx.pattern());
+    log.line("names: " + rows.size() + " row(s), " + bad + " issue(s); prefixes " + prefixRx.pattern());
   }
 
   /** Names: the table; Apply renames the ticked rows that have a new name. */
@@ -3899,97 +3917,317 @@ public class SimKit extends StarMacro {
         log.na("rename " + x.path, t);
       }
     }
-    result(done.isEmpty() ? "names: nothing renamed" : "names: " + done.size() + " object(s) renamed (Ctrl+Z does not undo it: rename back by hand)");
+    result(done.isEmpty() ? "no objects renamed" : done.size() + " object(s) renamed. Undo is not available.");
   }
 
-  /** The Names window (Swing thread). Rows to look at first; ok rows on "Show all". */
+  /** The Names window (Swing thread): one category at a time (left, with its issue count), its rows grouped by
+   *  region / part / object type, foldable; only the rows that need a look unless asked. True on Rename. */
   Boolean namesWindow(final List<NameRow> all) {
-    final List<NameRow> view = new ArrayList<>();
-    final javax.swing.JCheckBox showAll = new javax.swing.JCheckBox("Show the rows that are ok");
-    final String[] cols = {"", "Object", "Kind", "State", "New name"};
+    final int[] issues = new int[NAME_CATS.length], totals = new int[NAME_CATS.length];
+    for (NameRow x : all) { totals[x.cat]++; if (x.problem) issues[x.cat]++; }
+    final int[] cat = {0};
+    for (int c = 0; c < NAME_CATS.length; c++) if (issues[c] > 0) { cat[0] = c; break; }
+    final List<Object> view = new ArrayList<>();   // a String = a group heading, else a NameRow
+    final Set<String> folded = new HashSet<>();
+    final JTextField search = Ui.hintField("", "Filter by name", 20);
+    final javax.swing.JCheckBox onlyIssues = new javax.swing.JCheckBox("Issues only", true);
+    onlyIssues.setOpaque(false);
+    final JLabel catTitle = new JLabel(" "), catHelp = Ui.muted(" "), ticked = Ui.muted(" ");
+    catTitle.setFont(catTitle.getFont().deriveFont(Font.BOLD, 15f));
+    final JButton apply = Ui.primary("Rename");
+    final JButton useAll = Ui.link("Tick all proposed");
+    useAll.setToolTipText("Ticks the rows shown that have a proposed name");
+    final java.awt.Color amber = new java.awt.Color(0x8A, 0x5A, 0x00), amberBg = new java.awt.Color(0xFF, 0xF1, 0xD6),
+        red = new java.awt.Color(0xB4, 0x23, 0x18), redBg = new java.awt.Color(0xFD, 0xE2, 0xE0),
+        grey = new java.awt.Color(0x4A, 0x55, 0x63), greyBg = new java.awt.Color(0xEC, 0xEF, 0xF3),
+        green = new java.awt.Color(0x2E, 0x6B, 0x2E), headBg = new java.awt.Color(0xF2, 0xF4, 0xF7);
+
     final javax.swing.table.AbstractTableModel model = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
       @Override public int getRowCount() { return view.size(); }
-      @Override public int getColumnCount() { return cols.length; }
-      @Override public String getColumnName(int c) { return cols[c]; }
+      @Override public int getColumnCount() { return 4; }
+      @Override public String getColumnName(int c) { return new String[] {"", "Name", "Issue", "New name"}[c]; }
       @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
-      @Override public boolean isCellEditable(int r, int c) { return c == 0 || c == 4; }
+      @Override public boolean isCellEditable(int r, int c) { return c == 0 || c == 3 && view.get(r) instanceof NameRow; }
       @Override public Object getValueAt(int r, int c) {
-        NameRow x = view.get(r);
-        return c == 0 ? x.pick : c == 1 ? x.path : c == 2 ? x.kind : c == 3 ? x.state : x.proposed;
+        Object o = view.get(r);
+        if (o instanceof String) {   // a heading: ticked when every row of the group is ticked
+          if (c != 0) return c == 1 ? o : "";
+          List<NameRow> g = groupRows((String) o);
+          for (NameRow x : g) if (!x.pick) return false;
+          return !g.isEmpty();
+        }
+        NameRow x = (NameRow) o;
+        return c == 0 ? x.pick : c == 1 ? x.name : c == 2 ? x.issue : x.proposed;
       }
       @Override public void setValueAt(Object v, int r, int c) {
-        NameRow x = view.get(r);
-        if (c == 0) x.pick = Boolean.TRUE.equals(v);
-        if (c == 4) { x.proposed = String.valueOf(v).trim(); if (!x.proposed.isEmpty()) x.pick = true; }
-        fireTableRowsUpdated(r, r);
+        Object o = view.get(r);
+        boolean on = Boolean.TRUE.equals(v);
+        if (o instanceof String) {   // a heading ticks / unticks every row of its group
+          for (NameRow x : groupRows((String) o)) x.pick = on;
+          fireTableRowsUpdated(0, view.size() - 1);   // keeps the selection
+          return;
+        }
+        NameRow x = (NameRow) o;
+        if (c == 0) x.pick = on;
+        if (c == 3) { x.proposed = String.valueOf(v).trim(); if (hasNew(x)) x.pick = true; }
+        fireTableRowsUpdated(0, view.size() - 1);   // the heading's tick follows; the selection stays
+      }
+
+      boolean hasNew(NameRow x) { return !x.proposed.isEmpty() && !x.proposed.equals(x.name); }
+
+      List<NameRow> groupRows(String g) {
+        List<NameRow> out = new ArrayList<>();
+        for (Object k : view) if (k instanceof NameRow && ((NameRow) k).group.equals(g)) out.add((NameRow) k);
+        return out;
       }
     };
-    final Runnable fill = () -> {
-      view.clear();
-      for (NameRow x : all) if (x.problem || showAll.isSelected()) view.add(x);
-      model.fireTableDataChanged();
+    final JTable t = new JTable(model);
+    final Runnable count = () -> {
+      int n = 0, m = 0;
+      for (NameRow x : all) {
+        if (!x.pick) continue;
+        if (!x.proposed.isEmpty() && !x.proposed.equals(x.name)) n++;
+        else m++;
+      }
+      apply.setText(n == 0 ? "Rename" : n == 1 ? "Rename 1 object" : "Rename " + n + " objects");
+      apply.setEnabled(n > 0);
+      ticked.setText(n + m == 0 ? "No rows ticked."
+          : (n + m == 1 ? "1 row ticked" : (n + m) + " rows ticked") + " (all categories)"
+            + (m == 0 ? "." : "; " + m + " without a new name: set a prefix or enter a name."));
     };
-    final javax.swing.JTable t = new javax.swing.JTable(model);
-    t.setRowHeight(24);
+    model.addTableModelListener(e -> count.run());
+    final Runnable fill = () -> {
+      if (t.isEditing()) t.getCellEditor().stopCellEditing();
+      String q = search.getText().trim().toLowerCase(Locale.ROOT);
+      Map<String, List<NameRow>> groups = new LinkedHashMap<>();
+      for (NameRow x : all) {
+        if (x.cat != cat[0] || onlyIssues.isSelected() && !x.problem) continue;
+        if (!q.isEmpty() && !(x.name + " " + x.group + " " + x.proposed).toLowerCase(Locale.ROOT).contains(q)) continue;
+        groups.computeIfAbsent(x.group, k -> new ArrayList<>()).add(x);
+      }
+      view.clear();
+      for (Map.Entry<String, List<NameRow>> g : groups.entrySet()) {
+        view.add(g.getKey());
+        if (!folded.contains(g.getKey()) || !q.isEmpty()) view.addAll(g.getValue());
+      }
+      model.fireTableDataChanged();
+      catTitle.setText(NAME_CATS[cat[0]]);
+      catHelp.setText("<html><div style='width:560px'>" + Html.esc(NAME_CAT_HELP[cat[0]]) + "</div></html>");
+      useAll.setEnabled(view.stream().anyMatch(o -> o instanceof NameRow && !((NameRow) o).proposed.isEmpty()));
+    };
+
+    // ----- table look: group headings, the issue as a tag, the new name in blue -----
+    t.setRowHeight(26);
+    t.setShowVerticalLines(false);
+    t.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
     t.setFillsViewportHeight(true);
+    t.setTableHeader(null);
+    t.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
     t.getColumnModel().getColumn(0).setMaxWidth(30);
-    t.getColumnModel().getColumn(1).setPreferredWidth(320);
-    t.getColumnModel().getColumn(2).setPreferredWidth(90);
-    t.getColumnModel().getColumn(3).setPreferredWidth(260);
-    t.getColumnModel().getColumn(4).setPreferredWidth(260);
+    t.getColumnModel().getColumn(1).setPreferredWidth(300);
+    t.getColumnModel().getColumn(2).setPreferredWidth(190);
+    t.getColumnModel().getColumn(3).setPreferredWidth(300);
     t.setDefaultRenderer(String.class, new javax.swing.table.DefaultTableCellRenderer() {
       private static final long serialVersionUID = 1L;
-      @Override public java.awt.Component getTableCellRendererComponent(javax.swing.JTable tb, Object v, boolean sel, boolean f, int r, int c) {
-        super.getTableCellRendererComponent(tb, v, sel, f, r, c);
-        NameRow x = view.get(r);
-        setForeground(sel ? tb.getSelectionForeground() : c == 3 && x.problem ? new java.awt.Color(0x8A, 0x5A, 0x00)
-            : c == 4 ? Ui.BLUE : java.awt.Color.BLACK);
+      java.awt.Color tagBg;
+      @Override public java.awt.Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean f, int r, int c) {
+        super.getTableCellRendererComponent(tb, v, false, false, r, c);
+        tagBg = null;
+        setFont(tb.getFont().deriveFont(Font.PLAIN));
+        setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+        Object o = view.get(r);
+        boolean rowSel = tb.isRowSelected(r);
+        setBackground(o instanceof String ? headBg : rowSel ? Ui.PALE : java.awt.Color.WHITE);
+        setForeground(java.awt.Color.BLACK);
+        if (o instanceof String) {
+          if (c == 1) {
+            int n = 0, k = 0;
+            for (NameRow x : all) if (x.cat == cat[0] && x.group.equals(o)) { n++; if (x.problem) k++; }
+            setText("<html><b>" + (folded.contains(o) ? "\u25B8 " : "\u25BE ") + Html.esc((String) o) + "</b>&nbsp;&nbsp;<font color='#6B7580'>"
+                + (k == 0 ? "no issues" : k == 1 ? "1 issue" : k + " issues") + (n > k ? ", " + (n - k) + " ok" : "") + "</font></html>");
+            setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 8));
+          } else setText("");
+          return this;
+        }
+        NameRow x = (NameRow) o;
+        if (c == 1) {
+          int i = x.name.lastIndexOf('.');
+          setText(i < 0 ? x.name : "<html><font color='#8A94A0'>" + Html.esc(x.name.substring(0, i + 1)) + "</font>"
+              + Html.esc(x.name.substring(i + 1)) + "</html>");
+          setBorder(BorderFactory.createEmptyBorder(0, 18, 0, 8));
+          setToolTipText(x.path);
+        } else if (c == 2) {
+          String is = x.issue.isEmpty() ? "ok" : x.issue;
+          setText(is);
+          setFont(tb.getFont().deriveFont(Font.BOLD, 11f));
+          boolean mism = x.issue.contains("_ on ");
+          setForeground(x.issue.isEmpty() ? green : mism ? red : x.issue.startsWith("default") ? grey : amber);
+          tagBg = x.issue.isEmpty() ? null : mism ? redBg : x.issue.startsWith("default") ? greyBg : amberBg;
+          setToolTipText(x.state);
+        } else {
+          boolean has = !x.proposed.isEmpty() && !x.proposed.equals(x.name);
+          setText(has ? "\u2192  " + x.proposed : "\u2014");
+          setForeground(has ? (x.pick ? Ui.BLUE : new java.awt.Color(0x7F, 0x9C, 0xC4)) : new java.awt.Color(0xA8, 0xB0, 0xBA));
+          setFont(tb.getFont().deriveFont(has && x.pick ? Font.BOLD : Font.PLAIN));
+          setToolTipText(has ? (x.pick ? "Will be renamed" : "Proposed name. Tick the row to apply it.") : "Double-click to enter a name");
+        }
         return this;
       }
+      @Override protected void paintComponent(java.awt.Graphics g) {
+        if (tagBg != null) {
+          java.awt.Graphics2D g2 = (java.awt.Graphics2D) g;
+          g2.setColor(getBackground());
+          g2.fillRect(0, 0, getWidth(), getHeight());
+          g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+          int w = Math.min(getWidth() - 10, g2.getFontMetrics(getFont()).stringWidth(getText()) + 16);
+          g2.setColor(tagBg);
+          g2.fillRoundRect(4, 4, w, getHeight() - 8, getHeight() - 8, getHeight() - 8);
+          setOpaque(false);
+          super.paintComponent(g);
+          setOpaque(true);
+          return;
+        }
+        super.paintComponent(g);
+      }
     });
-    fill.run();
-    showAll.addActionListener(e -> fill.run());
-    JPanel typeBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
-    typeBar.add(new JLabel("Type prefix on the selected rows:"));
+    javax.swing.table.TableCellRenderer boxes = t.getDefaultRenderer(Boolean.class);
+    t.setDefaultRenderer(Boolean.class, (tb, v, sel, foc, r, c) -> {
+      java.awt.Component k = boxes.getTableCellRendererComponent(tb, v, false, false, r, c);
+      Object o = view.get(r);
+      k.setBackground(o instanceof String ? headBg : tb.isRowSelected(r) ? Ui.PALE : java.awt.Color.WHITE);
+      k.setEnabled(true);
+      return k;
+    });
+    t.addMouseListener(new java.awt.event.MouseAdapter() {
+      @Override public void mouseClicked(java.awt.event.MouseEvent e) {   // a heading folds / unfolds its group
+        int r = t.rowAtPoint(e.getPoint());
+        if (r < 0 || !(view.get(r) instanceof String) || t.columnAtPoint(e.getPoint()) == 0) return;
+        String g = (String) view.get(r);
+        if (!folded.remove(g)) folded.add(g);
+        fill.run();
+      }
+    });
+
+    // ----- left: the categories -----
+    final JPanel cats = new JPanel();
+    cats.setLayout(new javax.swing.BoxLayout(cats, javax.swing.BoxLayout.Y_AXIS));
+    cats.setBackground(java.awt.Color.WHITE);
+    cats.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, Ui.LINE),
+        BorderFactory.createEmptyBorder(10, 8, 10, 8)));
+    final List<JButton> catBtns = new ArrayList<>();
+    final JPanel[] prefixBarRef = {null};
+    final Runnable paintCats = () -> {
+      for (int c = 0; c < catBtns.size(); c++) {
+        JButton cb = catBtns.get(c);
+        boolean on = c == cat[0];
+        cb.setText("<html><b>" + NAME_CATS[c] + "</b><br><font color='" + (issues[c] > 0 ? "#8A5A00" : "#2E6B2E") + "'>"
+            + (issues[c] > 0 ? (issues[c] == 1 ? "1 issue" : issues[c] + " issues") : totals[c] == 0 ? "none" : "no issues") + "</font>"
+            + "<font color='#8A94A0'>" + (totals[c] > 0 ? "  \u00B7  " + totals[c] + " total" : "") + "</font></html>");
+        cb.setBackground(on ? Ui.PALE : java.awt.Color.WHITE);
+        cb.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 3, 0, 0, on ? Ui.BLUE : java.awt.Color.WHITE),
+            BorderFactory.createEmptyBorder(8, 10, 8, 10)));
+      }
+    };
+    for (int c = 0; c < NAME_CATS.length; c++) {
+      final int cc = c;
+      JButton cb = new JButton();
+      cb.setHorizontalAlignment(javax.swing.SwingConstants.LEFT);
+      cb.setFocusPainted(false);
+      cb.setContentAreaFilled(true);
+      cb.setOpaque(true);
+      cb.setAlignmentX(0f);
+      cb.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, 56));
+      cb.addActionListener(e -> { cat[0] = cc; search.setText(""); folded.clear(); paintCats.run(); fill.run(); prefixBarRef[0].setVisible(cc != 2); });
+      catBtns.add(cb);
+      cats.add(cb);
+      cats.add(javax.swing.Box.createVerticalStrut(4));
+    }
+    cats.add(javax.swing.Box.createVerticalGlue());
+    JLabel src = Ui.muted("<html><div style='width:170px'>Prefixes: " + (Files.isRegularFile(Fs.config("naming.csv")) ? "config/naming.csv"
+        : "built-in") + "</div></html>");
+    src.setAlignmentX(0f);
+    cats.add(src);
+    cats.setPreferredSize(new java.awt.Dimension(210, 10));
+    paintCats.run();
+
+    // ----- right: what the category is, search and filter, the prefix buttons, the table -----
+    JPanel tools = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+    tools.add(search);
+    tools.add(javax.swing.Box.createHorizontalStrut(8));
+    tools.add(onlyIssues);
+    tools.add(javax.swing.Box.createHorizontalStrut(8));
+    tools.add(useAll);
+    final JPanel prefixBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+    prefixBarRef[0] = prefixBar;
+    prefixBar.add(Ui.muted("Set prefix on ticked rows:"));
     for (String[] p : prefixes) {
-      JButton b = new JButton(p[0]);
-      b.setToolTipText(p[0] + "_ = " + p[2]);
-      b.setMargin(new java.awt.Insets(2, 8, 2, 8));
+      java.awt.Color[] tc = tagColors(p[0]);
+      JButton b = new JButton(p[0] + "_");
+      b.setToolTipText(p[0] + "_: " + p[2] + ". Applies to the ticked rows shown (none ticked: the selected rows).");
+      b.setFont(b.getFont().deriveFont(Font.BOLD, 11f));
+      b.setForeground(tc[1]);
+      b.setBackground(tc[0]);
+      b.setOpaque(true);
+      b.setFocusPainted(false);
+      b.setBorder(BorderFactory.createEmptyBorder(4, 9, 4, 9));
       b.addActionListener(e -> {
         if (t.isEditing()) t.getCellEditor().stopCellEditing();
-        int[] sel = t.getSelectedRows();
-        if (sel.length == 0) for (int i = 0; i < view.size(); i++) if (view.get(i).pick) sel = append(sel, i);
-        for (int i : sel) {
-          NameRow x = view.get(i);
-          if (!x.kind.equals("boundary") && !x.kind.equals("part surface")) continue;
+        List<NameRow> on = new ArrayList<>();
+        for (Object o : view) if (o instanceof NameRow && ((NameRow) o).pick) on.add((NameRow) o);
+        if (on.isEmpty()) for (int i : t.getSelectedRows()) if (view.get(i) instanceof NameRow) on.add((NameRow) view.get(i));
+        for (NameRow x : on) {
+          if (x.cat == 2) continue;
           x.proposed = withPrefix(x.name, p[0]);
           x.pick = true;
         }
-        model.fireTableDataChanged();
-        for (int i : sel) t.addRowSelectionInterval(i, i);
+        if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);
       });
-      typeBar.add(b);
+      prefixBar.add(b);
     }
-    typeBar.add(javax.swing.Box.createHorizontalStrut(12));
-    typeBar.add(showAll);
-    javax.swing.JScrollPane sp = new javax.swing.JScrollPane(t);
-    sp.setPreferredSize(new java.awt.Dimension(980, 420));
-    int nb = 0;
-    for (NameRow x : all) if (x.problem) nb++;
-    JPanel body = new JPanel(new BorderLayout(0, 8));
-    body.add(Ui.muted("Ticked rows with a new name are renamed on Apply; nothing else changes. Prefixes: "
-        + (Files.isRegularFile(Fs.config("naming.csv")) ? "config/naming.csv" : "built-in list") + "."), BorderLayout.NORTH);
-    body.add(sp, BorderLayout.CENTER);
-    body.add(typeBar, BorderLayout.SOUTH);
-    final JButton apply = Ui.primary("Apply");
-    return Ui.sheet("Names", nb + " row(s) to look at, " + all.size() + " in all", body, apply, () -> {
-      if (t.isEditing()) t.getCellEditor().stopCellEditing();
-      for (NameRow x : all) {
-        if (x.pick && !x.proposed.isEmpty() && (x.proposed.contains("/") || x.proposed.contains("\\"))) return "Name '" + x.proposed + "': no / or \\.";
-      }
-      return null;
+    useAll.addActionListener(e -> {
+      for (Object o : view) if (o instanceof NameRow && !((NameRow) o).proposed.isEmpty()) ((NameRow) o).pick = true;
+      if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);
     });
+    onlyIssues.addActionListener(e -> fill.run());
+    search.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
+      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
+      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
+    });
+    JPanel head = new JPanel();
+    head.setLayout(new javax.swing.BoxLayout(head, javax.swing.BoxLayout.Y_AXIS));
+    for (javax.swing.JComponent k : new javax.swing.JComponent[] {catTitle, catHelp, tools, prefixBar}) {
+      k.setAlignmentX(0f);
+      head.add(k);
+      head.add(javax.swing.Box.createVerticalStrut(k == catTitle ? 2 : 8));
+    }
+    JScrollPane sp = new JScrollPane(t);
+    sp.getViewport().setBackground(java.awt.Color.WHITE);
+    sp.getVerticalScrollBar().setUnitIncrement(16);
+    sp.setBorder(BorderFactory.createLineBorder(new java.awt.Color(0xE3, 0xE7, 0xEC)));
+    JPanel right = new JPanel(new BorderLayout(0, 6));
+    right.setBorder(BorderFactory.createEmptyBorder(0, 14, 0, 0));
+    right.add(head, BorderLayout.NORTH);
+    right.add(sp, BorderLayout.CENTER);
+    right.add(ticked, BorderLayout.SOUTH);
+    JPanel body = new JPanel(new BorderLayout());
+    body.add(cats, BorderLayout.WEST);
+    body.add(right, BorderLayout.CENTER);
+    body.setPreferredSize(new java.awt.Dimension(1060, 560));
+    prefixBar.setVisible(cat[0] != 2);
+    fill.run();
+    count.run();
+    int nb = 0;
+    for (int c : issues) nb += c;
+    return Ui.sheet("Names", nb == 0 ? "No issues." : (nb == 1 ? "1 issue." : nb + " issues.") + " Only ticked rows are renamed.",
+        body, apply, () -> {
+          if (t.isEditing()) t.getCellEditor().stopCellEditing();
+          for (NameRow x : all) {
+            if (x.pick && (x.proposed.contains("/") || x.proposed.contains("\\"))) return "Invalid name '" + x.proposed + "': / and \\ are not allowed.";
+          }
+          return null;
+        });
   }
 
   static int[] append(int[] a, int v) {
