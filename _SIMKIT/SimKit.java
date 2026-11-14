@@ -203,7 +203,8 @@ public class SimKit extends StarMacro {
           log.line("saved " + c.simFile);
           break;
         }
-        case "names": logNames(); break;   // test: the Names table, written to the log (nothing renamed)
+        case "names": logNames(); break;
+        case "chttest": testCht(); break;   // test: solid region + interface in memory (not saved): Names, reports, pre-submit   // test: the Names table, written to the log (nothing renamed)
         case "presubmit": for (String[] k : preSubmitChecks()) log.line("pre-submit " + k[0] + "  " + k[1]); break;
         case "tracker": toolTracker(); break;
         case "opensim": testOpenSim(); break;   // test: the tracker's Open in STAR-CCM+
@@ -1320,6 +1321,7 @@ public class SimKit extends StarMacro {
     final int cpus0 = pc != null && pc.matches("[0-9]+") ? Integer.parseInt(pc) : 1;
     final int[] cpus = {cpus0};
     final List<String[]> checks = preSubmitChecks();   // read here (STAR calls), shown in the window
+    checks.sort((p, q) -> Boolean.compare("ok".equals(p[0]), "ok".equals(q[0])));   // warnings first
     for (String[] k : checks) log.line("  pre-submit " + k[0] + "  " + k[1]);
     Boolean ok = Ui.edt(() -> {
       final JTextField n = new JTextField(String.valueOf(cpus0), 5);
@@ -1455,17 +1457,63 @@ public class SimKit extends StarMacro {
       out.add(n > 0 ? new String[] {"ok", n + " standard report(s) (r_*)"} : new String[] {"!", "no standard reports (r_*): Standard reports adds them"});
     } catch (Throwable t) { out.add(new String[] {"!", "standard reports: n/a (" + reason(t) + ")"}); }
     try {
-      int def = 0, mism = 0, nopre = 0;
+      int def = 0, mism = 0, nopre = 0, noIf = 0;
       for (NameRow x : nameRows()) {
         if (x.state.startsWith("default name")) def++;
+        else if ("not in an interface".equals(x.issue)) noIf++;
         else if (x.kind.equals("boundary") && x.state.startsWith("no type prefix")) nopre++;
         else if (x.kind.equals("boundary") && x.problem) mism++;
       }
       out.add(mism > 0 ? new String[] {"!", mism + " boundary type(s) do not match the name prefix (Names)"}
           : new String[] {"ok", "boundary types match the name prefixes"});
+      if (noIf > 0) out.add(new String[] {"!", noIf + " IF_ boundary(ies) in no interface (Names)"});
       if (nopre > 0) out.add(new String[] {"!", nopre + " boundary(ies) without a type prefix (Names)"});
       if (def > 0) out.add(new String[] {"!", def + " object(s) with a default name (Names)"});
     } catch (Throwable t) { out.add(new String[] {"!", "names: n/a (" + reason(t) + ")"}); }
+    try {   // reports and the surfaces they are computed on
+      Map<String, Object> reps = new LinkedHashMap<>();
+      for (Object r : sim.getReportManager().getObjects()) reps.put(nm(r), r);
+      List<String> empty = new ArrayList<>(), miss = new ArrayList<>(), notNet = new ArrayList<>();
+      for (Map.Entry<String, Object> e : reps.entrySet()) {
+        String rc = cls(e.getValue());
+        if (rc.contains("Expression") || rc.contains("Statistics")) continue;   // computed from other reports
+        if (e.getKey().startsWith("r_") && Reflect.tryCall(e.getValue(), "getParts") != null && partsOf(e.getValue()).isEmpty()) empty.add(e.getKey());
+      }
+      Map<String, List<Boundary>> bc = boundariesByToken();
+      for (String[] d : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) {
+        if (d[0] == null || d[4] == null) continue;
+        String nm0 = d[0].trim(), sf = d[4].trim();
+        Object rep0 = reps.get(nm0);
+        if (rep0 == null || sf.isEmpty() || sf.equals("REGIONS") || "expression".equalsIgnoreCase(d[2] == null ? "" : d[2].trim())) continue;
+        Set<Object> have = new HashSet<>(partsOf(rep0));
+        if (have.isEmpty()) continue;
+        int k = 0;
+        for (String tk : sf.split("\\+")) for (Boundary b : bc.getOrDefault(tk.trim(), Collections.emptyList())) if (!have.contains(b)) k++;
+        if (k > 0) miss.add(nm0 + " (+" + k + ")");
+      }
+      Object net = reps.get("r_mdot_net");
+      if (net != null) {
+        Set<Object> have = new HashSet<>(partsOf(net));
+        for (Region r : sim.getRegionManager().getRegions()) {
+          if (isSolid(r)) continue;
+          for (Boundary b : r.getBoundaryManager().getBoundaries()) {
+            String c = cls(b.getBoundaryType());
+            if (c.equals("WallBoundary") || c.equals("SymmetryBoundary") || isInterfaceBoundary(b) || inInterface(b) || have.contains(b)) continue;
+            notNet.add(nm(b));
+          }
+        }
+      }
+      if (!empty.isEmpty()) out.add(new String[] {"!", "report(s) with no surfaces: " + String.join(", ", empty)});
+      if (!miss.isEmpty()) out.add(new String[] {"!", "standard report(s) missing new surfaces: " + String.join(", ", miss) + " (Standard reports adds them)"});
+      if (!notNet.isEmpty()) out.add(new String[] {"!", "flow boundary(ies) not in r_mdot_net: " + String.join(", ", notNet)});
+      if (empty.isEmpty() && miss.isEmpty() && notNet.isEmpty()) out.add(new String[] {"ok", "report surfaces up to date"});
+    } catch (Throwable t) { out.add(new String[] {"!", "report surfaces: n/a (" + reason(t) + ")"}); }
+    try {
+      List<String> noCont = new ArrayList<>();
+      for (Region r : sim.getRegionManager().getRegions()) if (r.getPhysicsContinuum() == null) noCont.add(nm(r));
+      out.add(noCont.isEmpty() ? new String[] {"ok", "every region has a physics continuum"}
+          : new String[] {"!", "region(s) without a physics continuum: " + String.join(", ", noCont)});
+    } catch (Throwable t) { out.add(new String[] {"!", "physics continua: n/a (" + reason(t) + ")"}); }
     out.add(findParam(P_RUN) != null ? new String[] {"ok", "run number in the simulation (" + P_RUN + ")"}
         : new String[] {"!", "no run number in the simulation: Save as new run first"});
     return out;
@@ -3749,6 +3797,12 @@ public class SimKit extends StarMacro {
     return Arrays.asList(rule[1].split("\\s+")).contains(boundaryClass);
   }
 
+  /** The prefix of interface boundaries (the rule with "*Interface*"), or null. */
+  static String interfacePrefix() {
+    for (String[] r : prefixes) if (r[1].startsWith("*")) return r[0];
+    return null;
+  }
+
   /** The prefix a boundary class suggests (first rule that lists it), or null. */
   static String prefixFor(String boundaryClass) {
     for (String[] r : prefixes) if (!r[1].startsWith("*") && Arrays.asList(r[1].split("\\s+")).contains(boundaryClass)) return r[0];
@@ -3757,10 +3811,42 @@ public class SimKit extends StarMacro {
   }
 
   /** Boundaries of all regions grouped by prefix token. */
+  /** True for a solid region (conjugate heat transfer: the solid side of the walls). */
+  static boolean isSolid(Region r) {
+    try { return r.getRegionType() instanceof SolidRegion; } catch (Throwable t) { return false; }
+  }
+
+  /** True for a boundary that STAR-CCM+ makes for an interface ("IF_face5 [IF_test 1]"): not the user's. */
+  static boolean isInterfaceBoundary(Boundary b) {
+    return b instanceof DirectBoundaryInterfaceBoundary || cls(b).endsWith("InterfaceBoundary");   // a Boundary subclass
+  }
+
+  /** True when the boundary belongs to an interface. */
+  static boolean inInterface(Boundary b) {
+    try { return !b.getDependentInterfaces().isEmpty(); } catch (Throwable t) { return false; }
+  }
+
+  /** Boundary type classes and their names in STAR-CCM+ (Set type in Names). */
+  static final String[][] BOUNDARY_TYPES = {{"InletBoundary", "Velocity Inlet"}, {"MassFlowBoundary", "Mass Flow Inlet"},
+      {"StagnationBoundary", "Stagnation Inlet"}, {"FreeStreamBoundary", "Free Stream"}, {"PressureBoundary", "Pressure Outlet"},
+      {"OutletBoundary", "Flow-split Outlet"}, {"WallBoundary", "Wall"}, {"SymmetryBoundary", "Symmetry Plane"}};
+
+  static String typeTitle(String cls) {
+    for (String[] t : BOUNDARY_TYPES) if (t[0].equals(cls)) return t[1];
+    return cls;
+  }
+
+  /** Boundaries by prefix token, for the default surfaces of Standard reports: the boundaries of solid regions are left
+   *  out when the simulation has a fluid region (in conjugate heat transfer the fluid side of a coupled wall is the one
+   *  reported). */
   Map<String, List<Boundary>> boundariesByToken() {
     Map<String, List<Boundary>> out = new LinkedHashMap<>();
+    boolean anyFluid = false;
+    for (Region r : sim.getRegionManager().getRegions()) anyFluid |= !isSolid(r);
     for (Region r : sim.getRegionManager().getRegions()) {
+      if (anyFluid && isSolid(r)) continue;
       for (Boundary b : r.getBoundaryManager().getBoundaries()) {
+        if (isInterfaceBoundary(b)) continue;
         String t = bcToken(nm(b));
         if (t != null) out.computeIfAbsent(t, k -> new ArrayList<>()).add(b);
       }
@@ -3780,13 +3866,14 @@ public class SimKit extends StarMacro {
     Object o;
     String kind, path, name, state, proposed = "", typeClass = "";
     String group = "", issue = "";   // region / part / object type; short issue ("" = ok)
+    String token = "";               // a boundary whose prefix does not match its type: the prefix (Set type)
     int cat;                         // 0 boundaries, 1 part surfaces, 2 default names
     boolean pick, problem;
   }
 
   static final String[] NAME_CATS = {"Boundaries", "Part surfaces", "Default names"};
   static final String[] NAME_CAT_HELP = {
-      "The name prefix must match the boundary type. Standard reports select surfaces by prefix.",
+      "The name prefix must match the boundary type (Set type changes the type, Rename the name). IF_ boundaries must be in an interface.",
       "Boundary names are created from part surface names. Rename before assigning parts to regions.",
       "Plots, reports and scenes display these names."};
 
@@ -3809,6 +3896,7 @@ public class SimKit extends StarMacro {
     try {
       for (Region r : sim.getRegionManager().getRegions()) {
         for (Boundary b : r.getBoundaryManager().getBoundaries()) {
+          if (isInterfaceBoundary(b)) continue;   // made by STAR-CCM+ for an interface
           NameRow x = new NameRow();
           x.o = b;
           x.kind = "boundary";
@@ -3817,17 +3905,24 @@ public class SimKit extends StarMacro {
           x.typeClass = cls(b.getBoundaryType());
           x.group = nm(r);
           x.cat = 0;
-          String t = bcToken(x.name), sug = prefixFor(x.typeClass), bt = nm(b.getBoundaryType()).toLowerCase(Locale.ROOT);
+          boolean inIf = inInterface(b);
+          String[] rule;
+          String t = bcToken(x.name), bt = nm(b.getBoundaryType()).toLowerCase(Locale.ROOT);
+          String sug = inIf ? interfacePrefix() : prefixFor(x.typeClass);
           if (t == null) {
-            x.state = "no type prefix (" + nm(b.getBoundaryType()) + ")";
-            x.issue = "no prefix (" + bt + ")";
+            x.state = "no type prefix (" + nm(b.getBoundaryType()) + (inIf ? ", in an interface" : "") + ")";
+            x.issue = "no prefix (" + (inIf ? "interface" : bt) + ")";
             x.problem = true;
             if (sug != null) x.proposed = withPrefix(x.name, sug);
-          } else if (!typeFits(prefixRule(t), x.typeClass)) {
+          } else if ((rule = prefixRule(t)) != null && rule[1].startsWith("*")) {   // IF_: checked against the interfaces
+            x.state = inIf ? "ok" : t + "_ boundary in no interface";
+            x.issue = inIf ? "" : "not in an interface";
+            x.problem = !inIf;
+          } else if (!inIf && !typeFits(rule, x.typeClass)) {   // the name is kept: the type is what to change
             x.state = t + "_ on a " + nm(b.getBoundaryType()) + " boundary";
             x.issue = t + "_ on " + bt;
+            x.token = t;
             x.problem = true;
-            if (sug != null) x.proposed = withPrefix(x.name, sug);
           } else {
             x.state = "ok";
           }
@@ -3904,7 +3999,7 @@ public class SimKit extends StarMacro {
   /** Names: the table; Apply renames the ticked rows that have a new name. */
   void toolNames() {
     final List<NameRow> rows = nameRows();
-    final int[] total = {0};
+    final int[] total = {0}, types0 = {0};
     Ui.edt(() -> namesWindow(rows, list -> {
       int n = 0, bad = 0;
       for (NameRow x : list) {
@@ -3920,8 +4015,25 @@ public class SimKit extends StarMacro {
       total[0] += n;
       return (n == 1 ? "1 object renamed." : n + " objects renamed.") + (bad > 0 ? " " + bad + " failed: see the Output window." : "")
           + " Undo is not available.";
+    }, (list, types) -> {
+      int n = 0, bad = 0;
+      for (NameRow x : list) {
+        String c = types.get(x.token);
+        try {
+          Class<?> k = Class.forName("star.common." + c);
+          ((Boundary) x.o).setBoundaryType((Class) k);
+          log.line("  boundary type " + x.path + ": " + typeTitle(x.typeClass) + " -> " + typeTitle(c));
+          n++;
+        } catch (Throwable t) {
+          log.na("boundary type of " + x.path, t);
+          bad++;
+        }
+      }
+      types0[0] += n;
+      return (n == 1 ? "1 boundary type set." : n + " boundary types set.") + (bad > 0 ? " " + bad + " failed: see the Output window." : "")
+          + " Their values are reset to the defaults of the new type.";
     }, this::nameRows));
-    result(total[0] == 0 ? "no objects renamed" : total[0] + " object(s) renamed");
+    result((total[0] == 0 ? "no objects renamed" : total[0] + " object(s) renamed") + (types0[0] > 0 ? ", " + types0[0] + " boundary type(s) set" : ""));
   }
 
   /** The Names window (Swing thread): one category at a time (left, with its issue count), its rows grouped by
@@ -3929,6 +4041,7 @@ public class SimKit extends StarMacro {
    *  rows with a new name in a worker thread (STAR-CCM+ calls), then 'reload' reads the rows again; the window stays
    *  open until Close. */
   Boolean namesWindow(final List<NameRow> all, final java.util.function.Function<List<NameRow>, String> rename,
+      final java.util.function.BiFunction<List<NameRow>, Map<String, String>, String> setType,
       final java.util.function.Supplier<List<NameRow>> reload) {
     final int[] issues = new int[NAME_CATS.length], totals = new int[NAME_CATS.length];
     final Runnable recount = () -> {
@@ -3947,6 +4060,8 @@ public class SimKit extends StarMacro {
     final JLabel catTitle = new JLabel(" "), catHelp = Ui.muted(" "), ticked = Ui.muted(" ");
     catTitle.setFont(catTitle.getFont().deriveFont(Font.BOLD, 15f));
     final JButton apply = Ui.primary("Rename");
+    final JButton typeBtn = new JButton("Set type");
+    typeBtn.setToolTipText("Sets the boundary type from the name prefix on the ticked boundaries (the name is kept)");
     apply.putClientProperty("simkit.stay", Boolean.TRUE);
     final String[] lastMsg = {null};   // the outcome of the last Rename, shown until the next tick
     final JButton useAll = Ui.link("Tick all proposed");
@@ -3998,17 +4113,24 @@ public class SimKit extends StarMacro {
     };
     final JTable t = new JTable(model);
     final Runnable count = () -> {
-      int n = 0, m = 0;
+      int n = 0, m = 0, k = 0, anyType = 0;
       for (NameRow x : all) {
+        if (!x.token.isEmpty()) anyType++;
         if (!x.pick) continue;
         if (!x.proposed.isEmpty() && !x.proposed.equals(x.name)) n++;
+        else if (!x.token.isEmpty()) k++;
         else m++;
       }
-      if (n + m > 0) lastMsg[0] = null;   // the message of the last Rename until the next tick
+      if (n + m + k > 0) lastMsg[0] = null;   // the message of the last action until the next tick
       apply.setText(n == 0 ? "Rename" : n == 1 ? "Rename 1 object" : "Rename " + n + " objects");
       apply.setEnabled(n > 0);
-      ticked.setText(n + m == 0 && lastMsg[0] != null ? lastMsg[0] : n + m == 0 ? "No rows ticked."
-          : (n + m == 1 ? "1 row ticked" : (n + m) + " rows ticked") + " (all categories)"
+      typeBtn.setVisible(anyType > 0);
+      typeBtn.setText(k == 0 ? "Set type" : k == 1 ? "Set type on 1 boundary" : "Set type on " + k + " boundaries");
+      typeBtn.setEnabled(k > 0);
+      int all3 = n + m + k;
+      ticked.setForeground(Ui.MUTED);
+      ticked.setText(all3 == 0 && lastMsg[0] != null ? lastMsg[0] : all3 == 0 ? "No rows ticked."
+          : (all3 == 1 ? "1 row ticked" : all3 + " rows ticked") + " (all categories)"
             + (m == 0 ? "." : "; " + m + " without a new name: set a prefix or enter a name."));
     };
     model.addTableModelListener(e -> count.run());
@@ -4079,7 +4201,7 @@ public class SimKit extends StarMacro {
           boolean mism = x.issue.contains("_ on ");
           setForeground(x.issue.isEmpty() ? green : mism ? red : x.issue.startsWith("default") ? grey : amber);
           tagBg = x.issue.isEmpty() ? null : mism ? redBg : x.issue.startsWith("default") ? greyBg : amberBg;
-          setToolTipText(x.state);
+          setToolTipText(x.token.isEmpty() ? x.state : x.state + ". Tick the row and use Set type, or enter a new name.");
         } else {
           boolean has = !x.proposed.isEmpty() && !x.proposed.equals(x.name);
           setText(has ? "\u2192  " + x.proposed : "\u2014");
@@ -4225,7 +4347,10 @@ public class SimKit extends StarMacro {
     right.setBorder(BorderFactory.createEmptyBorder(0, 14, 0, 0));
     right.add(head, BorderLayout.NORTH);
     right.add(sp, BorderLayout.CENTER);
-    right.add(ticked, BorderLayout.SOUTH);
+    JPanel south = new JPanel(new BorderLayout(10, 0));
+    south.add(ticked, BorderLayout.CENTER);
+    south.add(typeBtn, BorderLayout.EAST);
+    right.add(south, BorderLayout.SOUTH);
     JPanel body = new JPanel(new BorderLayout());
     body.add(cats, BorderLayout.WEST);
     body.add(right, BorderLayout.CENTER);
@@ -4234,30 +4359,19 @@ public class SimKit extends StarMacro {
     fill.run();
     count.run();
     final Runnable paintCatsRef = paintCats;
-    apply.addActionListener(e -> {
-      if (t.isEditing()) t.getCellEditor().stopCellEditing();
-      final List<NameRow> go = new ArrayList<>();
-      for (NameRow x : all) {
-        if (!x.pick || x.proposed.trim().isEmpty() || x.proposed.trim().equals(x.name)) continue;
-        if (x.proposed.contains("/") || x.proposed.contains("\\")) {
-          ticked.setText("Invalid name '" + x.proposed + "': / and \\ are not allowed.");
-          ticked.setForeground(Ui.RED);
-          return;
-        }
-        go.add(x);
-      }
-      if (go.isEmpty()) return;
+    final java.util.function.BiConsumer<String, java.util.function.Supplier<String>> work = (busy, job) -> {
       ticked.setForeground(Ui.MUTED);
-      ticked.setText(go.size() == 1 ? "Renaming 1 object..." : "Renaming " + go.size() + " objects...");
+      ticked.setText(busy);
       apply.setEnabled(false);
+      typeBtn.setEnabled(false);
       Thread w = new Thread(() -> {   // STAR-CCM+ calls off the Swing thread
         String msg;
         List<NameRow> fresh = null;
         try {
-          msg = rename.apply(go);
+          msg = job.get();
           fresh = reload == null ? null : reload.get();
         } catch (Throwable x) {
-          msg = "Rename stopped: " + reason(x);
+          msg = "Stopped: " + reason(x);
         }
         final String m = msg;
         final List<NameRow> f = fresh;
@@ -4273,9 +4387,56 @@ public class SimKit extends StarMacro {
           fill.run();
           count.run();
         });
-      }, "SimKit Names rename");
+      }, "SimKit Names");
       w.setDaemon(true);
       w.start();
+    };
+    typeBtn.addActionListener(e -> {
+      if (t.isEditing()) t.getCellEditor().stopCellEditing();
+      final List<NameRow> go = new ArrayList<>();
+      Map<String, Integer> byToken = new LinkedHashMap<>();
+      for (NameRow x : all) if (x.pick && !x.token.isEmpty()) { go.add(x); byToken.merge(x.token, 1, Integer::sum); }
+      if (go.isEmpty()) return;
+      JPanel p = new JPanel(new GridLayout(0, 2, 10, 6));
+      final Map<String, javax.swing.JComboBox<String>> combos = new LinkedHashMap<>();
+      for (Map.Entry<String, Integer> en : byToken.entrySet()) {
+        String[] rule = prefixRule(en.getKey());
+        List<String> titles = new ArrayList<>();
+        for (String c : rule == null ? new String[0] : rule[1].split("\\s+")) if (!c.isEmpty()) titles.add(typeTitle(c));
+        javax.swing.JComboBox<String> cb = new javax.swing.JComboBox<>(titles.toArray(new String[0]));
+        combos.put(en.getKey(), cb);
+        p.add(new JLabel(en.getKey() + "_  (" + en.getValue() + (en.getValue() == 1 ? " boundary)" : " boundaries)")));
+        p.add(cb);
+      }
+      JPanel box = new JPanel(new BorderLayout(0, 10));
+      box.add(p, BorderLayout.CENTER);
+      box.add(new JLabel("<html><div style='width:360px'>The values of these boundaries are reset to the defaults of the new type. "
+          + "The names are not changed.</div></html>"), BorderLayout.SOUTH);
+      int ok = JOptionPane.showConfirmDialog(t, box, "Set boundary type", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+      if (ok != JOptionPane.OK_OPTION) return;
+      final Map<String, String> types = new HashMap<>();
+      for (Map.Entry<String, javax.swing.JComboBox<String>> en : combos.entrySet()) {
+        String title = String.valueOf(en.getValue().getSelectedItem());
+        for (String[] bt : BOUNDARY_TYPES) if (bt[1].equals(title)) types.put(en.getKey(), bt[0]);
+      }
+      go.removeIf(x -> !types.containsKey(x.token));
+      if (go.isEmpty()) return;
+      work.accept(go.size() == 1 ? "Setting 1 boundary type..." : "Setting " + go.size() + " boundary types...", () -> setType.apply(go, types));
+    });
+    apply.addActionListener(e -> {
+      if (t.isEditing()) t.getCellEditor().stopCellEditing();
+      final List<NameRow> go = new ArrayList<>();
+      for (NameRow x : all) {
+        if (!x.pick || x.proposed.trim().isEmpty() || x.proposed.trim().equals(x.name)) continue;
+        if (x.proposed.contains("/") || x.proposed.contains("\\")) {
+          ticked.setText("Invalid name '" + x.proposed + "': / and \\ are not allowed.");
+          ticked.setForeground(Ui.RED);
+          return;
+        }
+        go.add(x);
+      }
+      if (go.isEmpty()) return;
+      work.accept(go.size() == 1 ? "Renaming 1 object..." : "Renaming " + go.size() + " objects...", () -> rename.apply(go));
     });
     return Ui.sheet("Names", "Only ticked rows are renamed.", body, apply, null);
   }
@@ -4309,10 +4470,10 @@ public class SimKit extends StarMacro {
       {"r_dp_static", "pressure", "expression", "${r_p_in_avg} - ${r_p_out_avg}", "", "needs r_p_in_avg r_p_out_avg", "static pressure drop, inlet - outlet"},
       {"r_T_in_mfavg", "temperature", "mass-flow average", "Temperature", "IN", "energy", "inlet temperature (mass-flow average)"},
       {"r_T_out_mfavg", "temperature", "mass-flow average", "Temperature", "OUT+OPEN", "energy", "outlet temperature (mass-flow average)", "asymptotic 0.5 200", "last 500"},
-      {"r_T_wall_max", "temperature", "maximum", "Temperature", "WALL", "energy", "hottest wall temperature"},
-      {"r_Q_wall", "heat", "heat flow", "", "WALL", "energy", "heat flow through the walls", "", "last 500"},
-      {"r_yplus_wall_max", "yplus", "maximum", "WallYplus", "WALL", "", "maximum wall y+"},
-      {"r_yplus_wall_avg", "yplus", "area average", "WallYplus", "WALL", "", "average wall y+"},
+      {"r_T_wall_max", "temperature", "maximum", "Temperature", "WALL+IF", "energy", "hottest wall temperature"},
+      {"r_Q_wall", "heat", "heat flow", "", "WALL+IF", "energy", "heat flow through the walls", "", "last 500"},
+      {"r_yplus_wall_max", "yplus", "maximum", "WallYplus", "WALL+IF", "", "maximum wall y+"},
+      {"r_yplus_wall_avg", "yplus", "area average", "WallYplus", "WALL+IF", "", "average wall y+"},
       {"r_Co_max", "courant", "maximum", "CourantNumber", "REGIONS", "unsteady", "maximum convective Courant number"}};
 
   /** Report types by their plain name (a full class name works too). */
@@ -5465,6 +5626,64 @@ public class SimKit extends StarMacro {
       return;
     }
     log.line("open sim: no other run in " + c.caseDir + " to open");
+  }
+
+  /** Batch test of the naming items on a conjugate heat transfer layout, in memory (the sim is not saved): a solid
+   *  region with a boundary IF_plate, an interface with the fluid boundary renamed IF_face5, a fluid wall renamed
+   *  IN_face2 (prefix / type mismatch). Logs the Names rows, Set type, the default report surfaces, the pre-submit. */
+  void testCht() {
+    Region fluid = null;
+    for (Region r : sim.getRegionManager().getRegions()) if (fluid == null) fluid = r;
+    Boundary f5 = null, f2 = null;
+    for (Boundary b : fluid.getBoundaryManager().getBoundaries()) {
+      if (nm(b).endsWith("WALL_face5")) f5 = b;
+      if (nm(b).endsWith("WALL_face2")) f2 = b;
+    }
+    f5.setPresentationName("IF_face5");
+    f2.setPresentationName("IN_face2");
+    Region solid = sim.getRegionManager().createEmptyRegion();
+    solid.setPresentationName("S_plate");
+    try {   // a solid continuum: the region type follows the continuum
+      PhysicsContinuum sc = sim.getContinuumManager().createContinuum(PhysicsContinuum.class);
+      sc.setPresentationName("PH_SOLID");
+      for (String m : new String[] {"star.metrics.ThreeDimensionalModel", "star.common.ImplicitUnsteadyModel", "star.material.SolidModel",
+          "star.segregatedenergy.SegregatedSolidEnergyModel"}) {
+        try { sc.enable((Class) Class.forName(m)); } catch (Throwable t) { log.na("solid model " + m, t); }
+      }
+      solid.setPhysicsContinuum(sc);
+    } catch (Throwable t) { log.na("solid continuum", t); }
+    log.line("cht: region type of S_plate: " + cls(solid.getRegionType()));
+    Boundary plate = solid.getBoundaryManager().createEmptyBoundary("IF_plate");
+    Boundary lone = solid.getBoundaryManager().createEmptyBoundary("IF_lone");
+    try {
+      sim.getInterfaceManager().createDirectInterface(f5, plate, "IF_test");
+      log.line("cht: interface created");
+    } catch (Throwable t) { log.na("cht: interface", t); }
+    for (Region r : new Region[] {fluid, solid}) {
+      for (Boundary b : r.getBoundaryManager().getBoundaries()) log.line("cht: boundary " + nm(r) + " / " + nm(b) + ": " + cls(b) + ", type "
+          + cls(b.getBoundaryType()) + (isInterfaceBoundary(b) ? " (interface boundary: left out)" : ""));
+    }
+    for (Boundary b : new Boundary[] {f5, plate, lone, f2}) {
+      log.line("cht: " + nm(b.getRegion()) + " / " + nm(b) + ": type " + cls(b.getBoundaryType()) + ", interfaces " + (inInterface(b) ? "yes" : "no")
+          + ", solid region " + isSolid(b.getRegion()));
+    }
+    logNames();
+    for (NameRow x : nameRows()) {
+      if (!x.token.isEmpty()) {
+        log.line("cht: Set type on " + x.path + " (" + x.token + "_), proposal '" + x.proposed + "'");
+        try {
+          ((Boundary) x.o).setBoundaryType((Class) Class.forName("star.common.MassFlowBoundary"));
+          log.line("cht: now " + cls(((Boundary) x.o).getBoundaryType()));
+        } catch (Throwable t) { log.na("cht: set type", t); }
+      }
+    }
+    for (Map.Entry<String, List<Boundary>> e : boundariesByToken().entrySet()) {
+      List<String> n = new ArrayList<>();
+      for (Boundary b : e.getValue()) n.add(nm(b.getRegion()) + "/" + nm(b));
+      log.line("cht: default surfaces " + e.getKey() + ": " + n);
+    }
+    for (String[] k : preSubmitChecks()) log.line("cht: pre-submit " + k[0] + "  " + k[1]);
+    log.line("cht: done (the simulation is not saved)");
   }
 
   // =====================================================================================================

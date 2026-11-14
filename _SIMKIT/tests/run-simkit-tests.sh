@@ -147,6 +147,7 @@ invoke_star 07c_SimKit_meshparams meshparams ${COMMON[@]+"${COMMON[@]}"} -batch 
 invoke_star 07e_SimKit_meshstudy meshstudy ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[meshstudy]=$RC
 invoke_star 07f_SimKit_names names ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[names]=$RC
 invoke_star 07g_SimKit_presubmit presubmit ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[presubmit]=$RC
+invoke_star 07h_SimKit_chttest chttest ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[chttest]=$RC
 invoke_star 08_button_Tracker "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_CaseTracker.java" "$CASE_SIM"; RCS[button]=$RC
 
 # Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence

@@ -507,4 +507,20 @@ C. RESULTS SO FAR
   outcome is shown under the table; Close ends the window (Ui.sheet: a main button with client property simkit.stay
   acts without closing). NamesTickTest extended (Rename: window open, renamed rows gone, outcome shown) ALL OK.
   STAR regression SKT77: all 14 exit codes 0, no exception.
+  Naming, simple proposal items 1-4 (2026-11-14; review/SimKit_naming_simple.md). One rule: the TYPE prefix on
+  boundaries and part surfaces, no default names; the rest is read from STAR-CCM+. (1) A prefix that does not match
+  the boundary type gets no rename proposal; Names offers "Set type on n boundaries" (type chosen per prefix from
+  config/naming.csv; Boundary.setBoundaryType; the values are reset, stated in the confirmation). (2) IF_ is ok when the
+  boundary is in an interface (Boundary.getDependentInterfaces), else "not in an interface"; the boundaries STAR-CCM+
+  makes for an interface (InterfaceBoundary, type ContactBoundary, "IF_face5 [IF_test 1]") are left out everywhere.
+  (3) Wall reports (r_T_wall_max, r_Q_wall, r_yplus_wall_*) on WALL+IF; default surfaces from fluid regions only
+  (Region.getRegionType() instanceof SolidRegion). (4) Pre-submit adds: reports with no surfaces (expression and
+  statistics reports excluded), standard reports missing new surfaces, flow boundaries not in r_mdot_net, IF_ in no
+  interface, regions without a physics continuum; warnings listed first. Batch test 07h chttest: on the test sim, in
+  memory (not saved), a solid region with a solid continuum, an interface F_air/IF_face5 - S_plate/IF_plate, IF_lone
+  in no interface, WALL_face2 renamed IN_face2. SKT78 found: interface boundaries listed, expression reports flagged,
+  test region not solid (it took the fluid continuum); fixed. STAR regression SKT80: all 15 exit codes 0, no
+  exception; 07h: region type SolidRegion; interface boundaries left out; IF_lone flagged; IN_face2 no proposal,
+  Set type -> MassFlowBoundary; IF defaults F_air/IF_face5 only; pre-submit lines as expected. Offline: NamesTickTest
+  ALL OK, ReportsTickTest ok, Names render with Set type checked. Not run: the Set type dialog in the GUI.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.
