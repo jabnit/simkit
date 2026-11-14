@@ -7,10 +7,8 @@ kind,key,code
 pattern,,r_{q}_{s}_{o}
 quantity,Temperature,T
 quantity,Pressure,p
-quantity,TotalPressure,p0
 quantity,Velocity:magnitude,U
 quantity,WallYplus,yplus
-quantity,WallShearStress:magnitude,tauw
 statistic,maximum,max
 statistic,minimum,min
 statistic,area average,aavg
