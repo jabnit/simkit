@@ -7837,7 +7837,7 @@ public class SimKit extends StarMacro {
       if ("1".equals(System.getenv("SIMKIT_GUI"))) return null;
       try { if (GraphicsEnvironment.isHeadless()) return "Java is headless"; } catch (Throwable t) { return "no display"; }
       try {
-        String cmd = ProcessHandle.current().info().commandLine().orElse("");
+        String cmd = java.lang.ProcessHandle.current().info().commandLine().orElse("");
         if (Pattern.compile("\\s-batch(\\s|$)").matcher(cmd).find()) return "process started with -batch";
       } catch (Throwable t) { /* unknown */ }
       try {
