@@ -6864,9 +6864,9 @@ public class SimKit extends StarMacro {
     final javax.swing.table.AbstractTableModel lm = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
       @Override public int getRowCount() { return lrows.size(); }
-      @Override public int getColumnCount() { return 6; }
+      @Override public int getColumnCount() { return 7; }
       @Override public String getColumnName(int col) {
-        return new String[] {"", "Level", "Size factor", "Base size" + (unit.isEmpty() ? "" : " [" + unit + "]"), "Cells (est.)", "Run"}[col];
+        return new String[] {"", "Level", "Size factor", "Base size" + (unit.isEmpty() ? "" : " [" + unit + "]"), "Cells (est.)", "Run", MESH_SCALE}[col];
       }
       @Override public boolean isCellEditable(int r, int col) { return col == 1 || (col == 2 && !lrows.get(r).current); }
       @Override public Object getValueAt(int r, int col) {
@@ -6883,6 +6883,7 @@ public class SimKit extends StarMacro {
             int k = 0;
             for (LevelRow y : lrows) { if (y == x) break; if (!y.current) k++; }
             return x.name.trim().isEmpty() ? "" : runId(next + k) + "_" + x.name.trim();
+          case 6: return num4(cur0 * x.f);
           default: return "";
         }
       }
@@ -6921,8 +6922,9 @@ public class SimKit extends StarMacro {
     };
     table.setDefaultRenderer(Object.class, cell.apply(javax.swing.SwingConstants.LEFT));
     javax.swing.table.TableColumnModel cm = table.getColumnModel();
-    javax.swing.table.TableColumn cRail = cm.getColumn(0), cBase = cm.getColumn(3), cCells = cm.getColumn(4), cRun = cm.getColumn(5);
+    javax.swing.table.TableColumn cRail = cm.getColumn(0), cBase = cm.getColumn(3), cCells = cm.getColumn(4), cRun = cm.getColumn(5), cScale = cm.getColumn(6);
     for (int col = 2; col <= 4; col++) cm.getColumn(col).setCellRenderer(cell.apply(javax.swing.SwingConstants.RIGHT));
+    cScale.setCellRenderer(cell.apply(javax.swing.SwingConstants.RIGHT));
     final Ui.PillCell runPill = new Ui.PillCell() {
       private static final long serialVersionUID = 1L;
       @Override protected void paintComponent(java.awt.Graphics g) {
@@ -6936,8 +6938,10 @@ public class SimKit extends StarMacro {
       LevelRow x = lrows.get(r);
       runPill.setBackground(rowBg.apply(r, tb.isRowSelected(r)));
       if (x.current) {
+        boolean scaled = Math.abs(scale0 - 1) > 1e-9;
         runPill.set("Current", Ui.PILL_BLUE, c.caseId, Ui.MUTED);
-        runPill.setToolTipText("The open run. Listed in mesh_study.csv with its cell count; not saved again.");
+        runPill.setToolTipText("The open run. Listed in mesh_study.csv with its cell count; not saved again."
+            + (scaled ? " Its " + MESH_SCALE + " is " + num4(scale0) + ": the new runs get " + num4(scale0) + " × their factor." : ""));
         return runPill;
       }
       return runPill.set(null, null, String.valueOf(v), Ui.MUTED);
@@ -6954,8 +6958,15 @@ public class SimKit extends StarMacro {
     });
     cRail.setMinWidth(40);
     cRail.setMaxWidth(40);
-    int[] w = {40, 120, 90, 110, 100, 180};
+    int[] w = {40, 120, 90, 110, 100, 180, 90};
     for (int i = 1; i < w.length; i++) cm.getColumn(i).setPreferredWidth(w[i]);
+    if (Math.abs(scale0 - 1) > 1e-9) {   // p_meshScale of each level, next to its factor: the open run is not at 1
+      cScale.setHeaderValue(MESH_SCALE);
+      cm.moveColumn(6, 3);
+      cRun.setPreferredWidth(140);
+    } else {
+      table.removeColumn(cScale);
+    }
     table.getTableHeader().setToolTipText("Cells (est.): current cell count / (size factor)³. Unscaled prism layers and expression sizes "
         + "give a smaller change.");
     if (Double.isNaN(cells0)) table.removeColumn(cCells);
@@ -7150,8 +7161,6 @@ public class SimKit extends StarMacro {
     ll.add(addF);
     ll.add(del);
     links.add(ll, BorderLayout.WEST);
-    links.add(Ui.muted(Math.abs(scale0 - 1) > 1e-9 ? MESH_SCALE + " is " + num4(scale0) + " in " + c.caseId + ": new runs get " + num4(scale0) + " × factor."
-        : "Factor above 1: coarser. Below 1: finer."), BorderLayout.EAST);
     JPanel meshPane = new JPanel();
     meshPane.setLayout(new javax.swing.BoxLayout(meshPane, javax.swing.BoxLayout.Y_AXIS));
     meshPane.add(meshNow);
@@ -7164,7 +7173,8 @@ public class SimKit extends StarMacro {
     JLabel sizesHead = head.apply("Mesh sizes");
     List<javax.swing.JComponent> parts = new ArrayList<>();
     parts.add(head.apply("Levels"));
-    parts.add(Ui.muted(c.caseId + " is the reference (factor 1). Each other level is a copy of it with the linked sizes × its factor."));
+    parts.add(Ui.muted("<html>" + c.caseId + " is the reference (factor 1). Each other level is a copy of it with the linked sizes × its factor:"
+        + "<br>above 1 coarser, below 1 finer.</html>"));
     parts.add(ratioRow);
     parts.add(plainScroll(table, 640, table.getRowHeight() * 5 + 6));
     parts.add(links);

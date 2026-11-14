@@ -605,3 +605,6 @@ C. RESULTS SO FAR
   (the .sim is not touched). Batch: coarse 1.41 (07e) / 2.0 (11c) + the open run as medium. SKT90: exit codes 0
   (08b/08c skipped: STAR-CCM+ window open); 07e: "2 level(s), 1 new run(s)", mesh_study.csv medium R001 18090 cells,
   coarse R002 7962 cells; R001 run.txt mesh_level=medium. Offline: ladder rendered (MeshShot). Not run: GUI.
+  Mesh study fix (user screenshot: the p_meshScale note overlapped the links and was cut): the note is gone; when
+  p_meshScale is not 1 the ladder shows a p_meshScale column (value of each level); "above 1 coarser, below 1 finer"
+  moved into the line above the table. Offline: rendered with p_meshScale 0.5.
