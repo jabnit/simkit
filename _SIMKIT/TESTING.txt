@@ -670,3 +670,5 @@ C. RESULTS SO FAR
   sets the new name on its faces (CadModel.setFaceNameAttributes). After a 3D-CAD rename, SolidModelParts not assigned
   to a region are updated (SimulationPartManager.updateParts); parts in a region get a note. Unite with Transfer face
   names off: amber line above the table. Keep name is hidden in this category.
+  Run on cluster: the terminal closes 3 s after the command (bash '<script>'; sleep 3), as changed and checked on the
+  team Linux machine. The output stays in submit/<script>.log; a refused job shows "Not submitted: see submit/<log>".
