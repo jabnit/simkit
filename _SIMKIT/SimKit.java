@@ -83,7 +83,7 @@ public class SimKit extends StarMacro {
   // Constants and tools
   // =====================================================================================================
 
-  static final String VERSION = "SimKit 0.3 (2026-11-14)";
+  static final String VERSION = "SimKit 0.3";
 
   /** Kit files relative to the kit root, with '/' as separator on every OS. */
   static final String CONFIG_DIR = "config", VERSION_FILE = "VERSION.txt", CALC_MACRO = "lib/generic/SimKitCalc.java";
