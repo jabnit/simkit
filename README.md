@@ -23,7 +23,6 @@ tree, standard reports and scenes, a mesh study helper and engineering calculato
 | `_SIMKIT/tests/` | Batch validation runners (Windows PowerShell and Linux bash) and the test-sim builder. |
 | `_SIMKIT/TESTING.txt` | Site set-up, batch validation and GUI test procedure (toolkit owner only). |
 | `Google/` | Case list workbook (import into Google Sheets) and the case guideline (put in Google Docs). |
-| `docs/review/` | Independent review of SimKit 0.2.1 and the proposal that led to 0.3. |
 
 ## Site set-up (once)
 
