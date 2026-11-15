@@ -684,3 +684,11 @@ C. RESULTS SO FAR
   Run on cluster: the job name is prefilled with the .sim name without .sim (characters other than letters, digits,
   _ . - become _), so --jobname is always passed unless the field is cleared. The folded summary lists the job name
   only when it differs from the .sim name.
+  Reports > Per object: "In this simulation" line with the report sets found in the simulation (reports of one
+  statistic on one object, by quantity, statistic and type: objSets), e.g. "T max on WALL 1/5" with a warning sign when
+  objects of the type have no such report; a click selects the set, so the missing reports show as New. Objects are
+  grouped by type (and by region with several boundary regions), headings with selected / all, heading tick selects
+  the group, click folds, groups over 15 objects start folded, search unfolds; the type chips are removed. Plots: chips
+  Per quantity and statistic / Per object / None; the reports table is grouped by plot, heading "Plot T_max new · 4
+  curves" or "exists · +5 curves" (existing plot or its former pl_ name), heading tick selects the group's new reports;
+  the Plot column is removed. Rendered offline with sample sets. Batch objtest logs the sets.
