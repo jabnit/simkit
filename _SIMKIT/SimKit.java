@@ -7141,6 +7141,26 @@ public class SimKit extends StarMacro {
         + (nc > 0 ? ", " + plural(nc, "stopping criterion", "stopping criteria") : "") + "." + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
   }
 
+  /** Renames a report (expressions with ${old} and the monitor "<old> Monitor" follow) or a plot. Undo renames back. */
+  String renameObject(final Object o, final String nn) {
+    final String old = nm(o);
+    try {
+      final boolean isReport = o instanceof Report;
+      ((NamedObject) o).setPresentationName(nn);
+      int refs = isReport ? objRenameRefs(old, nn) : 0;
+      log.line("  renamed " + (isReport ? "report " : "plot ") + old + " -> " + nn);
+      lastUndoText = "rename of " + nn;
+      lastUndo = () -> {
+        ((NamedObject) o).setPresentationName(old);
+        if (isReport) objRenameRefs(nn, old);
+      };
+      return "Renamed " + old + " to " + nn + (refs > 0 ? ", " + plural(refs, "expression", "expressions") + " updated" : "") + ".";
+    } catch (Throwable t) {
+      log.na("rename " + old, t);
+      return "Failed: see the Output window.";
+    }
+  }
+
   /** Deletes monitor plots. Their monitors and reports are kept. Cannot be undone. */
   String deletePlots(List<Object> plots) {
     List<StarPlot> ps = new ArrayList<>();
@@ -7682,6 +7702,40 @@ public class SimKit extends StarMacro {
       if (!confirmDelete("Delete plot", "Deletes the plot " + plotPicked[0].name + ". Its monitors and reports are kept.\nThis cannot be undone.", true)) return;
       p.exec.accept(() -> deletePlots(Collections.singletonList(plot)));
     };
+    final Runnable renameSel = () -> {   // one report or plot; the new name must be free among its kind
+      if (p.exec == null) return;
+      final Object o;
+      final String cur;
+      final Set<String> taken = new HashSet<>();
+      if (plotsView[0]) {
+        if (plotPicked[0] == null) return;
+        o = plotPicked[0].plot;
+        cur = plotPicked[0].name;
+        for (PlotInfo x : data[0].plotList) taken.add(x.name);
+      } else {
+        if (picked.size() != 1) return;
+        o = picked.get(0).report;
+        cur = picked.get(0).name;
+        for (RepInfo x : data[0].reps) taken.add(x.name);
+      }
+      taken.remove(cur);
+      final JTextField f = new JTextField(cur, 32);
+      f.selectAll();
+      JPanel b = new JPanel(new BorderLayout(0, 6));
+      b.add(f, BorderLayout.NORTH);
+      if (!plotsView[0]) b.add(Ui.muted("Expressions that use ${" + cur + "} and the monitor of the report follow."), BorderLayout.SOUTH);
+      javax.swing.SwingUtilities.invokeLater(f::requestFocusInWindow);
+      boolean ok = Ui.sheet(plotsView[0] ? "Rename plot" : "Rename report", cur, b, Ui.primary("Rename"), () -> {
+        String n = f.getText().trim();
+        if (n.isEmpty()) return "Enter a name.";
+        if (n.contains("/") || n.contains("\\")) return "/ and \\ are not allowed.";
+        if (taken.contains(n)) return "'" + n + "' is the name of another " + (plotsView[0] ? "plot." : "report.");
+        return null;
+      });
+      final String nn = f.getText().trim();
+      if (!ok || nn.equals(cur)) return;
+      p.exec.accept(() -> renameObject(o, nn));
+    };
     for (final JTable tb : new JTable[] {rt, pt}) {
       final Runnable del = tb == rt ? delReports : delPlots;
       tb.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -7696,6 +7750,10 @@ public class SimKit extends StarMacro {
           javax.swing.JMenuItem d = new javax.swing.JMenuItem(tb == rt ? (tb.getSelectedRowCount() == 1 ? "Delete report\u2026" : "Delete "
               + tb.getSelectedRowCount() + " reports\u2026") : "Delete plot\u2026");
           d.addActionListener(a -> del.run());
+          javax.swing.JMenuItem rn = new javax.swing.JMenuItem(tb == rt ? "Rename report…   F2" : "Rename plot…   F2");
+          rn.setEnabled(tb.getSelectedRowCount() == 1);
+          rn.addActionListener(a -> renameSel.run());
+          m.add(rn);
           m.add(d);
           if (tb == rt) {
             javax.swing.JMenuItem ps = new javax.swing.JMenuItem("Plot selected\u2026");
@@ -7704,6 +7762,11 @@ public class SimKit extends StarMacro {
           }
           m.show(tb, e.getX(), e.getY());
         }
+      });
+      tb.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke("F2"), "simkitRename");
+      tb.getActionMap().put("simkitRename", new javax.swing.AbstractAction() {
+        private static final long serialVersionUID = 1L;
+        @Override public void actionPerformed(java.awt.event.ActionEvent e) { renameSel.run(); }
       });
       tb.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke("DELETE"), "simkitDelete");
       tb.getActionMap().put("simkitDelete", new javax.swing.AbstractAction() {
@@ -7807,7 +7870,7 @@ public class SimKit extends StarMacro {
     p.panel.add(top, BorderLayout.NORTH);
     p.panel.add(mid, BorderLayout.CENTER);
     p.panel.add(Ui.muted("<html>Ticks set the objects of the selected reports; Shift+click ticks a range, Space ticks the selected rows. "
-        + "Removing an object or a curve changes only that list. Right-click or Delete deletes reports or plots, after a confirmation.</html>"), BorderLayout.SOUTH);
+        + "Removing an object or a curve changes only that list. Right-click: Rename (F2), Delete (Delete key, after a confirmation).</html>"), BorderLayout.SOUTH);
     p.focus = rt;
 
     p.label = () -> {
@@ -10012,7 +10075,16 @@ public class SimKit extends StarMacro {
         if (!x.usedBy.isEmpty() && used == null) used = x;
         if (x.usedBy.isEmpty() && x.monitor != null && !x.plots.isEmpty() && free == null) free = x;
       }
-      if (used != null) log.line("mgr: " + used.name + " used by " + used.usedBy + " (kept by Delete)");
+      if (used != null) {
+        log.line("mgr: " + used.name + " used by " + used.usedBy + " (kept by Delete)");
+        log.line("mgr: rename -> " + renameObject(used.report, used.name + "_x"));
+        for (Object r : sim.getReportManager().getObjects()) {
+          Object def = Reflect.tryCall(r, "getDefinition");
+          if (def instanceof String && ((String) def).contains(used.name)) log.line("mgr:   " + nm(r) + " = " + def);
+        }
+        lastUndo.run();
+        log.line("mgr: after undo: " + nm(used.report));
+      }
       if (free != null) {
         String mon = nm(free.monitor);
         log.line("mgr: delete " + free.name + " (monitor " + mon + ", plots " + free.plots + ", criteria " + free.criteria + ") -> "

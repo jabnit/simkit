@@ -745,3 +745,7 @@ C. RESULTS SO FAR
   when the team's surfaces exist. Batch objtest: report used by another (kept), delete of a report with its monitor
   (report and monitor gone), delete of x_mgr_plot (gone), count of empty reports. Rules updated: SimKit deletes in the
   simulation only what the user deletes after a confirmation (SimKit.java header, CONTRIBUTING.md, guide).
+  Reports > In this simulation: Rename (right-click menu or F2) on one report or plot; the name must be free among
+  reports (or plots) and without / or \; a report's expressions (${old}) and monitor "<old> Monitor" follow
+  (objRenameRefs); Undo last change renames back. Batch objtest: report used by a formula renamed, formula follows,
+  Undo.
