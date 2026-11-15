@@ -681,3 +681,6 @@ C. RESULTS SO FAR
   and logs "<tool> is open. Close it first." Short questions (JOptionPane) stay modal. Offline test: the dialog is
   MODELESS, the caller waits, another window takes clicks, OK returns true and clears simkit.sheet. Not run: the
   STAR-CCM+ GUI on Windows and Linux.
+  Run on cluster: the job name is prefilled with the .sim name without .sim (characters other than letters, digits,
+  _ . - become _), so --jobname is always passed unless the field is cleared. The folded summary lists the job name
+  only when it differs from the .sim name.

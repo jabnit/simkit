@@ -1666,14 +1666,16 @@ public class SimKit extends StarMacro {
     final String pMem = prefs.getOrDefault("clusterMem", ""), pRt = prefs.getOrDefault("clusterRuntime", "");
     final JTextField mem = new JTextField(pMem.matches("[0-9]+") ? pMem : dMem, 6);
     final JTextField rt = new JTextField(pRt.matches("[0-9]+") ? pRt : dRt, 6);
-    final JTextField jobname = Ui.hintField("", "STARCCMP_<file>", 22);
+    // job name: the .sim name, with characters the launcher refuses replaced by '_'
+    final String simJob = file.getFileName().toString().replaceFirst("(?i)\\.sim$", "").replaceAll("[^A-Za-z0-9_.-]+", "_");
+    final JTextField jobname = Ui.hintField(simJob, "STARCCMP_<file>", 22);
     final JTextField resdir = Ui.hintField("", "The run folder", 22);
     final javax.swing.JCheckBox mail = new javax.swing.JCheckBox("Send an email when the job is completed", "1".equals(prefs.get("clusterMail")));
     mail.setFont(mail.getFont().deriveFont(Font.PLAIN));
     mail.setToolTipText("--send_completed_notification");
     mem.setToolTipText("--mem, MB per slot (per CPU).");
     rt.setToolTipText("--estimated_runtime, minutes.");
-    jobname.setToolTipText("--jobname. Letters, digits, _ . - only.");
+    jobname.setToolTipText("--jobname. Letters, digits, _ . - only. Empty: the launcher default STARCCMP_<file>.");
     resdir.setToolTipText("--result_dir. Folder the results are copied to at the end of the job.");
     for (JTextField t : new JTextField[] {n, mem, rt, jobname, resdir}) t.putClientProperty("simkit.esc.close", Boolean.TRUE);
     final JLabel optErr = new JLabel(" "), folderNote = new JLabel(" "), summary = Ui.muted(" ");
@@ -1781,7 +1783,7 @@ public class SimKit extends StarMacro {
       List<String> s = new ArrayList<>();
       if (!mem.getText().trim().equals(dMem)) s.add("memory " + mem.getText().trim() + " MB");
       if (!rt.getText().trim().equals(dRt)) s.add("run time " + rt.getText().trim() + " min");
-      if (!jobname.getText().trim().isEmpty()) s.add("job name " + jobname.getText().trim());
+      if (!jobname.getText().trim().isEmpty() && !jobname.getText().trim().equals(simJob)) s.add("job name " + jobname.getText().trim());
       if (!resdir.getText().trim().isEmpty()) s.add("results to " + resdir.getText().trim());
       if (mail.isSelected()) s.add("email");
       summary.setText(morePane.isVisible() || s.isEmpty() ? " " : Ui.cap(String.join("  ·  ", s)));
