@@ -2289,7 +2289,7 @@ public class SimKit extends StarMacro {
 
   /** Family tree of the runs: generations from left to right, each card right of the run it is based on. Used by the
    *  tracker and by Save as new run, where ghost = {id, name, parent id} is drawn as a dashed card for the new run. */
-  static final class RunTree extends javax.swing.JComponent {
+  static final class RunTree extends javax.swing.JComponent implements javax.swing.Scrollable {
     private static final long serialVersionUID = 1L;
     static final int CW = 172, CH = 54, HG = 50, VG = 16, M = 20;
     java.util.function.Supplier<List<String[]>> source = ArrayList::new;
@@ -2301,6 +2301,10 @@ public class SimKit extends StarMacro {
     java.util.function.Supplier<List<String[]>> lineage;
     /** Hidden runs, drawn faded. */
     java.util.function.Predicate<String> isHidden = x -> false;
+    /** Runs drawn faded because the filters of the window leave them out. */
+    java.util.function.Predicate<String> isDimmed = x -> false;
+    /** Starred runs, drawn with a star. */
+    java.util.function.Predicate<String> isStarred = x -> false;
     final Set<String> bridged = new HashSet<>();   // runs linked past hidden runs, drawn dashed
     String openId, picked;
     String[] ghost;
@@ -2315,12 +2319,60 @@ public class SimKit extends StarMacro {
     int baseW = M, baseH = M;
     Runnable onZoom;   // called after the zoom changes, e.g. to update a percentage label
 
+    // Scrollable: the tree fills the viewport when it is smaller, so that it can be drawn centred
+    @Override public java.awt.Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+    @Override public int getScrollableUnitIncrement(java.awt.Rectangle r, int o, int d) { return 16; }
+    @Override public int getScrollableBlockIncrement(java.awt.Rectangle r, int o, int d) { return o == javax.swing.SwingConstants.VERTICAL ? r.height : r.width; }
+    @Override public boolean getScrollableTracksViewportWidth() { return getParent() instanceof javax.swing.JViewport && getParent().getWidth() > getPreferredSize().width; }
+    @Override public boolean getScrollableTracksViewportHeight() { return getParent() instanceof javax.swing.JViewport && getParent().getHeight() > getPreferredSize().height; }
+
+    /** Offset of the drawing when the tree is smaller than the component (centred). */
+    int offX() { return Math.max(0, (getWidth() - (int) Math.ceil(baseW * zoom)) / 2); }
+    int offY() { return Math.max(0, (getHeight() - (int) Math.ceil(baseH * zoom)) / 2); }
+
+    /** Box of a card in component coordinates (zoom and centring applied). */
+    java.awt.Rectangle shownBox(String id) {
+      java.awt.Rectangle b = id == null ? null : box.get(id);
+      if (b == null) return null;
+      return new java.awt.Rectangle(offX() + (int) (b.x * zoom), offY() + (int) (b.y * zoom), (int) Math.ceil(b.width * zoom), (int) Math.ceil(b.height * zoom));
+    }
+
+    void scrollToPicked() {
+      java.awt.Rectangle b = shownBox(picked);
+      if (b != null) scrollRectToVisible(new java.awt.Rectangle(b.x - 24, b.y - 24, b.width + 48, b.height + 48));
+    }
+
+    /** Neighbour card for the arrow keys: LEFT the parent, RIGHT the first child, UP and DOWN the next card above or
+     *  below in the same column. */
+    String neighbour(String id, String key) {
+      java.awt.Rectangle b = id == null ? null : box.get(id);
+      if (b == null) return box.isEmpty() ? null : box.keySet().iterator().next();
+      if (key.equals("LEFT")) return parent.get(id);
+      String best = null;
+      int bestD = Integer.MAX_VALUE;
+      for (Map.Entry<String, java.awt.Rectangle> e : box.entrySet()) {
+        java.awt.Rectangle c = e.getValue();
+        int d;
+        if (key.equals("RIGHT")) {
+          if (!id.equals(parent.get(e.getKey()))) continue;
+          d = c.y;
+        } else {
+          if (c.x != b.x || e.getKey().equals(id)) continue;
+          d = key.equals("UP") ? b.y - c.y : c.y - b.y;
+          if (d <= 0) continue;
+        }
+        if (d < bestD) { bestD = d; best = e.getKey(); }
+      }
+      return best;
+    }
+
     RunTree() {
       setOpaque(true);
+      setFocusable(true);
       setBackground(java.awt.Color.WHITE);
       javax.swing.ToolTipManager.sharedInstance().registerComponent(this);
       addMouseListener(new java.awt.event.MouseAdapter() {
-        @Override public void mousePressed(java.awt.event.MouseEvent e) { menu(e); }
+        @Override public void mousePressed(java.awt.event.MouseEvent e) { requestFocusInWindow(); menu(e); }
         @Override public void mouseReleased(java.awt.event.MouseEvent e) { menu(e); }
         void menu(java.awt.event.MouseEvent e) {
           if (!e.isPopupTrigger() || onMenu == null) return;
@@ -2382,7 +2434,7 @@ public class SimKit extends StarMacro {
     }
 
     String at(java.awt.Point p) {
-      java.awt.Point q = new java.awt.Point((int) Math.floor(p.x / zoom), (int) Math.floor(p.y / zoom));
+      java.awt.Point q = new java.awt.Point((int) Math.floor((p.x - offX()) / zoom), (int) Math.floor((p.y - offY()) / zoom));
       for (Map.Entry<String, java.awt.Rectangle> e : box.entrySet()) if (e.getValue().contains(q)) return e.getKey();
       return null;
     }
@@ -2395,7 +2447,7 @@ public class SimKit extends StarMacro {
       java.awt.Point view = vp == null ? new java.awt.Point() : vp.getViewPosition();
       java.awt.Dimension ext = vp == null ? new java.awt.Dimension() : vp.getExtentSize();
       if (at == null) at = new java.awt.Point(view.x + ext.width / 2, view.y + ext.height / 2);
-      double mx = at.x / zoom, my = at.y / zoom;   // model point under the mouse
+      double mx = (at.x - offX()) / zoom, my = (at.y - offY()) / zoom;   // model point under the mouse
       int sx = at.x - view.x, sy = at.y - view.y;  // its position in the viewport
       zoom = z;
       sizeToZoom();
@@ -2409,16 +2461,18 @@ public class SimKit extends StarMacro {
       if (onZoom != null) onZoom.run();
     }
 
-    /** Zoom that shows the whole tree in the view, at most 100 %. */
+    /** Zoom that shows the whole tree in the view, between 50 % and 100 %. Below 50 % the cards are not readable:
+     *  the tree is then shown at 50 % around the selected card. */
     void fit() {
       javax.swing.JViewport vp = (javax.swing.JViewport) javax.swing.SwingUtilities.getAncestorOfClass(javax.swing.JViewport.class, this);
       if (vp == null || baseW <= 0 || baseH <= 0) return;
       java.awt.Dimension ext = vp.getExtentSize();
       double z = Math.min(1.0, Math.min(ext.width / (double) baseW, ext.height / (double) baseH));
-      zoom = Math.max(ZOOM_MIN, z);
+      zoom = Math.max(0.5, z);
       sizeToZoom();
       vp.validate();
       vp.setViewPosition(new java.awt.Point(0, 0));
+      if (z < 0.5) scrollToPicked();
       if (onZoom != null) onZoom.run();
     }
 
@@ -2439,10 +2493,7 @@ public class SimKit extends StarMacro {
           + "</body></html>";
     }
 
-    java.awt.Rectangle ghostBox() {
-      java.awt.Rectangle b = ghost == null ? null : box.get(ghost[0]);
-      return b == null ? null : new java.awt.Rectangle((int) (b.x * zoom), (int) (b.y * zoom), (int) (b.width * zoom), (int) (b.height * zoom));
-    }
+    java.awt.Rectangle ghostBox() { return ghost == null ? null : shownBox(ghost[0]); }
 
     /** Places the cards: children in the next column, a parent centred on its children. */
     void relayout() {
@@ -2505,6 +2556,7 @@ public class SimKit extends StarMacro {
       g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
       g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
       g.setRenderingHint(java.awt.RenderingHints.KEY_FRACTIONALMETRICS, java.awt.RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+      g.translate(offX(), offY());
       g.scale(zoom, zoom);
       String gid = ghost == null ? null : ghost[0];
       java.awt.Stroke solid = new java.awt.BasicStroke(1.6f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND);
@@ -2530,9 +2582,9 @@ public class SimKit extends StarMacro {
         if (r == null && !gh) continue;
         String st = gh ? "" : r[COL_STATUS];
         java.awt.Color[] sc = statusColors(st);
-        boolean hid = !gh && isHidden.test(id);
+        boolean hid = !gh && isHidden.test(id), dim = !gh && isDimmed.test(id), star = !gh && isStarred.test(id);
         java.awt.Composite comp0 = g.getComposite();
-        if (hid) g.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, 0.45f));
+        if (hid || dim) g.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, dim ? 0.3f : 0.45f));
         boolean dropped = st.equals("dropped"), open = id.equals(openId), sel = id.equals(picked);
         java.awt.geom.RoundRectangle2D card = new java.awt.geom.RoundRectangle2D.Double(b.x, b.y, b.width, b.height, 12, 12);
         if (!gh) {
@@ -2551,7 +2603,7 @@ public class SimKit extends StarMacro {
         g.setColor(gh || sel ? Ui.BLUE : FRAME);
         g.setStroke(gh ? dash : new java.awt.BasicStroke(sel ? 2f : 1f));
         g.draw(card);
-        int tx = b.x + 14, right = b.x + b.width - 10 - (open ? 14 : 0);
+        int tx = b.x + 14, right = b.x + b.width - 10 - (open ? 14 : 0) - (star ? 14 : 0);
         String head = shown.apply(id), nm = gh ? ghost[1] : nameOf(r[COL_FILE]);
         String itx = gh ? "" : iterOf(r[COL_FILE]);
         {   // run number tag, then the name
@@ -2569,6 +2621,11 @@ public class SimKit extends StarMacro {
         if (open) {
           g.setColor(new java.awt.Color(0x2E, 0x9E, 0x4F));
           g.fillOval(b.x + b.width - 16, b.y + 13, 8, 8);
+        }
+        if (star) {
+          g.setFont(bold);
+          g.setColor(new java.awt.Color(0xE0, 0x9A, 0x10));
+          g.drawString("\u2605", b.x + b.width - (open ? 32 : 20), b.y + 21);
         }
         int x2 = tx;
         if (sc != null) {
@@ -2714,7 +2771,11 @@ public class SimKit extends StarMacro {
    *  window gets focus. */
   final class TrackerWindow {
     static final int T_ID = 0, T_STATUS = 1, T_COMMENT = 2, T_BASED = 3, T_SAVED = 4;
-    final String[] cols = {"ID", "status", "comment", "based on", "saved"};
+    static final int T_FOLDER = 5;
+    final String[] cols = {"Run", "Status", "Comment", "Based on", "Saved", "Folder"};
+    int sortCol = T_ID;            // sort of the flat list
+    boolean sortUp = true;
+    javax.swing.table.TableColumn folderCol;
     final java.awt.Color caseBg = new java.awt.Color(0xF1, 0xF3, 0xF6), stripe = new java.awt.Color(0xFA, 0xFB, 0xFC),
         selBg = new java.awt.Color(0xDC, 0xE8, 0xF8), pale = new java.awt.Color(0xB8, 0xBE, 0xC6),
         grey = new java.awt.Color(0x6B, 0x75, 0x80), link = new java.awt.Color(0x1F, 0x4E, 0x9A),
@@ -2747,9 +2808,10 @@ public class SimKit extends StarMacro {
     final javax.swing.table.AbstractTableModel model;
     final JTextField filter;
     final JComboBox<String> statusFilter = new JComboBox<>(new String[] {"All statuses", "Active (planned, meshing, running)",
-        "Done", "Dropped", "No status", "Diverged"});
+        "Diverged", "Done", "Dropped", "No status"});
     /** Shows hidden runs, faded. Visible only when something is hidden. */
-    final javax.swing.JToggleButton showHidden = new javax.swing.JToggleButton("Hidden");
+    final javax.swing.JToggleButton showHidden = new javax.swing.JCheckBox("Show hidden");
+    final JButton clearFilter = Ui.link("Clear");
     final JButton undoBtn = Ui.link("Undo");
     Runnable undoAction;
     final JLabel summary = new JLabel(), message = new JLabel(" "), folderName = new JLabel(), headline = new JLabel(" "),
@@ -2774,7 +2836,22 @@ public class SimKit extends StarMacro {
     JPanel details;
     JScrollPane tableScroll;
     int hoverRow = -1;
-    final JPanel chips = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+    /** Status labels. They wrap to a second row when the details pane is narrow. */
+    final JPanel chips = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 2)) {
+      private static final long serialVersionUID = 1L;
+      @Override public java.awt.Dimension getPreferredSize() {
+        int width = getParent() == null || getParent().getWidth() <= 0 ? 480 : getParent().getWidth();
+        int x = 4, y = 2, row = 0;
+        for (java.awt.Component c : getComponents()) {
+          java.awt.Dimension d = c.getPreferredSize();
+          if (x > 4 && x + d.width + 4 > width) { y += row + 2; x = 4; row = 0; }
+          x += d.width + 4;
+          row = Math.max(row, d.height);
+        }
+        return new java.awt.Dimension(width, y + row + 2);
+      }
+      @Override public java.awt.Dimension getMaximumSize() { return getPreferredSize(); }
+    };
     final java.awt.Color hoverBg = new java.awt.Color(0xF2, 0xF6, 0xFC);
     boolean editing = false;
     final List<JButton> fmtButtons = new ArrayList<>();   // enabled only when a single row is selected
@@ -2808,10 +2885,13 @@ public class SimKit extends StarMacro {
         private static final long serialVersionUID = 1L;
         @Override public int getRowCount() { return view.size(); }
         @Override public int getColumnCount() { return cols.length; }
-        @Override public String getColumnName(int c) { return cols[c]; }
+        @Override public String getColumnName(int c) {
+          return cols[c] + (!groupBox.isSelected() && c == sortCol ? (sortUp ? "  \u25B2" : "  \u25BC") : "");
+        }
         @Override public Object getValueAt(int row, int col) {
           Item it = view.get(row);
           if (it.isFolder()) return col == T_ID ? it.folder : "";
+          if (col == T_FOLDER) return folderById.getOrDefault(it.r[COL_ID], "");
           switch (col) {
             case T_ID: return it.r[COL_ID];
             case T_STATUS: return it.r[COL_STATUS];
@@ -2820,8 +2900,8 @@ public class SimKit extends StarMacro {
             default: return it.r[COL_SAVED];
           }
         }
-        @Override public boolean isCellEditable(int row, int col) {   // comments and descriptions are edited in the box below
-          return !view.get(row).isFolder() && col == T_STATUS;
+        @Override public boolean isCellEditable(int row, int col) {   // status: labels and menu; comments: the box below
+          return false;
         }
         @Override public void setValueAt(Object v, int row, int col) {
           Item it = view.get(row);
@@ -2833,7 +2913,23 @@ public class SimKit extends StarMacro {
           showDetails();
         }
       };
-      table = new JTable(model);
+      table = new JTable(model) {
+        private static final long serialVersionUID = 1L;
+        @Override public String getToolTipText(java.awt.event.MouseEvent e) {
+          int row = rowAtPoint(e.getPoint());
+          if (row >= 0 && columnAtPoint(e.getPoint()) == T_ID && !view.get(row).isFolder() && onRunStar(row, e)) {
+            return pinned(view.get(row).r[COL_ID]) ? "Starred: click to remove the star (for you only)" : "Star: keep this run on top (for you only)";
+          }
+          return super.getToolTipText(e);
+        }
+        @Override protected void paintComponent(java.awt.Graphics g) {
+          super.paintComponent(g);
+          if (getRowCount() > 0) return;
+          String t = filtering() ? "No run matches the filter. Esc in the filter clears it." : rows.isEmpty() ? "No run in this project yet." : "";
+          g.setColor(pale);
+          g.drawString(t, Math.max(8, (getWidth() - g.getFontMetrics().stringWidth(t)) / 2), 40);
+        }
+      };
       table.setRowHeight(26);
       table.setShowVerticalLines(false);
       table.setShowHorizontalLines(false);   // stripes and folder headings separate the rows
@@ -2843,7 +2939,7 @@ public class SimKit extends StarMacro {
       table.getTableHeader().setReorderingAllowed(false);
       ((javax.swing.table.DefaultTableCellRenderer) table.getTableHeader().getDefaultRenderer())
           .setHorizontalAlignment(javax.swing.SwingConstants.LEFT);
-      int[] widths = {230, 105, 0, 130, 115};
+      int[] widths = {230, 105, 0, 130, 115, 120};
       for (int i = 0; i < widths.length; i++) {
         if (widths[i] == 0) { table.getColumnModel().getColumn(i).setPreferredWidth(600); continue; }
         table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
@@ -2855,9 +2951,18 @@ public class SimKit extends StarMacro {
         private static final long serialVersionUID = 1L;
         @Override public void actionPerformed(java.awt.event.ActionEvent e) { copyLinks(); }
       });
-      javax.swing.DefaultCellEditor statusEd = new javax.swing.DefaultCellEditor(new JComboBox<>(STATUSES));
-      statusEd.setClickCountToStart(1);
-      table.getColumnModel().getColumn(T_STATUS).setCellEditor(statusEd);
+      folderCol = table.getColumnModel().getColumn(T_FOLDER);
+      table.getTableHeader().addMouseListener(new java.awt.event.MouseAdapter() {   // flat list: a header click sorts
+        @Override public void mouseClicked(java.awt.event.MouseEvent e) {
+          if (groupBox.isSelected()) return;
+          int c = table.convertColumnIndexToModel(table.columnAtPoint(e.getPoint()));
+          if (c < 0) return;
+          sortUp = c != sortCol || !sortUp;
+          sortCol = c;
+          rebuild();
+          table.getTableHeader().repaint();
+        }
+      });
       table.setDefaultRenderer(Object.class, new Cells());
       table.getColumnModel().getColumn(T_STATUS).setCellRenderer(new Badge());
       table.getSelectionModel().addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) showDetails(); });
@@ -2879,7 +2984,8 @@ public class SimKit extends StarMacro {
         @Override public void mouseMoved(java.awt.event.MouseEvent e) {
           int row = table.rowAtPoint(e.getPoint()), col = table.columnAtPoint(e.getPoint());
           boolean hand = row >= 0 && (view.get(row).isFolder() && col == T_ID
-              || !view.get(row).isFolder() && col == T_BASED && byId(view.get(row).r[COL_BASED]) != null);
+              || !view.get(row).isFolder() && col == T_BASED && byId(view.get(row).r[COL_BASED]) != null
+              || !view.get(row).isFolder() && col == T_ID && onRunStar(row, e));
           table.setCursor(java.awt.Cursor.getPredefinedCursor(hand ? java.awt.Cursor.HAND_CURSOR : java.awt.Cursor.DEFAULT_CURSOR));
           if (row != hoverRow) { hoverRow = row; table.repaint(); }   // hover highlight
         }
@@ -2890,6 +2996,7 @@ public class SimKit extends StarMacro {
       // Keys: arrows move, Enter opens, F2 edits, Space pins, Left and Right fold and unfold, Ctrl+F filters.
       keyOn(table, "ENTER", this::openSelected);
       keyOn(table, "F2", this::startEdit);
+      keyOn(table, "DELETE", this::hideOrShow);
       keyOn(table, "SPACE", () -> {
         Item it = current();
         if (it == null) return;
@@ -2905,7 +3012,7 @@ public class SimKit extends StarMacro {
           if (getText().isEmpty() && !isFocusOwner()) {
             g.setColor(pale);
             java.awt.Insets in = getInsets();
-            g.drawString("Filter runs...", in.left + 2, in.top + g.getFontMetrics().getAscent() + 1);
+            g.drawString("Filter: run, name, comment", in.left + 2, in.top + g.getFontMetrics().getAscent() + 1);
           }
         }
       };
@@ -2920,9 +3027,7 @@ public class SimKit extends StarMacro {
       });
       statusFilter.addActionListener(e -> rebuild());
       showHidden.setToolTipText("Show the hidden runs, faded (the files are not changed)");
-      showHidden.setIcon(actionIcon(5));
       showHidden.setFocusable(false);
-      showHidden.setMargin(new java.awt.Insets(2, 8, 2, 8));
       showHidden.addActionListener(e -> rebuild());
       undoBtn.setVisible(false);
       undoBtn.addActionListener(e -> {
@@ -3021,11 +3126,13 @@ public class SimKit extends StarMacro {
       folderBtn.addActionListener(e -> openFolder());
       simBtn.addActionListener(e -> openSelected());
       copyBtn.addActionListener(e -> copyLinks());
+      folderBtn.setText("Folder");
+      copyBtn.setText("Copy path");
       folderBtn.setToolTipText("Open the run folder");
-      copyBtn.setToolTipText("Copy the ID and path (Ctrl+C), to paste in a mail or a document");
+      copyBtn.setToolTipText("Copy the run number and the path of its file (Ctrl+C)");
       simBtn.setToolTipText("STAR-CCM+'s Load Simulation dialog with the latest file of this run filled in (processes, parallel, "
           + "power...). Already open: its tab comes to the front. (Enter)");
-      for (JButton b : new JButton[] {folderBtn, copyBtn, hideBtn}) flat(b);
+      for (JButton b : new JButton[] {folderBtn, copyBtn, hideBtn}) { flat(b); b.setFocusable(true); }
       simBtn.setFont(simBtn.getFont().deriveFont(Font.BOLD));
       simBtn.setForeground(java.awt.Color.WHITE);
       simBtn.setBackground(new java.awt.Color(0x1F, 0x5F, 0xAF));
@@ -3077,6 +3184,10 @@ public class SimKit extends StarMacro {
       topLeft.add(change);
       topLeft.add(javax.swing.Box.createHorizontalStrut(16));
       topLeft.add(filter);
+      clearFilter.setToolTipText("Clear the filters (Esc in the filter field)");
+      clearFilter.addActionListener(e -> { filter.setText(""); statusFilter.setSelectedIndex(0); rebuild(); });
+      clearFilter.setVisible(false);
+      topLeft.add(clearFilter);
       topLeft.add(statusFilter);
       topLeft.add(showHidden);
       summary.setForeground(grey);
@@ -3133,8 +3244,27 @@ public class SimKit extends StarMacro {
       };
       runTree.lineage = () -> rows;
       runTree.isHidden = id -> { String[] r = byId(id); return r != null && hidden(r); };
+      runTree.isDimmed = id -> { String[] r = byId(id); return r != null && filtering() && !matches(r); };
+      runTree.isStarred = this::pinned;
       runTree.shown = this::shown;
       runTree.openId = openId;
+      for (final String k : new String[] {"UP", "DOWN", "LEFT", "RIGHT"}) {
+        keyOn(runTree, k, () -> {
+          String n = runTree.neighbour(runTree.picked, k);
+          if (n == null) return;
+          runTree.picked = n;
+          selectQuiet(n);
+          runTree.repaint();
+          runTree.scrollToPicked();
+        });
+      }
+      keyOn(runTree, "ENTER", () -> { if (runTree.picked != null) openSelected(); });
+      keyOn(runTree, "SPACE", () -> { if (runTree.picked != null) { togglePin(runTree.picked); runTree.repaint(); } });
+      keyOn(runTree, "DELETE", this::hideOrShow);
+      keyOn(runTree, "CONTEXT_MENU", () -> {
+        java.awt.Rectangle b = runTree.shownBox(runTree.picked);
+        if (b != null) showMenu(runTree, b.x + b.width / 2, b.y + b.height / 2, true);
+      });
       runTree.onClick = (id, n) -> {
         selectQuiet(id);
         if (n == 2) openSelected();
@@ -3147,9 +3277,11 @@ public class SimKit extends StarMacro {
       treeScroll.getViewport().setBackground(java.awt.Color.WHITE);
       treeScroll.getVerticalScrollBar().setUnitIncrement(16);
       treeScroll.getHorizontalScrollBar().setUnitIncrement(16);
-      final JLabel zoomPct = Ui.muted("100 %");
+      final JButton zoomPct = Ui.link("100 %");
+      zoomPct.setToolTipText("Reset to 100 % (Ctrl+1)");
+      zoomPct.addActionListener(e -> runTree.setZoom(1.0, null));
       final JButton fitBtn = new JButton("Fit to view"), zOut = new JButton("\u2212"), zIn = new JButton("+");
-      fitBtn.setToolTipText("Show the whole tree (Ctrl+0)");
+      fitBtn.setToolTipText("Show the whole tree, at least at 50 % (Ctrl+0)");
       zOut.setToolTipText("Zoom out (Ctrl+wheel)");
       zIn.setToolTipText("Zoom in (Ctrl+wheel)");
       for (JButton b : new JButton[] {fitBtn, zOut, zIn}) b.setFocusable(false);
@@ -3174,6 +3306,11 @@ public class SimKit extends StarMacro {
       treeCard.getActionMap().put("simkitFit", new javax.swing.AbstractAction() {
         private static final long serialVersionUID = 1L;
         @Override public void actionPerformed(java.awt.event.ActionEvent e) { if (treeCard.isShowing()) runTree.fit(); }
+      });
+      treeCard.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke("ctrl 1"), "simkitZoom1");
+      treeCard.getActionMap().put("simkitZoom1", new javax.swing.AbstractAction() {
+        private static final long serialVersionUID = 1L;
+        @Override public void actionPerformed(java.awt.event.ActionEvent e) { if (treeCard.isShowing()) runTree.setZoom(1.0, null); }
       });
       leftCards.add(tableScroll, "list");
       leftCards.add(treeCard, "tree");
@@ -3276,13 +3413,23 @@ public class SimKit extends StarMacro {
 
     boolean filtering() { return !filter.getText().trim().isEmpty() || statusFilter.getSelectedIndex() > 0; }
 
+    /** True when the run passes the status filter and the text filter (run number, name, comment, status, based on). */
+    boolean matches(String[] r) {
+      if (!statusOk(r[COL_STATUS])) return false;
+      String t = filter.getText().trim().toLowerCase(Locale.ROOT);
+      if (t.isEmpty()) return true;
+      String all = (shown(r[COL_ID]) + " " + nameOf(r[COL_FILE]) + " " + r[COL_COMMENT] + " " + r[COL_STATUS] + " "
+          + (r[COL_BASED].isEmpty() ? "" : shown(r[COL_BASED]))).toLowerCase(Locale.ROOT);
+      return all.contains(t);
+    }
+
     boolean statusOk(String s) {
       switch (statusFilter.getSelectedIndex()) {
         case 1: return s.equals("planned") || s.equals("meshing") || s.equals("running");
-        case 2: return s.equals("done") || s.equals("reported");
-        case 3: return s.equals("dropped");
-        case 4: return s.isEmpty();
-        case 5: return s.equals("diverged");
+        case 2: return s.equals("diverged");
+        case 3: return s.equals("done") || s.equals("reported");
+        case 4: return s.equals("dropped");
+        case 5: return s.isEmpty();
         default: return true;
       }
     }
@@ -3294,7 +3441,7 @@ public class SimKit extends StarMacro {
       for (int i : table.getSelectedRows()) if (i < view.size()) sel.add(view.get(i).key());
       String t = filter.getText().trim().toLowerCase(Locale.ROOT);
       view.clear();
-      int nVers = 0, nRunning = 0, nHidden = 0;
+      int nVers = 0, nRunning = 0, nHidden = 0, nShown = 0;
       for (Map.Entry<String, List<String[]>> e : byCase.entrySet()) {   // one entry: the project
         String cid = e.getKey();
         List<String[]> vis = new ArrayList<>();
@@ -3303,9 +3450,7 @@ public class SimKit extends StarMacro {
           if (h) nHidden++;
           else { nVers++; if (r[COL_STATUS].equals("running") || r[COL_STATUS].equals("meshing")) nRunning++; }
           if (h && !showHidden.isSelected()) continue;
-          if (!statusOk(r[COL_STATUS])) continue;
-          String all = (String.join(" ", r) + " " + cid + " " + shown(r[COL_ID])).toLowerCase(Locale.ROOT);
-          if (!t.isEmpty() && !all.contains(t)) continue;
+          if (!matches(r)) continue;
           vis.add(r);
         }
         if (vis.isEmpty()) continue;
@@ -3322,8 +3467,16 @@ public class SimKit extends StarMacro {
           folderById.put(r[COL_ID], fo);
           if (!hidden(r)) folderRuns.merge(fo, 1, Integer::sum);
         }
-        if (!groupBox.isSelected()) {
-          for (String[] r : vis) view.add(new Item(cid, r));
+        nShown += vis.size();
+        if (!groupBox.isSelected()) {   // flat: starred runs first, each part in the order of the sorted column
+          List<String[]> top = new ArrayList<>(), rest = new ArrayList<>();
+          for (String[] r : vis) (pinned(r[COL_ID]) ? top : rest).add(r);
+          java.util.Comparator<String[]> cmp = java.util.Comparator.comparing(this::sortKey);
+          if (!sortUp) cmp = cmp.reversed();
+          top.sort(cmp);
+          rest.sort(cmp);
+          for (String[] r : top) view.add(new Item(cid, r));
+          for (String[] r : rest) view.add(new Item(cid, r));
           continue;
         }
         Map<String, List<String[]>> byFolder = new TreeMap<>();   // "" (the project folder) first, without a heading
@@ -3339,13 +3492,34 @@ public class SimKit extends StarMacro {
       boolean anyFolder = false;
       for (String fo : folderRuns.keySet()) anyFolder |= !fo.isEmpty();
       groupBox.setVisible(anyFolder && "list".equals(leftView));
+      boolean flatNow = !groupBox.isSelected(), shownCol = table.getColumnModel().getColumnCount() > T_FOLDER;
+      if (flatNow && !shownCol) table.addColumn(folderCol);
+      if (!flatNow && shownCol) table.removeColumn(folderCol);
+      for (int i = 0; i < table.getColumnModel().getColumnCount(); i++) {   // titles with the sort arrow of the flat list
+        javax.swing.table.TableColumn tc = table.getColumnModel().getColumn(i);
+        tc.setHeaderValue(model.getColumnName(tc.getModelIndex()));
+      }
+      table.getTableHeader().repaint();
       if (runTree != null && "tree".equals(leftView)) runTree.relayout();
-      summary.setText(nVers + (nVers == 1 ? " run" : " runs")
+      summary.setText((filtering() ? nShown + " of " + nVers + " runs" : plural(nVers, "run", "runs"))
           + (nRunning > 0 ? "  ·  " + nRunning + " meshing or running" : ""));
+      clearFilter.setVisible(filtering());
       if (nHidden == 0 && showHidden.isSelected()) showHidden.setSelected(false);
-      showHidden.setText("Hidden (" + nHidden + ")");
+      showHidden.setText("Show hidden (" + nHidden + ")");
       showHidden.setVisible(nHidden > 0);
       showDetails();
+    }
+
+    /** Sort key of a run for the flat list, by the sorted column. */
+    String sortKey(String[] r) {
+      switch (sortCol) {
+        case T_STATUS: return r[COL_STATUS].isEmpty() ? "~" : r[COL_STATUS];
+        case T_COMMENT: return Md.plain(r[COL_COMMENT]).toLowerCase(Locale.ROOT);
+        case T_BASED: return r[COL_BASED].isEmpty() ? "" : String.format(Locale.ROOT, "%06d", runOf(r[COL_BASED]));
+        case T_SAVED: return r[COL_SAVED];
+        case T_FOLDER: return folderById.getOrDefault(r[COL_ID], "");
+        default: return String.format(Locale.ROOT, "%06d", runOf(r[COL_ID]));
+      }
     }
 
     void toggle(String folder) {
@@ -3404,6 +3578,7 @@ public class SimKit extends StarMacro {
         Item it = current();
         runTree.picked = it == null || it.isFolder() ? null : it.r[COL_ID];
         runTree.repaint();
+        javax.swing.SwingUtilities.invokeLater(runTree::scrollToPicked);
       }
       leftLayout.show(leftCards, v);
       boolean anyFolder = false;
@@ -3475,8 +3650,10 @@ public class SimKit extends StarMacro {
       if (r == null) return;
       if (hidden(r)) showHidden.setSelected(true);
       folded.remove(folderOf(r));
-      if (filtering()) { filter.setText(""); statusFilter.setSelectedIndex(0); }
+      boolean cleared = filtering() && !matches(r);
+      if (cleared) { filter.setText(""); statusFilter.setSelectedIndex(0); }
       rebuild();
+      if (cleared) say("Filter cleared to show " + shown(id), grey);
       for (int i = 0; i < view.size(); i++) {
         if (id.equals(view.get(i).key())) {
           table.setRowSelectionInterval(i, i);
@@ -3544,7 +3721,10 @@ public class SimKit extends StarMacro {
       hideBtn.setEnabled(!hs.isEmpty());
       folderBtn.setEnabled(!sel.isEmpty());
       copyBtn.setEnabled(!sel.isEmpty());
-      simBtn.setEnabled(sel.size() == 1 && !opening);
+      boolean oneRun = sel.size() == 1 && !sel.get(0).isFolder();
+      simBtn.setEnabled(oneRun && !opening);
+      simBtn.setToolTipText(oneRun ? "STAR-CCM+'s Load Simulation dialog with the latest file of this run filled in. Already open: its "
+          + "tab comes to the front. (Enter)" : "Select a run");
       showChips(sel);
       String key = null, text = "";
       if (sel.isEmpty() && !byCase.isEmpty()) {   // the project: name, run count and its description
@@ -3604,13 +3784,18 @@ public class SimKit extends StarMacro {
     void showChips(List<Item> sel) {
       chips.removeAll();
       if (!sel.isEmpty()) {
-        String cur = sel.size() == 1 && !sel.get(0).isFolder() ? sel.get(0).r[COL_STATUS] : null;
-        JLabel lab = new JLabel(sel.size() == 1 && !sel.get(0).isFolder() ? "Status" : "Status of all");
+        boolean one = sel.size() == 1 && !sel.get(0).isFolder();
+        String cur = one ? sel.get(0).r[COL_STATUS] : null;
+        int n = statusTargets().size();
+        JLabel lab = new JLabel(one ? "Status" : "Status of the " + plural(n, "run", "runs"));
         lab.setForeground(grey);
         chips.add(lab);
-        for (final String st : STATUSES) {
-          if (st.isEmpty()) continue;
-          final boolean on = st.equals(cur);
+        List<String> labels = new ArrayList<>(Arrays.asList(STATUSES));
+        labels.remove("");
+        labels.add("no status");
+        for (final String lb : labels) {
+          final String st = lb.equals("no status") ? "" : lb;
+          final boolean on = cur != null && st.equals(cur);
           final java.awt.Color[] c = statusColors(st);
           JLabel chip = new JLabel(st) {
             private static final long serialVersionUID = 1L;
@@ -3626,9 +3811,11 @@ public class SimKit extends StarMacro {
           chip.setForeground(on ? c[1] : grey);
           chip.setBorder(BorderFactory.createEmptyBorder(2, 9, 2, 9));
           chip.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
-          chip.setToolTipText(on ? "Current status: click to clear it" : "Set the status to " + st);
+          chip.setText(lb);
+          chip.setToolTipText(on ? "Current status" : one ? "Set the status to " + lb : "Set the status of the " + plural(n, "run", "runs") + " to " + lb);
+          chip.setCursor(java.awt.Cursor.getPredefinedCursor(on ? java.awt.Cursor.DEFAULT_CURSOR : java.awt.Cursor.HAND_CURSOR));
           chip.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override public void mouseClicked(java.awt.event.MouseEvent e) { setStatusAll(on ? "" : st); }
+            @Override public void mouseClicked(java.awt.event.MouseEvent e) { if (!on) setStatusAll(st); }
           });
           chips.add(chip);
         }
@@ -3976,29 +4163,52 @@ public class SimKit extends StarMacro {
     }
 
     /** Sets a status on every selected run. A folder heading applies it to all its runs. */
-    void setStatusAll(String status) {
+    /** Runs a status change acts on: the selected runs and the runs of selected folder headings. */
+    List<String[]> statusTargets() {
       List<String[]> vs = new ArrayList<>();
       for (Item it : selected()) {
         if (it.isFolder()) { for (String[] r : byCase.get(it.caseId)) if (folderOf(r).equals(it.folder) && !vs.contains(r)) vs.add(r); }
         else if (!vs.contains(it.r)) vs.add(it.r);
       }
-      int n = 0;
+      return vs;
+    }
+
+    /** Sets a status on the selected runs (a folder heading: all its runs). A change of several runs offers Undo. */
+    void setStatusAll(String status) {
+      Map<String[], String> before = new LinkedHashMap<>();
+      List<String> bad = writeStatus(statusTargets(), status, before);
+      if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);
+      String st = status.isEmpty() ? "no status" : "'" + status + "'";
+      log.line("tracker: status " + st + " on " + before.size() + " run(s)");
+      if (!bad.isEmpty()) say("NOT saved on " + String.join(", ", bad), red);
+      else if (before.size() > 1) {
+        sayUndo("Status " + st + " set on " + before.size() + " runs.", () -> {
+          List<String> bad2 = new ArrayList<>();
+          for (Map.Entry<String[], String> e : before.entrySet()) bad2.addAll(writeStatus(Collections.singletonList(e.getKey()), e.getValue(), new HashMap<>()));
+          if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);
+          say(bad2.isEmpty() ? "Status of " + before.size() + " runs restored." : "NOT restored on " + String.join(", ", bad2), bad2.isEmpty() ? green : red);
+          showDetails();
+        });
+      } else say("Saved: status " + st + (before.isEmpty() ? " (unchanged)" : " on " + shown(before.keySet().iterator().next()[COL_ID])), green);
+      showDetails();
+    }
+
+    /** Writes a status to run.txt of each run that differs. before gets each changed run with its old status. Returns
+     *  the runs that could not be written. */
+    List<String> writeStatus(List<String[]> vs, String status, Map<String[], String> before) {
       List<String> bad = new ArrayList<>();
       for (String[] r : vs) {
         if (r[COL_STATUS].equals(status)) continue;
         try {
+          String old = r[COL_STATUS];
           setIdentityKey(dir, caseOf(r[COL_ID]), "status_v" + verOf(r[COL_ID]), status);
           r[COL_STATUS] = status;
-          n++;
+          before.put(r, old);
         } catch (Throwable t) {
           bad.add(r[COL_ID]);
         }
       }
-      if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);
-      log.line("tracker: status '" + status + "' on " + n + " run(s)");
-      say(bad.isEmpty() ? "Saved: status " + (status.isEmpty() ? "(none)" : "'" + status + "'") + " on " + n + " run(s)"
-          : "NOT saved on " + String.join(", ", bad), bad.isEmpty() ? green : red);
-      showDetails();
+      return bad;
     }
 
     /** .sim file of the selected run, or of the latest run of a selected folder heading. */
@@ -4100,7 +4310,7 @@ public class SimKit extends StarMacro {
       final boolean hide = !unhideMode(items);
       try {
         String names = applyHidden(items, hide);
-        sayUndo((hide ? "Hidden: " : "Shown again: ") + names + (hide && !showHidden.isSelected() ? "  (Hidden in the top bar shows it)" : ""),
+        sayUndo((hide ? "Hidden: " : "Shown again: ") + names + (hide && !showHidden.isSelected() ? "  (Show hidden in the top bar shows it)" : ""),
             () -> {
               try {
                 applyHidden(items, !hide);
@@ -4190,7 +4400,7 @@ public class SimKit extends StarMacro {
       int nSel = table.getSelectedRowCount();
       javax.swing.JMenu status = new javax.swing.JMenu(nSel > 1 ? "Set status of the " + nSel + " rows" : "Set status");
       for (String st : STATUSES) {
-        javax.swing.JMenuItem si = new javax.swing.JMenuItem(st.isEmpty() ? "(none)" : st);
+        javax.swing.JMenuItem si = new javax.swing.JMenuItem(st.isEmpty() ? "no status" : st);
         si.addActionListener(a -> setStatusAll(st));
         status.add(si);
       }
@@ -4305,6 +4515,10 @@ public class SimKit extends StarMacro {
               if (!sel && !h) setForeground(link);
               setToolTipText("Go to " + shown(s));
             } else setText(shown(s));
+            return this;
+          case T_FOLDER:
+            if (s.isEmpty()) { setForeground(pale); setText("—"); }
+            else { setText(s); setToolTipText(dir.resolve(s).toString()); }
             return this;
           default:
             setText(shortDate(s));

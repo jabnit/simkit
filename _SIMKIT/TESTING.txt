@@ -704,3 +704,18 @@ C. RESULTS SO FAR
   per user, key trackerFlat). Unticked: no sub-folder headings, runs in run order, starred runs first; Fold all /
   Unfold all folders are disabled. The filter field is shorter ("Filter runs..."). Rendered offline: flat list of
   the 14 sample runs.
+  Tracker after the list and tree review (High and Medium items). Filters: one rule for list and tree (run number,
+  name, comment, status, based on; the project name and description no longer match every run); placeholder "Filter:
+  run, name, comment"; status list order All, Active, Diverged, Done, Dropped, No status; "5 of 14 runs" and a Clear
+  link while a filter is on; empty list text; tree cards left out by the filter are faded; a jump that clears the
+  filter says "Filter cleared to show R007". Status: the status cell is read-only (labels and menu set it); labels
+  wrap, "no status" label, no click-to-clear; "Status of the n runs" for several runs or a folder heading; a change on
+  several runs offers Undo (old statuses restored). Columns Run, Status, Comment, Based on, Saved; flat list: Folder
+  column and sorting by a click on a column title (arrow in the title, starred runs first). Star: tooltip and hand
+  cursor on the star, star on tree cards. Buttons "Folder", "Copy path", "Hide" with text and keyboard focus; Delete
+  hides; Open in STAR-CCM+ disabled on a folder heading ("Select a run"); "Show hidden (n)" check box. Tree: focusable,
+  arrows (Left parent, Right first child, Up/Down in the column), Enter, Space, Delete, menu key; selected card scrolled
+  into view on a switch to Tree and on a key move; tree centred when smaller than the pane; Fit to view at least 50 %
+  (below: 50 % around the selected card); percentage button resets to 100 % (Ctrl+1). Offline: status 'dropped' on the
+  2 runs of mesh_study_R002 then Undo restored them; filter "sweep" -> "8 of 14 runs", Clear shown, tree faded; keys
+  RIGHT RIGHT DOWN from R001 -> R004, LEFT -> R002. Not done: compact layout of long single-child chains.
