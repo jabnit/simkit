@@ -724,3 +724,15 @@ C. RESULTS SO FAR
   Tracker tree: the - and + buttons are removed; the mouse wheel zooms (no Ctrl) around the pointer, dragging moves the
   view, the scroll bars stay. The bar above the tree: the percentage (click or Ctrl+1: 100 %) and Fit to view. The same
   wheel zoom applies to the tree in the Save as new run window.
+  Reports > In this simulation (first tab when the simulation has reports): reports table (Report, Type, Field,
+  Objects, Plots; "No objects" in amber; query and formula reports read-only) and plots table (residual plots left
+  out); object selector shared for the selected reports: groups by type prefix, Interfaces, Regions, Derived parts by
+  type; tri-state ticks (dash: some of the selected reports), filter with several terms and * ?, Selected only,
+  Select shown / Clear shown, Shift+click range, Space, fold by heading; objects that do not fit the report type are
+  grey. Apply sets the objects (setObjects); Plot selected... (one plot, per quantity and statistic, per object, add to
+  a plot; monitor created when missing); plot curves: Add reports..., Remove, Apply (setObjects; STAR-CCM+ keeps its own
+  curve order, setObjects and reorderObjects do not change it); Undo last change; old and new lists logged. Per object: derived parts and interface boundaries are
+  objects too. Batch objtest (testManage): r_mdot_net IN_air removed and a plane section added, Undo restored the
+  list, all objects removed (report with no objects), Undo; Plot selected one / per quantity / per object created
+  plots. CHT test: interface boundaries listed and set on a maximum report. Rendered offline: one report, three
+  reports (dashes).

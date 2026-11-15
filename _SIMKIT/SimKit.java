@@ -1008,17 +1008,17 @@ public class SimKit extends StarMacro {
   /** New scalar parameter, dimensionless (dim == null) or a length in the given units. */
   ScalarGlobalParameter newParam(String name, String dim, double value, Object units) {
     ScalarGlobalParameter p = (ScalarGlobalParameter) sim.get(GlobalParameterManager.class)
-        .createGlobalParameter(ScalarGlobalParameter.class, "Scalar");                                   // [U10]
+        .createGlobalParameter(ScalarGlobalParameter.class, "Scalar");
     p.setPresentationName(name);
     if ("length".equals(dim)) {
-      try { p.setDimensions(Dimensions.Builder().length(1).build()); }                                   // [U30]
+      try { p.setDimensions(Dimensions.Builder().length(1).build()); }
       catch (Throwable t) { log.na("dimensions of " + name, t); }
       if (units instanceof Units) {
-        try { p.getQuantity().setUnits((Units) units); }                                                 // [U31]
+        try { p.getQuantity().setUnits((Units) units); }
         catch (Throwable t) { log.na("units of " + name, t); }
       }
     }
-    p.getQuantity().setValue(value);                                                                     // [U10]
+    p.getQuantity().setValue(value);
     return p;
   }
 
@@ -6574,6 +6574,26 @@ public class SimKit extends StarMacro {
       x.kind = "region";
       out.add(x);
     }
+    for (Region r : sim.getRegionManager().getRegions()) {   // interface boundaries made by STAR-CCM+
+      for (Boundary b : r.getBoundaryManager().getBoundaries()) {
+        if (!isInterfaceBoundary(b)) continue;
+        ObjTarget x = new ObjTarget();
+        x.o = b;
+        x.name = objToken(nm(b).replaceAll("[\\[\\]()]", " ").trim()) + "_" + objToken(nm(r));
+        x.region = nm(r);
+        x.kind = "interface";
+        out.add(x);
+      }
+    }
+    try {
+      for (Object p : sim.getPartManager().getObjects()) {   // derived parts: planes, probes, iso-surfaces ...
+        ObjTarget x = new ObjTarget();
+        x.o = p;
+        x.name = objToken(nm(p));
+        x.kind = "derived";
+        out.add(x);
+      }
+    } catch (Throwable t) { log.na("derived parts", t); }
     return out;
   }
 
@@ -6749,6 +6769,9 @@ public class SimKit extends StarMacro {
     ObjState obj = new ObjState();
     List<InvRow> inv = new ArrayList<>();
     int reports, monitors, plots;
+    List<SelTarget> targets = new ArrayList<>();
+    List<RepInfo> reps = new ArrayList<>();
+    List<PlotInfo> plotList = new ArrayList<>();
     Set<String> plotNames = new HashSet<>();
     List<ObjSet> sets = new ArrayList<>();
   }
@@ -6771,6 +6794,7 @@ public class SimKit extends StarMacro {
     for (Region r : sim.getRegionManager().getRegions()) d.every.addAll(r.getBoundaryManager().getBoundaries());
     d.obj = objState(n, qs, objs);
     d.inv = inventory(d.obj);
+    try { manageData(d); } catch (Throwable t) { log.na("reports and plots of the simulation", t); }
     d.reports = sim.getReportManager().getObjects().size();
     d.monitors = sim.getMonitorManager().getObjects().size();
     d.plots = sim.getPlotManager().getObjects().size();
@@ -6816,7 +6840,8 @@ public class SimKit extends StarMacro {
       x.have = e.getValue().size();
       x.total = total.getOrDefault(x.kind, x.have);
       x.label = (codes.containsKey(x.ffName) ? codes.get(x.ffName) : objToken(x.ffName)) + " " + n.stat(x.stat) + " on "
-          + (x.kind.equals("region") ? "regions" : x.kind.isEmpty() ? "other surfaces" : x.kind);
+          + (x.kind.equals("region") ? "regions" : x.kind.isEmpty() ? "other surfaces" : x.kind.equals("derived") ? "derived parts"
+          : x.kind.equals("interface") ? "interfaces" : x.kind);
       out.add(x);
     }
     out.sort(java.util.Comparator.comparing((ObjSet x) -> x.kind).thenComparing(x -> x.label));
@@ -6883,6 +6908,851 @@ public class SimKit extends StarMacro {
     return out;
   }
 
+  // ----- Reports window: In this simulation (edit the objects of reports and the curves of plots) -----
+
+  /** An object a report can be computed on, as listed in the object selector. group: the heading it is listed under. */
+  static final class SelTarget {
+    Object o;
+    String name = "", region = "", group = "", kind = "";   // kind: boundary, interface, region, derived
+  }
+
+  /** A report of the simulation for the In this simulation page. */
+  static final class RepInfo {
+    Object report, monitor;
+    String name = "", type = "", field = "", folder = "";
+    List<Object> parts = new ArrayList<>();
+    final List<String> plots = new ArrayList<>();
+    boolean query, formula;
+  }
+
+  /** A monitor plot with its curves (monitors), in order. */
+  static final class PlotInfo {
+    Object plot;
+    String name = "";
+    final List<Object> monitors = new ArrayList<>();
+    final List<String> curves = new ArrayList<>();
+  }
+
+  /** Objects for the selector: boundaries by type prefix, interface boundaries, regions, derived parts by type. */
+  List<SelTarget> selTargets() {
+    List<SelTarget> out = new ArrayList<>();
+    for (Region r : sim.getRegionManager().getRegions()) {
+      for (Boundary b : r.getBoundaryManager().getBoundaries()) {
+        SelTarget x = new SelTarget();
+        x.o = b;
+        x.name = nm(b);
+        x.region = nm(r);
+        if (isInterfaceBoundary(b)) { x.kind = "interface"; x.group = "Interfaces"; }
+        else { String t = bcToken(nm(b)); x.kind = "boundary"; x.group = t == null ? "Other surfaces" : t; }
+        out.add(x);
+      }
+    }
+    for (Region r : sim.getRegionManager().getRegions()) {
+      SelTarget x = new SelTarget();
+      x.o = r;
+      x.name = nm(r);
+      x.region = nm(r);
+      x.kind = "region";
+      x.group = "Regions";
+      out.add(x);
+    }
+    try {
+      for (Object p : sim.getPartManager().getObjects()) {
+        SelTarget x = new SelTarget();
+        x.o = p;
+        x.name = nm(p);
+        x.kind = "derived";
+        x.group = "Derived parts: " + cls(p).replaceAll("([a-z])([A-Z])", "$1 $2").toLowerCase(Locale.ROOT);
+        out.add(x);
+      }
+    } catch (Throwable t) { log.na("derived parts", t); }
+    return out;
+  }
+
+  /** Reports, plots and selectable objects of the simulation for the In this simulation page. */
+  void manageData(ReportsData d) {
+    d.targets = selTargets();
+    Map<Object, Object> mon = new IdentityHashMap<>();
+    for (Object m : sim.getMonitorManager().getObjects()) {
+      if (!(m instanceof ReportMonitor)) continue;
+      Object rep = Reflect.tryCall(m, "getReport");
+      if (rep != null && !mon.containsKey(rep)) mon.put(rep, m);
+    }
+    Map<Object, List<String>> plotsOf = new IdentityHashMap<>();
+    for (Object p : sim.getPlotManager().getObjects()) {
+      if (!(p instanceof MonitorPlot) || "ResidualPlot".equals(cls(p))) continue;
+      PlotInfo pi = new PlotInfo();
+      pi.plot = p;
+      pi.name = nm(p);
+      for (Object m : ((MonitorPlot) p).getObjects()) {
+        pi.monitors.add(m);
+        pi.curves.add(nm(m));
+        Object rep = Reflect.tryCall(m, "getReport");
+        if (rep != null) plotsOf.computeIfAbsent(rep, k -> new ArrayList<>()).add(pi.name);
+      }
+      d.plotList.add(pi);
+    }
+    for (InvRow v : d.inv) {
+      RepInfo x = new RepInfo();
+      x.report = v.report;
+      x.name = v.name;
+      x.type = v.type;
+      x.field = v.field;
+      x.folder = v.folder;
+      x.formula = Reflect.tryCall(v.report, "getDefinition") instanceof String;
+      x.parts = x.formula ? new ArrayList<>() : partsOf(v.report);
+      try { x.query = !x.formula && Boolean.TRUE.equals(Reflect.invoke(Reflect.invoke(v.report, "getParts"), "hasQuery")); }
+      catch (Throwable t) { x.query = false; }
+      x.monitor = mon.get(v.report);
+      x.plots.addAll(plotsOf.getOrDefault(v.report, Collections.emptyList()));
+      d.reps.add(x);
+    }
+  }
+
+  /** Last change made on the In this simulation page, undone by Undo last change; null when there is none. */
+  Runnable lastUndo;
+  String lastUndoText = "";
+
+  /** Sets the objects of reports: for each report, its current objects without 'remove', then 'add' in selector order.
+   *  Reports selected by a STAR-CCM+ query and formula reports are left. The previous lists are kept for Undo. */
+  String applyObjects(List<Object> reports, Set<Object> add, Set<Object> remove, List<Object> order) {
+    final Map<Object, List<Object>> before = new IdentityHashMap<>();
+    int n = 0, bad = 0, empty = 0;
+    for (Object r : reports) {
+      try {
+        if (Boolean.TRUE.equals(Reflect.invoke(Reflect.invoke(r, "getParts"), "hasQuery"))) continue;
+        List<Object> old = partsOf(r), now = new ArrayList<>();
+        for (Object o : old) if (!remove.contains(o)) now.add(o);
+        for (Object o : order) if (add.contains(o) && !now.contains(o)) now.add(o);
+        if (now.equals(old)) continue;
+        Reflect.invoke(Reflect.invoke(r, "getParts"), "setObjects", new NeoObjectVector(now.toArray()));
+        before.put(r, old);
+        log.line("  objects of " + nm(r) + ": " + namesList(old) + " -> " + namesList(now));
+        if (now.isEmpty()) empty++;
+        n++;
+      } catch (Throwable t) {
+        log.na("objects of " + nm(r), t);
+        bad++;
+      }
+    }
+    if (!before.isEmpty()) {
+      lastUndoText = "objects of " + plural(before.size(), "report", "reports");
+      lastUndo = () -> {
+        for (Map.Entry<Object, List<Object>> e : before.entrySet()) {
+          try { Reflect.invoke(Reflect.invoke(e.getKey(), "getParts"), "setObjects", new NeoObjectVector(e.getValue().toArray())); }
+          catch (Throwable t) { log.na("undo objects of " + nm(e.getKey()), t); }
+        }
+      };
+    }
+    return "Objects changed on " + plural(n, "report", "reports") + "." + (empty > 0 ? " " + plural(empty, "report has", "reports have") + " no objects." : "")
+        + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
+  }
+
+  /** Sets the curves of a monitor plot. The previous list is kept for Undo. */
+  String applyCurves(Object plot, List<Object> monitors) {
+    try {
+      final MonitorPlot p = (MonitorPlot) plot;
+      final List<Object> old = new ArrayList<>(p.getObjects());
+      List<Monitor> now = new ArrayList<>();
+      for (Object m : monitors) now.add((Monitor) m);
+      p.setObjects(now);   // STAR-CCM+ keeps its own order of the curves
+      log.line("  curves of " + nm(p) + ": " + namesList(old) + " -> " + namesList(monitors));
+      lastUndoText = "curves of " + nm(p);
+      lastUndo = () -> {
+        List<Monitor> back = new ArrayList<>();
+        for (Object m : old) back.add((Monitor) m);
+        p.setObjects(back);
+      };
+      return "Curves of " + nm(p) + " set: " + plural(monitors.size(), "curve", "curves") + ".";
+    } catch (Throwable t) {
+      log.na("curves of " + nm(plot), t);
+      return "Failed: see the Output window.";
+    }
+  }
+
+  /** The monitor of a report, created when it has none. */
+  Monitor monitorFor(Object report) {
+    for (Object m : sim.getMonitorManager().getObjects()) if (m instanceof ReportMonitor && Reflect.tryCall(m, "getReport") == report) return (Monitor) m;
+    return ((Report) report).createMonitor();
+  }
+
+  /** Puts the monitors of the reports in plots. mode: "one" (one plot named 'name'), "quantity" (one plot per field and
+   *  statistic), "object" (one plot per object), "add" (the existing plot 'target'). An existing plot of the same name
+   *  gets the curves. */
+  String plotSelected(List<Object> reports, String mode, String name, Object target) {
+    Map<String, List<Monitor>> groups = new LinkedHashMap<>();
+    ObjNames n = objNames();
+    for (Object r : reports) {
+      Monitor m;
+      try { m = monitorFor(r); } catch (Throwable t) { log.na("monitor of " + nm(r), t); continue; }
+      String key;
+      if (mode.equals("quantity")) {
+        Object ff = Reflect.tryCall(r, "getFieldFunction");
+        String fn = ff == null ? reportType(r) : ffName(ff), code = n.q.getOrDefault(fn, objToken(fn));
+        String st = reportType(r);
+        key = code + "_" + (Arrays.asList(OBJ_STATS).contains(st) ? n.stat(st) : objToken(st));
+      } else if (mode.equals("object")) {
+        List<Object> ps = partsOf(r);
+        key = ps.isEmpty() ? "no_objects" : objToken(lastPart(nm(ps.get(0)))) + (ps.size() > 1 ? "_and_" + (ps.size() - 1) : "");
+      } else {
+        key = mode.equals("add") ? nm(target) : name.trim();
+      }
+      groups.computeIfAbsent(key, k -> new ArrayList<>()).add(m);
+    }
+    int made = 0, added = 0;
+    final Map<Object, List<Object>> before = new IdentityHashMap<>();
+    final List<Object> created = new ArrayList<>();
+    for (Map.Entry<String, List<Monitor>> g : groups.entrySet()) {
+      try {
+        MonitorPlot have = null;
+        for (Object p : sim.getPlotManager().getObjects()) if (p instanceof MonitorPlot && nm(p).equals(g.getKey())) have = (MonitorPlot) p;
+        if (mode.equals("add")) have = (MonitorPlot) target;
+        if (have != null) {
+          List<Monitor> all = new ArrayList<>(have.getObjects());
+          before.put(have, new ArrayList<Object>(all));
+          int k = 0;
+          for (Monitor m : g.getValue()) if (!all.contains(m)) { all.add(m); k++; }
+          have.setObjects(all);
+          added += k;
+          log.line("  plot " + nm(have) + ": +" + k + " curve(s)");
+        } else {
+          MonitorPlot p = sim.getPlotManager().createMonitorPlot(g.getValue(), g.getKey());
+          if (!g.getKey().equals(nm(p))) p.setPresentationName(g.getKey());
+          created.add(p);
+          made++;
+          log.line("  plot " + g.getKey() + " created with " + g.getValue().size() + " curve(s)");
+        }
+      } catch (Throwable t) { log.na("plot " + g.getKey(), t); }
+    }
+    if (!before.isEmpty() || !created.isEmpty()) {
+      lastUndoText = "plots";
+      lastUndo = () -> {   // plots made here are emptied, not deleted
+        for (Map.Entry<Object, List<Object>> e : before.entrySet()) {
+          List<Monitor> back = new ArrayList<>();
+          for (Object m : e.getValue()) back.add((Monitor) m);
+          ((MonitorPlot) e.getKey()).setObjects(back);
+        }
+        for (Object p : created) ((MonitorPlot) p).setObjects(new ArrayList<Monitor>());
+      };
+    }
+    if (gui && !created.isEmpty()) Ui.collapseInTree(namesOf(created));
+    return (made > 0 ? plural(made, "plot", "plots") + " created" : "") + (made > 0 && added > 0 ? ", " : "")
+        + (added > 0 ? plural(added, "curve", "curves") + " added" : "") + (made + added == 0 ? "Nothing to add" : "") + ".";
+  }
+
+  static String namesList(List<?> objs) {
+    List<String> n = new ArrayList<>();
+    for (Object o : objs) n.add(nm(o));
+    return n.isEmpty() ? "(none)" : String.join(", ", n);
+  }
+
+  /** Reason an object does not fit a report type, or null: volume average takes regions only, area and mass-flow
+   *  average and surface integral take surfaces only. */
+  static String notFit(String type, SelTarget x) {
+    boolean reg = x.kind.equals("region");
+    if (type.equals("volume average") && !reg) return "Volume average: regions only";
+    if ((type.equals("area average") || type.equals("mass-flow average") || type.equals("surface integral")) && reg) return Ui.cap(type) + ": surfaces only";
+    return null;
+  }
+
+  /** The object selector of the Reports window. Ticks are tri-state when several reports are edited together:
+   *  0 none of them, 1 some of them, 2 all of them. Swing thread only. */
+  static final class ObjSelector {
+    final JPanel panel = new JPanel(new BorderLayout(0, 6));
+    final List<SelTarget> all = new ArrayList<>();
+    final Map<Object, Integer> start = new IdentityHashMap<>(), now = new IdentityHashMap<>();
+    final Map<String, List<SelTarget>> groups = new LinkedHashMap<>();
+    final List<Object> view = new ArrayList<>();   // String for a heading, else SelTarget
+    final Set<String> folded = new HashSet<>();
+    java.util.function.Function<SelTarget, String> why = x -> null;
+    Runnable changed = () -> { };
+    final JTextField filter = Ui.hintField("", "Filter objects  (* and ? allowed)", 18);
+    final javax.swing.JCheckBox onlySel = new javax.swing.JCheckBox("Selected only");
+    final JLabel count = Ui.muted(" ");
+    final javax.swing.table.AbstractTableModel model;
+    final JTable table;
+    int anchor = -1;
+    boolean editable = true;
+    static final java.awt.Color HEAD = new java.awt.Color(0xF2, 0xF4, 0xF7);
+
+    ObjSelector() {
+      model = new javax.swing.table.AbstractTableModel() {
+        private static final long serialVersionUID = 1L;
+        @Override public int getRowCount() { return view.size(); }
+        @Override public int getColumnCount() { return 3; }
+        @Override public String getColumnName(int c) { return new String[] {"", "Object", "Region"}[c]; }
+        @Override public Object getValueAt(int r, int c) {
+          Object o = view.get(r);
+          if (o instanceof String) {
+            if (c == 0) return groupState((String) o);
+            if (c == 2) return "";
+            int k = 0, n = 0;
+            for (SelTarget x : groups.get(o)) { n++; if (now.getOrDefault(x.o, 0) == 2) k++; }
+            return "<html><b>" + (folded.contains(o) ? "▸ " : "▾ ") + Html.esc((String) o) + "</b>&nbsp;&nbsp;<font color='#6B7580'>"
+                + k + " of " + n + "</font></html>";
+          }
+          SelTarget x = (SelTarget) o;
+          return c == 0 ? now.getOrDefault(x.o, 0) : c == 1 ? x.name : x.region;
+        }
+      };
+      table = plainTable(model);
+      table.setTableHeader(null);
+      table.putClientProperty("simkit.empty", "No object matches the filter.");
+      table.getColumnModel().getColumn(0).setMaxWidth(26);
+      table.getColumnModel().getColumn(0).setMinWidth(26);
+      table.getColumnModel().getColumn(1).setPreferredWidth(240);
+      table.getColumnModel().getColumn(2).setPreferredWidth(90);
+      final Tick tick = new Tick();
+      table.getColumnModel().getColumn(0).setCellRenderer((t, v, sel, f, r, c) -> {
+        Object o = view.get(r);
+        tick.state = v instanceof Integer ? (Integer) v : 0;
+        tick.off = !editable || o instanceof SelTarget && why.apply((SelTarget) o) != null;
+        tick.setBackground(t.isRowSelected(r) ? Ui.SEL : o instanceof String ? HEAD : java.awt.Color.WHITE);
+        return tick;
+      });
+      final javax.swing.table.DefaultTableCellRenderer text = new javax.swing.table.DefaultTableCellRenderer();
+      for (int c = 1; c < 3; c++) table.getColumnModel().getColumn(c).setCellRenderer((t, v, sel, f, r, c2) -> {
+        text.getTableCellRendererComponent(t, v, false, false, r, c2);
+        Object o = view.get(r);
+        String w = o instanceof SelTarget ? why.apply((SelTarget) o) : null;
+        text.setBackground(t.isRowSelected(r) ? Ui.SEL : o instanceof String ? HEAD : java.awt.Color.WHITE);
+        text.setForeground(w != null ? Ui.FAINT : c2 == 2 ? Ui.MUTED : java.awt.Color.BLACK);
+        text.setBorder(BorderFactory.createEmptyBorder(0, o instanceof String || c2 == 2 ? 4 : 16, 0, 4));
+        text.setToolTipText(w);
+        return text;
+      });
+      table.addMouseListener(new java.awt.event.MouseAdapter() {
+        @Override public void mousePressed(java.awt.event.MouseEvent e) {
+          int r = table.rowAtPoint(e.getPoint()), c = table.columnAtPoint(e.getPoint());
+          if (r < 0) return;
+          Object o = view.get(r);
+          if (o instanceof String && c != 0) {   // a click on a heading folds or unfolds it
+            if (!folded.remove(o)) folded.add((String) o);
+            fill();
+            return;
+          }
+          if (c != 0 || !editable) return;
+          if (e.isShiftDown() && anchor >= 0 && anchor < view.size()) {   // the range takes the state of the anchor row
+            boolean on = stateOf(view.get(anchor)) == 2;
+            for (int i = Math.min(anchor, r); i <= Math.max(anchor, r); i++) setRow(view.get(i), on);
+          } else {
+            setRow(o, stateOf(o) != 2);
+            anchor = r;
+          }
+          after();
+        }
+      });
+      table.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke("SPACE"), "simkitTick");
+      table.getActionMap().put("simkitTick", new javax.swing.AbstractAction() {
+        private static final long serialVersionUID = 1L;
+        @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+          int[] rs = table.getSelectedRows();
+          if (rs.length == 0 || !editable) return;
+          boolean on = stateOf(view.get(rs[0])) != 2;
+          for (int r : rs) setRow(view.get(r), on);
+          after();
+        }
+      });
+      filter.putClientProperty("simkit.esc.close", null);
+      filter.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { fill(); }
+        @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { fill(); }
+        @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { fill(); }
+      });
+      onlySel.setOpaque(false);
+      onlySel.addActionListener(e -> fill());
+      JButton selShown = Ui.link("Select shown"), clrShown = Ui.link("Clear shown");
+      selShown.setToolTipText("Tick every object listed (after the filter)");
+      clrShown.setToolTipText("Untick every object listed (after the filter)");
+      selShown.addActionListener(e -> shown(true));
+      clrShown.addActionListener(e -> shown(false));
+      JPanel tools = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+      tools.add(filter);
+      tools.add(onlySel);
+      JPanel links = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+      links.add(count);
+      links.add(selShown);
+      links.add(clrShown);
+      JPanel head = new JPanel(new BorderLayout(0, 2));
+      head.add(tools, BorderLayout.NORTH);
+      head.add(links, BorderLayout.SOUTH);
+      panel.add(head, BorderLayout.NORTH);
+      panel.add(plainScroll(table, 380, 300), BorderLayout.CENTER);
+    }
+
+    /** A tick box with three states, drawn without the look and feel so that "some" shows as a dash. */
+    static final class Tick extends javax.swing.JComponent {
+      private static final long serialVersionUID = 1L;
+      int state;
+      boolean off;
+      Tick() { setOpaque(true); }
+      @Override protected void paintComponent(java.awt.Graphics g0) {
+        java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+        g.setColor(getBackground());
+        g.fillRect(0, 0, getWidth(), getHeight());
+        g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+        int s = 13, x = (getWidth() - s) / 2, y = (getHeight() - s) / 2;
+        java.awt.Color blue = off ? new java.awt.Color(0xB8, 0xC4, 0xD6) : Ui.BLUE;
+        if (state > 0) {
+          g.setColor(blue);
+          g.fillRoundRect(x, y, s, s, 4, 4);
+          g.setColor(java.awt.Color.WHITE);
+          g.setStroke(new java.awt.BasicStroke(2f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND));
+          if (state == 2) g.drawPolyline(new int[] {x + 3, x + 6, x + 10}, new int[] {y + 7, y + 10, y + 4}, 3);
+          else g.drawLine(x + 3, y + s / 2, x + s - 3, y + s / 2);
+        } else {
+          g.setColor(off ? new java.awt.Color(0xE3, 0xE6, 0xEA) : new java.awt.Color(0x9A, 0xA4, 0xB0));
+          g.drawRoundRect(x, y, s - 1, s - 1, 4, 4);
+        }
+        g.dispose();
+      }
+    }
+
+    /** Loads the objects and the state per object (0, 1, 2) of the reports being edited; groups over 15 objects
+     *  start folded. */
+    void set(List<SelTarget> targets, Map<Object, Integer> state, boolean canEdit) {
+      all.clear();
+      all.addAll(targets);
+      start.clear();
+      now.clear();
+      start.putAll(state);
+      now.putAll(state);
+      editable = canEdit;
+      groups.clear();
+      List<SelTarget> sorted = new ArrayList<>(targets);
+      sorted.sort(java.util.Comparator.comparingInt((SelTarget x) -> x.kind.equals("boundary") ? 0 : x.kind.equals("interface") ? 1
+          : x.kind.equals("region") ? 2 : 3).thenComparing(x -> x.group).thenComparing(x -> x.name));
+      for (SelTarget x : sorted) groups.computeIfAbsent(x.group, k -> new ArrayList<>()).add(x);
+      folded.clear();
+      for (Map.Entry<String, List<SelTarget>> g : groups.entrySet()) {
+        boolean anyOn = false;
+        for (SelTarget x : g.getValue()) anyOn |= now.getOrDefault(x.o, 0) > 0;
+        if (g.getValue().size() > 15 && !anyOn) folded.add(g.getKey());
+      }
+      anchor = -1;
+      fill();
+    }
+
+    int stateOf(Object o) { return o instanceof String ? groupState((String) o) : now.getOrDefault(((SelTarget) o).o, 0); }
+
+    int groupState(String g) {
+      boolean any = false, allOn = true;
+      for (SelTarget x : groups.get(g)) {
+        if (why.apply(x) != null) continue;
+        int s = now.getOrDefault(x.o, 0);
+        any |= s > 0;
+        allOn &= s == 2;
+      }
+      return allOn && any ? 2 : any ? 1 : 0;
+    }
+
+    void setRow(Object o, boolean on) {
+      if (o instanceof String) { for (SelTarget x : groups.get(o)) if (why.apply(x) == null) now.put(x.o, on ? 2 : 0); }
+      else if (why.apply((SelTarget) o) == null) now.put(((SelTarget) o).o, on ? 2 : 0);
+    }
+
+    void shown(boolean on) {
+      if (!editable) return;
+      for (Object o : view) if (o instanceof SelTarget) setRow(o, on);
+      after();
+    }
+
+    void after() {
+      model.fireTableRowsUpdated(0, Math.max(0, view.size() - 1));
+      if (onlySel.isSelected()) fill();
+      counts();
+      changed.run();
+    }
+
+    void counts() {
+      int k = 0;
+      for (SelTarget x : all) if (now.getOrDefault(x.o, 0) == 2) k++;
+      count.setText(k + " of " + all.size() + " selected");
+    }
+
+    /** Filter terms separated by blanks all apply; * and ? are wildcards, else a term matches any part of the name. */
+    boolean matches(SelTarget x, String[] terms) {
+      String s = (x.name + " " + x.region + " " + x.group).toLowerCase(Locale.ROOT);
+      for (String t : terms) {
+        if (t.isEmpty()) continue;
+        if (t.contains("*") || t.contains("?")) {
+          String rx = ".*" + Pattern.quote(t).replace("*", "\\E.*\\Q").replace("?", "\\E.\\Q") + ".*";
+          if (!s.matches(rx)) return false;
+        } else if (!s.contains(t)) return false;
+      }
+      return true;
+    }
+
+    void fill() {
+      String[] terms = filter.getText().trim().toLowerCase(Locale.ROOT).split("\\s+");
+      boolean q = !filter.getText().trim().isEmpty();
+      view.clear();
+      for (Map.Entry<String, List<SelTarget>> g : groups.entrySet()) {
+        List<SelTarget> hit = new ArrayList<>();
+        for (SelTarget x : g.getValue()) {
+          if (onlySel.isSelected() && now.getOrDefault(x.o, 0) == 0) continue;
+          if (matches(x, terms)) hit.add(x);
+        }
+        if (hit.isEmpty()) continue;
+        view.add(g.getKey());
+        if (q || onlySel.isSelected() || !folded.contains(g.getKey())) view.addAll(hit);
+      }
+      model.fireTableDataChanged();
+      counts();
+    }
+
+    Set<Object> adds() {
+      Set<Object> out = Collections.newSetFromMap(new IdentityHashMap<>());
+      for (Map.Entry<Object, Integer> e : now.entrySet()) if (e.getValue() == 2 && start.getOrDefault(e.getKey(), 0) != 2) out.add(e.getKey());
+      return out;
+    }
+
+    Set<Object> removes() {
+      Set<Object> out = Collections.newSetFromMap(new IdentityHashMap<>());
+      for (Map.Entry<Object, Integer> e : now.entrySet()) if (e.getValue() == 0 && start.getOrDefault(e.getKey(), 0) != 0) out.add(e.getKey());
+      return out;
+    }
+
+    List<Object> order() {
+      List<Object> out = new ArrayList<>();
+      for (List<SelTarget> g : groups.values()) for (SelTarget x : g) out.add(x.o);
+      return out;
+    }
+  }
+
+  /** The In this simulation page: the reports or the plots of the simulation on the left; on the right the objects of
+   *  the selected reports, or the curves of the selected plot. Changes are applied with the main button. */
+  Page managePage(final ReportsData[] data, final Runnable changed) {
+    final Page p = new Page();
+    final boolean[] plotsView = {false};
+    final List<RepInfo> repRows = new ArrayList<>();
+    final List<PlotInfo> plotRows = new ArrayList<>();
+    final JTextField find = Ui.hintField("", "Filter reports", 16);
+    find.putClientProperty("simkit.esc.close", null);
+    final ObjSelector sel = new ObjSelector();
+    final JLabel head = new JLabel(" "), note = new JLabel(" ");
+    head.setFont(head.getFont().deriveFont(Font.BOLD));
+    note.setForeground(Ui.AMBER);
+    final JButton undo = Ui.link("Undo last change"), plotSel = new JButton("Plot selected…");
+    plotSel.setToolTipText("Puts the monitors of the selected reports in a plot");
+
+    // reports table
+    final javax.swing.table.AbstractTableModel rm = new javax.swing.table.AbstractTableModel() {
+      private static final long serialVersionUID = 1L;
+      @Override public int getRowCount() { return repRows.size(); }
+      @Override public int getColumnCount() { return 5; }
+      @Override public String getColumnName(int c) { return new String[] {"Report", "Type", "Field", "Objects", "Plots"}[c]; }
+      @Override public Object getValueAt(int r, int c) {
+        RepInfo x = repRows.get(r);
+        switch (c) {
+          case 0: return x.name;
+          case 1: return x.type;
+          case 2: return x.field;
+          case 3: return x.formula ? "formula" : x.query ? "query (" + x.parts.size() + ")" : x.parts.isEmpty() ? "⚠ No objects"
+              : x.parts.size() == 1 ? lastPart(nm(x.parts.get(0))) : x.parts.size() + " objects";
+          default: return x.plots.isEmpty() ? "—" : x.plots.size() == 1 ? x.plots.get(0) : x.plots.size() + " plots";
+        }
+      }
+    };
+    final JTable rt = plainTable(rm);
+    rt.setSelectionMode(javax.swing.ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+    rt.putClientProperty("simkit.empty", "No reports in this simulation. Create them in Standard or Per object.");
+    int[] rw = {200, 110, 120, 110, 110};
+    for (int i = 0; i < rw.length; i++) rt.getColumnModel().getColumn(i).setPreferredWidth(rw[i]);
+    rt.setDefaultRenderer(Object.class, textCell((r, c) -> c == 3 && !repRows.get(r).formula && !repRows.get(r).query && repRows.get(r).parts.isEmpty()
+        ? Ui.AMBER : c == 0 ? java.awt.Color.BLACK : Ui.MUTED));
+    // plots table
+    final javax.swing.table.AbstractTableModel pm = new javax.swing.table.AbstractTableModel() {
+      private static final long serialVersionUID = 1L;
+      @Override public int getRowCount() { return plotRows.size(); }
+      @Override public int getColumnCount() { return 2; }
+      @Override public String getColumnName(int c) { return c == 0 ? "Plot" : "Curves"; }
+      @Override public Object getValueAt(int r, int c) { return c == 0 ? plotRows.get(r).name : String.valueOf(plotRows.get(r).curves.size()); }
+    };
+    final JTable pt = plainTable(pm);
+    pt.setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
+    pt.putClientProperty("simkit.empty", "No plots.");
+    pt.getColumnModel().getColumn(0).setPreferredWidth(420);
+    pt.getColumnModel().getColumn(1).setPreferredWidth(80);
+    pt.setDefaultRenderer(Object.class, textCell((r, c) -> c == 0 ? java.awt.Color.BLACK : Ui.MUTED));
+    final java.awt.CardLayout leftCards = new java.awt.CardLayout(), rightCards = new java.awt.CardLayout();
+    final JPanel left = new JPanel(leftCards), right = new JPanel(rightCards);
+    left.add(plainScroll(rt, 560, 360), "reports");
+    left.add(plainScroll(pt, 560, 360), "plots");
+
+    // plot detail: curves in order
+    final javax.swing.DefaultListModel<Object> curves = new javax.swing.DefaultListModel<>();
+    final List<Object> curvesStart = new ArrayList<>();
+    final javax.swing.JList<Object> cl = new javax.swing.JList<>(curves);
+    cl.setCellRenderer((list, v, i, s, f) -> {
+      JLabel l = new JLabel(nm(v));
+      l.setOpaque(true);
+      l.setBorder(BorderFactory.createEmptyBorder(3, 8, 3, 8));
+      l.setBackground(s ? Ui.SEL : java.awt.Color.WHITE);
+      return l;
+    });
+    final JButton addCurves = new JButton("Add reports…"), remove = new JButton("Remove");
+    final Runnable plotChanged = changed;
+    remove.addActionListener(e -> { for (Object o : cl.getSelectedValuesList()) curves.removeElement(o); plotChanged.run(); });
+    JPanel cbtn = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+    for (JButton b : new JButton[] {addCurves, remove}) cbtn.add(b);
+    JPanel plotDetail = new JPanel(new BorderLayout(0, 6));
+    plotDetail.add(cbtn, BorderLayout.NORTH);
+    plotDetail.add(plainScroll(cl, 380, 300), BorderLayout.CENTER);
+    right.add(sel.panel, "reports");
+    right.add(plotDetail, "plots");
+
+    final List<RepInfo> picked = new ArrayList<>();
+    final PlotInfo[] plotPicked = {null};
+    final Runnable showRep = () -> {
+      picked.clear();
+      for (int r : rt.getSelectedRows()) picked.add(repRows.get(r));
+      Map<Object, Integer> st = new IdentityHashMap<>();
+      boolean canEdit = !picked.isEmpty();
+      String type = null;
+      for (RepInfo x : picked) {
+        canEdit &= !x.formula && !x.query;
+        type = type == null ? x.type : type.equals(x.type) ? type : "";
+        for (Object o : x.parts) st.merge(o, 1, Integer::sum);
+      }
+      for (Map.Entry<Object, Integer> e : st.entrySet()) e.setValue(e.getValue() == picked.size() ? 2 : 1);
+      final String ty = type == null ? "" : type;
+      sel.why = x -> notFit(ty, x);
+      sel.set(data[0].targets, st, canEdit);
+      head.setText(picked.isEmpty() ? "Select a report on the left" : picked.size() == 1 ? picked.get(0).name : plural(picked.size(), "report", "reports") + " selected");
+      String n0 = "";
+      if (picked.size() == 1 && picked.get(0).formula) n0 = "A formula report has no objects.";
+      else if (picked.size() == 1 && picked.get(0).query) n0 = "Objects set by a query in STAR-CCM+: edit them there.";
+      else if (!canEdit && !picked.isEmpty()) n0 = "Formula and query reports in the selection: their objects cannot be edited here.";
+      else if (picked.size() > 1) n0 = "A dash marks an object of some of the reports only.";
+      note.setText(n0.isEmpty() ? " " : n0);
+      note.setForeground(picked.size() > 1 && canEdit ? Ui.MUTED : Ui.AMBER);
+      plotSel.setEnabled(!picked.isEmpty());
+      changed.run();
+    };
+    final Runnable showPlot = () -> {
+      int r = pt.getSelectedRow();
+      plotPicked[0] = r < 0 ? null : plotRows.get(r);
+      curves.clear();
+      curvesStart.clear();
+      if (plotPicked[0] != null) { for (Object m : plotPicked[0].monitors) curves.addElement(m); curvesStart.addAll(plotPicked[0].monitors); }
+      head.setText(plotPicked[0] == null ? "Select a plot on the left" : "Plot " + plotPicked[0].name);
+      note.setText(" ");
+      for (JButton b : new JButton[] {addCurves, remove}) b.setEnabled(plotPicked[0] != null);
+      changed.run();
+    };
+    sel.changed = () -> {
+      int empty = 0;
+      Set<Object> rem = sel.removes(), add = sel.adds();
+      for (RepInfo x : picked) {
+        int left0 = 0;
+        for (Object o : x.parts) if (!rem.contains(o)) left0++;
+        if (left0 == 0 && add.isEmpty() && !x.parts.isEmpty()) empty++;
+      }
+      if (empty > 0) { note.setText(empty == 1 && picked.size() == 1 ? "The report will have no objects." : plural(empty, "report", "reports") + " will have no objects."); note.setForeground(Ui.AMBER); }
+      changed.run();
+    };
+    rt.getSelectionModel().addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) showRep.run(); });
+    pt.getSelectionModel().addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) showPlot.run(); });
+    addCurves.addActionListener(e -> {
+      List<RepInfo> choice = pickReports(data[0].reps);
+      for (RepInfo x : choice) {
+        Object m = x.monitor != null ? x.monitor : x.report;   // a report without monitor gets one at Apply
+        if (!curves.contains(m)) curves.addElement(m);
+      }
+      plotChanged.run();
+    });
+
+    final Runnable fillRows = () -> {
+      String q = find.getText().trim().toLowerCase(Locale.ROOT);
+      Set<String> keepR = new HashSet<>();
+      for (RepInfo x : picked) keepR.add(x.name);
+      String keepP = plotPicked[0] == null ? null : plotPicked[0].name;
+      repRows.clear();
+      for (RepInfo x : data[0].reps) if (q.isEmpty() || (x.name + " " + x.type + " " + x.field).toLowerCase(Locale.ROOT).contains(q)) repRows.add(x);
+      plotRows.clear();
+      for (PlotInfo x : data[0].plotList) if (q.isEmpty() || x.name.toLowerCase(Locale.ROOT).contains(q)) plotRows.add(x);
+      rm.fireTableDataChanged();
+      pm.fireTableDataChanged();
+      for (int i = 0; i < repRows.size(); i++) if (keepR.contains(repRows.get(i).name)) rt.addRowSelectionInterval(i, i);
+      for (int i = 0; i < plotRows.size(); i++) if (plotRows.get(i).name.equals(keepP)) pt.setRowSelectionInterval(i, i);
+      if (plotsView[0]) showPlot.run(); else showRep.run();
+    };
+    find.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { fillRows.run(); }
+      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { fillRows.run(); }
+      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { fillRows.run(); }
+    });
+
+    // Reports | Plots
+    final javax.swing.JToggleButton vr = Ui.chip("Reports"), vp = Ui.chip("Plots");
+    javax.swing.ButtonGroup vg = new javax.swing.ButtonGroup();
+    vg.add(vr);
+    vg.add(vp);
+    vr.setSelected(true);
+    final Runnable switchView = () -> {
+      leftCards.show(left, plotsView[0] ? "plots" : "reports");
+      rightCards.show(right, plotsView[0] ? "plots" : "reports");
+      find.setText("");
+      plotSel.setVisible(!plotsView[0]);
+      if (plotsView[0]) showPlot.run(); else showRep.run();
+    };
+    vr.addActionListener(e -> { plotsView[0] = false; switchView.run(); });
+    vp.addActionListener(e -> { plotsView[0] = true; switchView.run(); });
+    undo.setToolTipText("Puts back the objects or curves as they were before the last change");
+    undo.addActionListener(e -> {
+      final Runnable u = lastUndo;
+      if (u == null || p.exec == null) return;
+      final String what = lastUndoText;
+      lastUndo = null;
+      p.exec.accept(() -> { u.run(); log.line("  undo: " + what); return "Undone: " + what + "."; });
+    });
+    plotSel.addActionListener(e -> {
+      final List<Object> reps = new ArrayList<>();
+      for (RepInfo x : picked) reps.add(x.report);
+      final Object[] choice = plotDialog(data[0].plotList, reps.size());
+      if (choice == null || p.exec == null) return;
+      p.exec.accept(() -> plotSelected(reps, (String) choice[0], (String) choice[1], choice[2]));
+    });
+
+    JPanel top = new JPanel(new BorderLayout());
+    JPanel tl = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+    tl.add(vr);
+    tl.add(vp);
+    tl.add(javax.swing.Box.createHorizontalStrut(10));
+    tl.add(find);
+    tl.add(javax.swing.Box.createHorizontalStrut(10));
+    tl.add(plotSel);
+    top.add(tl, BorderLayout.WEST);
+    top.add(undo, BorderLayout.EAST);
+    JPanel rhead = new JPanel(new BorderLayout(0, 2));
+    rhead.add(head, BorderLayout.NORTH);
+    rhead.add(note, BorderLayout.SOUTH);
+    JPanel rightAll = new JPanel(new BorderLayout(0, 8));
+    rightAll.add(rhead, BorderLayout.NORTH);
+    rightAll.add(right, BorderLayout.CENTER);
+    JPanel mid = new JPanel(new BorderLayout(16, 0));
+    mid.add(left, BorderLayout.CENTER);
+    mid.add(rightAll, BorderLayout.EAST);
+    p.panel.setLayout(new BorderLayout(0, 10));
+    p.panel.add(top, BorderLayout.NORTH);
+    p.panel.add(mid, BorderLayout.CENTER);
+    p.panel.add(Ui.muted("<html>Ticks set the objects of the selected reports; Shift+click ticks a range, Space ticks the selected rows. "
+        + "Nothing is deleted: removing an object or a curve changes only that list.</html>"), BorderLayout.SOUTH);
+    p.focus = rt;
+
+    p.label = () -> {
+      undo.setVisible(lastUndo != null);
+      if (plotsView[0]) {
+        if (plotPicked[0] == null) return null;
+        List<Object> nowL = Collections.list(curves.elements());
+        int a = 0, r = 0;
+        for (Object o : nowL) if (!curvesStart.contains(o)) a++;
+        for (Object o : curvesStart) if (!nowL.contains(o)) r++;
+        return a + r == 0 ? null : "Apply: " + (a > 0 ? "+" + plural(a, "curve", "curves") : "") + (a > 0 && r > 0 ? ", " : "")
+            + (r > 0 ? "−" + plural(r, "curve", "curves") : "");
+      }
+      if (picked.isEmpty() || !sel.editable) return null;
+      int a = sel.adds().size(), r = sel.removes().size();
+      if (a + r == 0) return null;
+      return "Apply: " + (a > 0 ? "+" + plural(a, "object", "objects") : "") + (a > 0 && r > 0 ? ", " : "") + (r > 0 ? "−" + plural(r, "object", "objects") : "");
+    };
+    p.job = () -> {
+      if (plotsView[0]) {
+        if (plotPicked[0] == null) return null;
+        final Object plot = plotPicked[0].plot;
+        final List<Object> items = Collections.list(curves.elements());
+        return () -> {
+          List<Object> mons = new ArrayList<>();
+          for (Object o : items) mons.add(o instanceof Monitor ? o : monitorFor(o));
+          return applyCurves(plot, mons);
+        };
+      }
+      final List<Object> reps = new ArrayList<>();
+      for (RepInfo x : picked) reps.add(x.report);
+      final Set<Object> add = sel.adds(), rem = sel.removes();
+      final List<Object> order = sel.order();
+      return reps.isEmpty() ? null : () -> applyObjects(reps, add, rem, order);
+    };
+    p.reload = fillRows;
+    fillRows.run();
+    return p;
+  }
+
+  /** Dialog to pick reports, with a filter. Returns the ticked ones (empty on Cancel). Swing thread. */
+  List<RepInfo> pickReports(List<RepInfo> reps) {
+    final List<RepInfo> shown = new ArrayList<>(reps);
+    final Set<RepInfo> on = new HashSet<>();
+    final javax.swing.table.AbstractTableModel m = new javax.swing.table.AbstractTableModel() {
+      private static final long serialVersionUID = 1L;
+      @Override public int getRowCount() { return shown.size(); }
+      @Override public int getColumnCount() { return 3; }
+      @Override public String getColumnName(int c) { return new String[] {"", "Report", "Type"}[c]; }
+      @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
+      @Override public boolean isCellEditable(int r, int c) { return c == 0; }
+      @Override public Object getValueAt(int r, int c) { RepInfo x = shown.get(r); return c == 0 ? on.contains(x) : c == 1 ? x.name : x.type; }
+      @Override public void setValueAt(Object v, int r, int c) { if (Boolean.TRUE.equals(v)) on.add(shown.get(r)); else on.remove(shown.get(r)); }
+    };
+    JTable t = plainTable(m);
+    t.getColumnModel().getColumn(0).setMaxWidth(28);
+    t.getColumnModel().getColumn(1).setPreferredWidth(280);
+    spaceToggles(t);
+    final JTextField f = Ui.hintField("", "Filter reports", 18);
+    f.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+      void run() {
+        String q = f.getText().trim().toLowerCase(Locale.ROOT);
+        shown.clear();
+        for (RepInfo x : reps) if (q.isEmpty() || (x.name + " " + x.type).toLowerCase(Locale.ROOT).contains(q)) shown.add(x);
+        m.fireTableDataChanged();
+      }
+      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { run(); }
+      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { run(); }
+      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { run(); }
+    });
+    JPanel body = new JPanel(new BorderLayout(0, 6));
+    body.add(f, BorderLayout.NORTH);
+    body.add(plainScroll(t, 420, 300), BorderLayout.CENTER);
+    boolean ok = Ui.sheet("Add reports", "Their monitors become curves of the plot.", body, Ui.primary("Add"), null);
+    List<RepInfo> out = new ArrayList<>();
+    if (ok) for (RepInfo x : reps) if (on.contains(x)) out.add(x);
+    return out;
+  }
+
+  /** Plot selected... dialog. Returns {mode, name, target plot} or null on Cancel. Swing thread. */
+  Object[] plotDialog(List<PlotInfo> plots, int n) {
+    final javax.swing.JRadioButton one = new javax.swing.JRadioButton("One plot", true), perQ = new javax.swing.JRadioButton("One plot per quantity and statistic"),
+        perO = new javax.swing.JRadioButton("One plot per object"), add = new javax.swing.JRadioButton("Add to plot");
+    javax.swing.ButtonGroup g = new javax.swing.ButtonGroup();
+    for (javax.swing.JRadioButton b : new javax.swing.JRadioButton[] {one, perQ, perO, add}) g.add(b);
+    final JTextField name = Ui.hintField("", "Plot name", 18);
+    final JComboBox<String> target = new JComboBox<>();
+    for (PlotInfo x : plots) target.addItem(x.name);
+    add.setEnabled(!plots.isEmpty());
+    target.setEnabled(false);
+    one.addActionListener(e -> { name.setEnabled(true); target.setEnabled(false); });
+    for (javax.swing.JRadioButton b : new javax.swing.JRadioButton[] {perQ, perO}) b.addActionListener(e -> { name.setEnabled(false); target.setEnabled(false); });
+    add.addActionListener(e -> { name.setEnabled(false); target.setEnabled(true); });
+    JPanel body = new JPanel(new java.awt.GridBagLayout());
+    java.awt.GridBagConstraints c = new java.awt.GridBagConstraints();
+    c.anchor = java.awt.GridBagConstraints.WEST;
+    c.insets = new java.awt.Insets(3, 0, 3, 10);
+    Object[][] rows = {{one, name}, {perQ, null}, {perO, null}, {add, target}};
+    for (int i = 0; i < rows.length; i++) {
+      c.gridy = i;
+      c.gridx = 0;
+      body.add((java.awt.Component) rows[i][0], c);
+      if (rows[i][1] != null) { c.gridx = 1; body.add((java.awt.Component) rows[i][1], c); }
+    }
+    final Object[] out = {null};
+    boolean ok = Ui.sheet("Plot selected", plural(n, "report", "reports") + ". A report without monitor gets one. An existing plot of the same name gets the curves.",
+        body, Ui.primary("Plot"), () -> one.isSelected() && name.getText().trim().isEmpty() ? "Enter the plot name." : null);
+    if (!ok) return null;
+    String mode = one.isSelected() ? "one" : perQ.isSelected() ? "quantity" : perO.isSelected() ? "object" : "add";
+    Object tp = null;
+    if (add.isSelected() && target.getSelectedIndex() >= 0) tp = plots.get(target.getSelectedIndex()).plot;
+    return new Object[] {mode, name.getText().trim(), tp};
+  }
+
   /** A page of the Reports window. label is the main button text, or null when there is nothing to do. job runs
    *  on the Swing thread and returns the work for the worker thread. reload runs after the data are read again. */
   static final class Page {
@@ -6891,6 +7761,8 @@ public class SimKit extends StarMacro {
     java.util.function.Supplier<java.util.function.Supplier<String>> job = () -> null;
     Runnable reload = () -> { };
     java.awt.Component focus;
+    /** Runs work in the worker thread of the window, then reads the data again (set by reportsMain). */
+    java.util.function.Consumer<java.util.function.Supplier<String>> exec;
   }
 
   /** A table for the Reports window. The client property "simkit.empty" holds the text shown when there is no row. */
@@ -7002,10 +7874,12 @@ public class SimKit extends StarMacro {
     };
     final Page std = stdPageOf(data, changed);
     final Page obj = objPage(data, names, qs, others, objs, changed);
-    final Page[] pages = {std, obj};
-    final String[] titles = {"Standard", "Per object"};
-    final String[] idle = {"Create reports", "Create reports"};
-    final String[] idleTip = {"Select a report to create.", "Select a quantity, a statistic and an object."};
+    final Page man = managePage(data, changed);
+    final Page[] pages = {man, std, obj};
+    final String[] titles = {"In this simulation", "Standard", "Per object"};
+    final String[] idle = {"Apply", "Create reports", "Create reports"};
+    final String[] idleTip = {"Change the objects of a report or the curves of a plot.", "Select a report to create.",
+        "Select a quantity, a statistic and an object."};
     final JLabel renameNote = new JLabel(" ");
     renameNote.setForeground(Ui.AMBER);
     final JButton renameLink = Ui.link("Fix in Names\u2026");
@@ -7072,6 +7946,8 @@ public class SimKit extends StarMacro {
       w.setDaemon(true);
       w.start();
     });
+    for (Page pg : pages) pg.exec = job -> run.get(0).accept(job);
+    if (data[0].reps.isEmpty()) cur[0] = 1;   // a simulation without reports opens on Standard
     go.addActionListener(e -> {
       final java.util.function.Supplier<String> job = pages[cur[0]].job.get();
       if (job != null) run.get(0).accept(job);
@@ -7093,7 +7969,8 @@ public class SimKit extends StarMacro {
     body.add(cards, BorderLayout.CENTER);
     ((java.awt.CardLayout) cards.getLayout()).show(cards, titles[cur[0]]);
     update[0].run();
-    if (std.focus != null) javax.swing.SwingUtilities.invokeLater(() -> std.focus.requestFocusInWindow());
+    final Page first = pages[cur[0]];
+    if (first.focus != null) javax.swing.SwingUtilities.invokeLater(() -> first.focus.requestFocusInWindow());
     return Ui.sheet("Reports", simTitle, body, go, null);
   }
 
@@ -7215,12 +8092,14 @@ public class SimKit extends StarMacro {
     }
 
     // 3 objects, grouped by type prefix (and by region when the boundaries are in several regions)
-    final java.util.function.Function<ObjTarget, String> kindOf = x -> x.region() ? "Regions" : x.kind.isEmpty() ? "Other surfaces" : x.kind;
+    final java.util.function.Function<ObjTarget, String> kindOf = x -> x.region() ? "Regions" : x.kind.isEmpty() ? "Other surfaces"
+        : x.kind.equals("derived") ? "Derived parts" : x.kind.equals("interface") ? "Interfaces" : x.kind;
     Set<String> bRegions = new HashSet<>();
     for (ObjTarget x : objs) if (!x.region()) bRegions.add(x.region);
     final boolean byRegion = bRegions.size() > 1;
     final java.util.function.Function<ObjTarget, String> groupOf = x -> x.region() || !byRegion ? kindOf.apply(x) : kindOf.apply(x) + "  ·  " + x.region;
-    final java.util.function.ToIntFunction<ObjTarget> rank = x -> x.region() ? 2 : x.kind.isEmpty() ? 1 : 0;
+    final java.util.function.ToIntFunction<ObjTarget> rank = x -> x.region() ? 3 : x.kind.equals("derived") ? 4 : x.kind.equals("interface") ? 2
+        : x.kind.isEmpty() ? 1 : 0;
     final List<ObjTarget> ordered = new ArrayList<>(objs);
     ordered.sort(java.util.Comparator.comparingInt(rank).thenComparing(kindOf::apply).thenComparing(x -> x.region));
     final Map<String, List<ObjTarget>> oGroups = new LinkedHashMap<>();
@@ -7793,7 +8672,7 @@ public class SimKit extends StarMacro {
       try {
         ScalarGlobalParameter p = findParam(m.pName);
         if (p == null) p = newParam(m.pName, "length", m.raw, m.units);
-        Reflect.invoke(m.q, "setDefinition", "${" + m.pName + "} * ${" + MESH_SCALE + "}");             // [U26]
+        Reflect.invoke(m.q, "setDefinition", "${" + m.pName + "} * ${" + MESH_SCALE + "}");
         done++;
         log.line(String.format("  %-26s %-14s = ${%s} * ${%s}   (%s = %s %s)", Fmt.cut(m.op + (m.control.isEmpty() ? "" : "/" + m.control), 26),
             m.what, m.pName, MESH_SCALE, m.pName, Fmt.num(m.raw), nm(m.units)));
@@ -8523,7 +9402,7 @@ public class SimKit extends StarMacro {
     }
     try {
       log.line("running " + p);
-      runMacroFile(p);                                                                                  // [U09]
+      runMacroFile(p);
       log.line("finished SimKitCalc");
     } catch (Throwable t) {
       log.na("SimKitCalc", t);
@@ -8711,6 +9590,19 @@ public class SimKit extends StarMacro {
       log.line("cht: default surfaces " + e.getKey() + ": " + n);
     }
     for (String[] k : preSubmitChecks()) log.line("cht: pre-submit " + k[0] + "  " + k[1]);
+    List<String> ifs = new ArrayList<>();
+    for (SelTarget x : selTargets()) if (x.kind.equals("interface")) ifs.add(x.name + " (" + x.region + ")");
+    log.line("cht: interface objects for reports: " + ifs);
+    try {   // an interface boundary as an object of a report
+      Object ib = null;
+      for (SelTarget x : selTargets()) if (x.kind.equals("interface") && ib == null) ib = x.o;
+      if (ib != null) {
+        MaxReport mr = sim.getReportManager().createReport(MaxReport.class);
+        mr.setFieldFunction((FieldFunction) objField("Temperature"));
+        log.line("cht: report on interface -> " + applyObjects(Collections.singletonList(mr), Collections.singleton(ib),
+            Collections.emptySet(), Collections.singletonList(ib)) + " objects " + namesList(partsOf(mr)));
+      }
+    } catch (Throwable t) { log.na("cht: report on interface", t); }
     log.line("cht: done (the simulation is not saved)");
   }
 
@@ -8879,7 +9771,62 @@ public class SimKit extends StarMacro {
             + (x.rename == null ? "" : " | rename to " + x.rename.name));
       }
     } catch (Throwable t) { log.na("obj: Reports window data", t); }
+    testManage();
     log.line("obj: done (the simulation is not saved)");
+  }
+
+  /** Batch test of the In this simulation page actions: objects of a report (remove one, add a plane section and an
+   *  interface boundary, Undo), curves of a plot (reverse, Undo) and Plot selected. In memory, not saved. */
+  void testManage() {
+    try {
+      ReportsData d = new ReportsData();
+      d.inv = inventory(new ObjState());
+      manageData(d);
+      Map<String, Integer> kinds = new TreeMap<>();
+      for (SelTarget x : d.targets) kinds.merge(x.group, 1, Integer::sum);
+      log.line("mgr: " + d.reps.size() + " reports, " + d.plotList.size() + " plots, objects by group " + kinds);
+      RepInfo two = null;
+      for (RepInfo x : d.reps) if (!x.formula && !x.query && x.parts.size() >= 2 && two == null) two = x;
+      if (two == null) { log.line("mgr: no report with 2 objects"); return; }
+      Object plane = null;
+      try {
+        plane = sim.getPartManager().createImplicitPart(new NeoObjectVector(sim.getRegionManager().getRegions().toArray()),
+            new star.base.neo.DoubleVector(new double[] {0, 0, 1}), new star.base.neo.DoubleVector(new double[] {0, 0, 0}));
+        ((NamedObject) plane).setPresentationName("x_mgr_plane");
+      } catch (Throwable t) { log.na("mgr: plane section", t); }
+      Object iface = null;
+      for (SelTarget x : selTargets()) if (x.kind.equals("interface") && iface == null) iface = x.o;
+      Set<Object> rem = Collections.newSetFromMap(new IdentityHashMap<>()), add = Collections.newSetFromMap(new IdentityHashMap<>());
+      rem.add(two.parts.get(0));
+      if (plane != null) add.add(plane);
+      if (iface != null) add.add(iface);
+      List<Object> order = new ArrayList<>(add);
+      log.line("mgr: " + two.name + " before: " + namesList(two.parts));
+      log.line("mgr: apply -> " + applyObjects(Collections.singletonList(two.report), add, rem, order));
+      log.line("mgr: " + two.name + " after: " + namesList(partsOf(two.report)));
+      lastUndo.run();
+      log.line("mgr: after undo: " + namesList(partsOf(two.report)));
+      Set<Object> allParts = Collections.newSetFromMap(new IdentityHashMap<>());
+      allParts.addAll(partsOf(two.report));
+      log.line("mgr: remove all -> " + applyObjects(Collections.singletonList(two.report), Collections.emptySet(), allParts, new ArrayList<>()));
+      log.line("mgr: after remove all: " + namesList(partsOf(two.report)));
+      lastUndo.run();
+      PlotInfo pl = null;
+      for (PlotInfo x : d.plotList) if (x.monitors.size() >= 2 && pl == null) pl = x;
+      if (pl != null) {
+        List<Object> less = new ArrayList<>(pl.monitors);
+        less.remove(less.size() - 1);
+        log.line("mgr: plot " + pl.name + " curves " + namesList(pl.monitors) + "; last removed -> " + applyCurves(pl.plot, less));
+        log.line("mgr: plot now " + namesList(new ArrayList<Object>(((MonitorPlot) pl.plot).getObjects())));
+        lastUndo.run();
+        log.line("mgr: plot after undo " + namesList(new ArrayList<Object>(((MonitorPlot) pl.plot).getObjects())));
+      }
+      List<Object> reps = new ArrayList<>();
+      for (RepInfo x : d.reps) if (!x.formula && reps.size() < 3) reps.add(x.report);
+      log.line("mgr: plot selected (one plot x_mgr_plot) -> " + plotSelected(reps, "one", "x_mgr_plot", null));
+      log.line("mgr: plot selected (per quantity) -> " + plotSelected(reps, "quantity", "", null));
+      log.line("mgr: plot selected (per object) -> " + plotSelected(reps, "object", "", null));
+    } catch (Throwable t) { log.na("mgr: test", t); }
   }
 
   // =====================================================================================================
@@ -8892,9 +9839,9 @@ public class SimKit extends StarMacro {
 
   static String cls(Object o) { return o == null ? "none" : o.getClass().getSimpleName(); }
 
-  /** [U09] Plays another macro file inside this session. */
+  /** Plays another macro file inside this session. */
   void runMacroFile(Path p) {
-    new StarScript(getActiveRootObject(), new java.io.File(p.toString())).play();                        // [U09]
+    new StarScript(getActiveRootObject(), new java.io.File(p.toString())).play();
   }
 
   static String reason(Throwable t) {
