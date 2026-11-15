@@ -700,3 +700,7 @@ C. RESULTS SO FAR
   (20 % to 200 %), card hits and the dashed new-run card scale with the zoom. Wording: "Tracker - project <name>",
   "Open folder", folders instead of cases, runs instead of versions. Rendered offline on a project with
   mesh_study_R002 and variants sub-folders (14 runs): headings with run counts, tree fitted at 26 %.
+  Tracker: "Group by folder" check box in the top bar (List view, shown when the project has sub-folders; remembered
+  per user, key trackerFlat). Unticked: no sub-folder headings, runs in run order, starred runs first; Fold all /
+  Unfold all folders are disabled. The filter field is shorter ("Filter runs..."). Rendered offline: flat list of
+  the 14 sample runs.

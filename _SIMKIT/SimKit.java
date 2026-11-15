@@ -2738,6 +2738,9 @@ public class SimKit extends StarMacro {
     final Map<String, Map<String, String>> ids = new HashMap<>();
     final Set<String> folded = new HashSet<>();                // folded sub-folders
     final Map<String, Integer> folderRuns = new HashMap<>();   // runs per sub-folder, without the hidden ones
+    final Map<String, String> folderById = new HashMap<>();    // sub-folder of each run, read in rebuild
+    /** Unticked: the list without sub-folder headings, in run order. Remembered per user. */
+    final javax.swing.JCheckBox groupBox = new javax.swing.JCheckBox("Group by folder", !"1".equals(Env.pref("trackerFlat")));
     final List<Item> view = new ArrayList<>();
     final JDialog w;
     final JTable table;
@@ -2895,14 +2898,14 @@ public class SimKit extends StarMacro {
       keyOn(table, "LEFT", () -> { Item it = current(); if (it != null && it.isFolder() && !folded.contains(it.folder)) toggleKeep(it.folder); });
       keyOn(table, "RIGHT", () -> { Item it = current(); if (it != null && it.isFolder() && folded.contains(it.folder)) toggleKeep(it.folder); });
 
-      filter = new JTextField(26) {
+      filter = new JTextField(18) {
         private static final long serialVersionUID = 1L;
         @Override protected void paintComponent(java.awt.Graphics g) {
           super.paintComponent(g);
           if (getText().isEmpty() && !isFocusOwner()) {
             g.setColor(pale);
             java.awt.Insets in = getInsets();
-            g.drawString("Filter by ID, comment, description...", in.left + 2, in.top + g.getFontMetrics().getAscent() + 1);
+            g.drawString("Filter runs...", in.left + 2, in.top + g.getFontMetrics().getAscent() + 1);
           }
         }
       };
@@ -3064,6 +3067,10 @@ public class SimKit extends StarMacro {
       viewButtons = new javax.swing.JToggleButton[] {listB, treeB};
       topLeft.add(listB);
       topLeft.add(treeB);
+      groupBox.setFocusable(false);
+      groupBox.setToolTipText("Untick to list all runs in run order; the tooltip of a run shows its file and folder");
+      groupBox.addActionListener(e -> { Env.setPref("trackerFlat", groupBox.isSelected() ? "" : "1"); rebuild(); });
+      topLeft.add(groupBox);
       topLeft.add(javax.swing.Box.createHorizontalStrut(10));
       topLeft.add(casesIn);
       topLeft.add(folderName);
@@ -3308,18 +3315,30 @@ public class SimKit extends StarMacro {
           vis = top;
           vis.addAll(rest);
         }
+        folderRuns.clear();
+        folderById.clear();
+        for (String[] r : e.getValue()) {
+          String fo = folderOf(r);
+          folderById.put(r[COL_ID], fo);
+          if (!hidden(r)) folderRuns.merge(fo, 1, Integer::sum);
+        }
+        if (!groupBox.isSelected()) {
+          for (String[] r : vis) view.add(new Item(cid, r));
+          continue;
+        }
         Map<String, List<String[]>> byFolder = new TreeMap<>();   // "" (the project folder) first, without a heading
-        for (String[] r : vis) byFolder.computeIfAbsent(folderOf(r), k -> new ArrayList<>()).add(r);
+        for (String[] r : vis) byFolder.computeIfAbsent(folderById.get(r[COL_ID]), k -> new ArrayList<>()).add(r);
         for (Map.Entry<String, List<String[]>> f : byFolder.entrySet()) {
           if (!f.getKey().isEmpty()) view.add(new Item(cid, null, f.getKey()));
           if (f.getKey().isEmpty() || !folded.contains(f.getKey()) || filtering()) for (String[] r : f.getValue()) view.add(new Item(cid, r));
         }
-        folderRuns.clear();
-        for (String[] r : e.getValue()) if (!hidden(r)) folderRuns.merge(folderOf(r), 1, Integer::sum);
       }
       model.fireTableDataChanged();
       rowHeights();
       for (int i = 0; i < view.size(); i++) if (sel.contains(view.get(i).key())) table.addRowSelectionInterval(i, i);
+      boolean anyFolder = false;
+      for (String fo : folderRuns.keySet()) anyFolder |= !fo.isEmpty();
+      groupBox.setVisible(anyFolder && "list".equals(leftView));
       if (runTree != null && "tree".equals(leftView)) runTree.relayout();
       summary.setText(nVers + (nVers == 1 ? " run" : " runs")
           + (nRunning > 0 ? "  ·  " + nRunning + " meshing or running" : ""));
@@ -3387,6 +3406,9 @@ public class SimKit extends StarMacro {
         runTree.repaint();
       }
       leftLayout.show(leftCards, v);
+      boolean anyFolder = false;
+      for (String fo : folderRuns.keySet()) anyFolder |= !fo.isEmpty();
+      groupBox.setVisible(anyFolder && v.equals("list"));
       if (viewButtons != null) viewButtons[v.equals("tree") ? 1 : 0].setSelected(true);
       Env.setPref("trackerView", v);
     }
@@ -4160,7 +4182,7 @@ public class SimKit extends StarMacro {
       ex.addActionListener(a -> { folded.clear(); rebuild(); });
       javax.swing.JMenuItem co = new javax.swing.JMenuItem("Fold all folders");
       co.addActionListener(a -> { for (String f : folderRuns.keySet()) if (!f.isEmpty()) folded.add(f); rebuild(); });
-      ex.setEnabled(folderRuns.size() > 1 || !folderRuns.containsKey(""));
+      ex.setEnabled(groupBox.isSelected() && (folderRuns.size() > 1 || !folderRuns.containsKey("")));
       co.setEnabled(ex.isEnabled());
       javax.swing.JMenuItem copy = new javax.swing.JMenuItem("Copy reference (ID and path)   Ctrl+C");
       copy.addActionListener(a -> copyLinks());
