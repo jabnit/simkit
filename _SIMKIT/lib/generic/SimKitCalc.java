@@ -590,7 +590,7 @@ public class SimKitCalc extends StarMacro {
   }
 
   /** Sidebar groups. MORE_GROUPS are listed under a "More" row. */
-  static final String[] MAIN_GROUPS = {"Set-up", "Mesh", "Time", "Flow", "Verification", "Heat transfer", "Fire test", "Combustion", "Units"};
+  static final String[] MAIN_GROUPS = {"Set-up", "Mesh", "Time", "Flow", "Heat transfer", "Fire test", "Combustion", "Units"};
   static final String[] MORE_GROUPS = {};
   static final String MORE_ROW = "(more)";
 
@@ -1218,10 +1218,10 @@ public class SimKitCalc extends StarMacro {
     buildInlet();
     buildTurbulence();
     buildWall();
+    buildGci();
     buildTimeStep();
     buildDimensionless();
     buildPipe();
-    buildGci();
     buildHeat();
     buildCombustion();
     buildUnits();
@@ -1418,7 +1418,7 @@ public class SimKitCalc extends StarMacro {
   }
 
   void buildGci() {
-    Form a = new Form(page("Verification", "Grid convergence (GCI)", "Discretisation uncertainty from three meshes (Celik et al. 2008)."),
+    Form a = new Form(page("Mesh", "Grid convergence (GCI)", "Discretisation uncertainty from three meshes (Celik et al. 2008)."),
         "Grid convergence (GCI)");
     a.in("N1", "Cells, fine mesh", "N_1", "cells", "18000").in("N2", "Cells, medium mesh", "N_2", "cells", "8000");
     a.in("N3", "Cells, coarse mesh", "N_3", "cells", "4500");
@@ -1495,19 +1495,28 @@ public class SimKitCalc extends StarMacro {
   }
 
   void buildUnits() {
-    Form a = new Form(page("Units", "Unit conversions", "Heat flux, power, pressure, speed and length (US and SI)."), "Unit conversions");
-    a.c("conv", "Conversion", Core.CONV_NAMES);
+    final int n = Core.CONV_NAMES.length, gal = n, scfm = n + 1;
+    String[] conv = Arrays.copyOf(Core.CONV_NAMES, n + 2);
+    conv[gal] = "US gal/h -> kg/s";
+    conv[scfm] = "SCFM -> kg/s";
+    Form a = new Form(page("Units", "Unit conversions",
+        "Heat flux, power, pressure, speed, length, liquid and gas mass flow (US and SI)."), "Unit conversions");
+    a.c("conv", "Conversion", conv);
     a.in("v", "Value", "", "", "1");
-    a.calc = fm -> Core.convert(fm.idx("conv"), fm.req("v"));
-
-    Form c = new Form(page("Units", "US gal/h to kg/s", "Liquid fuel mass flow from US gallons per hour."), "US gal/h to kg/s");
-    c.in("Q", "Volume flow", "Q", "US gal/h", "1").in("rho", "Liquid density", "\\rho", "kg/m^3", "800");
-    c.calc = fm -> Core.galPerHour(fm.req("Q"), fm.req("rho")).main("mdot");
-
-    Form d = new Form(page("Units", "SCFM to kg/s", "Gas mass flow from standard cubic feet per minute."), "SCFM to kg/s");
-    d.in("Q", "Standard volume flow", "Q", "SCFM", "10").in("TF", "Standard temperature", "T_{std}", "degF", "60");
-    d.in("ppsi", "Standard pressure", "p_{std}", "psi", "14.696").in("M", "Molar mass", "M", "kg/kmol", "28.965");
-    d.calc = fm -> Core.scfm(fm.req("Q"), fm.req("TF"), fm.req("ppsi"), fm.req("M")).main("mdot");
+    a.in("rho", "Liquid density", "\\rho", "kg/m^3", "800");
+    a.in("TF", "Standard temperature", "T_{std}", "degF", "60");
+    a.in("ppsi", "Standard pressure", "p_{std}", "psi", "14.696");
+    a.in("M", "Molar mass", "M", "kg/kmol", "28.965");
+    a.hidden = fm -> {
+      int k = fm.idx("conv");
+      return k == gal ? keys("TF", "ppsi", "M") : k == scfm ? keys("rho") : keys("rho", "TF", "ppsi", "M");
+    };
+    a.calc = fm -> {
+      int k = fm.idx("conv");
+      if (k == gal) return Core.galPerHour(fm.req("v"), fm.req("rho")).main("mdot");
+      if (k == scfm) return Core.scfm(fm.req("v"), fm.req("TF"), fm.req("ppsi"), fm.req("M")).main("mdot");
+      return Core.convert(k, fm.req("v"));
+    };
   }
 
   // =====================================================================================================

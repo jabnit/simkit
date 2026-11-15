@@ -151,8 +151,8 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
    4g. Calculators > Grid convergence (GCI) > From cases...: pick the folder holding 3 mesh-level cases (each run + Export
       results), select the 3 cases and the quantity -> N1..N3 and phi1..3 filled fine -> coarse; Compute.
    5. Export results: results/csv (plots, report values) and results/img (scenes).
-   6. Calculators: a sidebar lists the calculations (SET-UP, MESH, TIME & AVERAGING, VERIFICATION, HEAT
-      TRANSFER, FIRE TEST; "More (13) - specialist" opens flow numbers, combustion & spray, units). Type "mach" in
+   6. Calculators: a sidebar lists the calculations (SET-UP, MESH with GCI, TIME, FLOW, HEAT TRANSFER, FIRE TEST,
+      COMBUSTION, UNITS with one Unit conversions page). Type "mach" in
       Find: only Inlet & outlet values stays; clear it. Close and reopen: the last page comes back.
       Inlet & outlet values: air, 0.05 kg/s, D 0.05 m, 1 atm, 300 K -> U 21.64 m/s, p0_gauge 275.8 Pa, T0 300.23 K,
       Ma 0.062; choose "total pressure, gauge" with 275.83 -> 0.05 kg/s back. Orifice / nozzle flow: air 3 bar ->
@@ -639,3 +639,8 @@ C. RESULTS SO FAR
   cells_per_cpu_min 20000, cpu_step 8, cpus_max empty (estimates, to be tuned from scaling runs). Offline (rendered,
   9.8 M fluid + 2.6 M solid): Suggested 208; 640 CPUs -> "16 500 cells per CPU, poor scaling below 20 000" in amber.
   Not run: cellSplit in STAR-CCM+ (Linux GUI only), the window on Linux.
+  Calculators, groups: the Units pages (conversions, US gal/h to kg/s, SCFM to kg/s) are one page, Unit conversions;
+  the Conversion list holds the 12 factor conversions and the two mass flow conversions, and the inputs shown follow
+  the choice (liquid density for US gal/h; standard temperature, pressure and molar mass for SCFM). Grid convergence
+  (GCI) is in the Mesh group after y+ and prism layers; the Verification group is removed. Rendered offline: 1 US gal/h
+  at 800 kg/m3 gives 8.4120e-4 kg/s; 1 SCFM of air (60 degF, 14.696 psi, 28.965 kg/kmol) gives 5.7703e-4 kg/s.
