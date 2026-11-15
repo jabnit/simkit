@@ -7761,11 +7761,22 @@ public class SimKit extends StarMacro {
     return false;
   }
 
-  /** Sets the curves of a plot with its window closed; an open plot with curves left opens again. */
+  /** Sets the curves of a plot with its window closed. The window is not opened again: in 2402 a plot window that
+   *  opens from a macro selects its node in the tree, which fails while the tree is not loaded. */
   static void setCurves(MonitorPlot p, List<? extends Monitor> curves) {
-    boolean open = closePlot(p);
+    closePlot(p);
     p.setObjects(new ArrayList<Monitor>(curves));
-    if (open && !curves.isEmpty()) Reflect.tryCall(p, "open");
+  }
+
+  /** A new monitor plot with these curves, its window closed. createMonitorPlot(monitors, name) opens a window per
+   *  plot in 2402; an empty plot filled afterwards does not need one. */
+  MonitorPlot newPlot(List<? extends Monitor> monitors, String name) {
+    MonitorPlot p = sim.getPlotManager().createMonitorPlot();
+    p.setPresentationName(name);
+    closePlot(p);
+    p.setObjects(new ArrayList<Monitor>(monitors));
+    closePlot(p);
+    return p;
   }
 
   String deletePlots(List<Object> plots) {
@@ -7830,7 +7841,7 @@ public class SimKit extends StarMacro {
           added += k;
           log.line("  plot " + nm(have) + ": +" + k + " curve(s)");
         } else {
-          MonitorPlot p = sim.getPlotManager().createMonitorPlot(g.getValue(), g.getKey());
+          MonitorPlot p = newPlot(g.getValue(), g.getKey());
           if (!g.getKey().equals(nm(p))) p.setPresentationName(g.getKey());
           created.add(p);
           made++;
@@ -9688,7 +9699,7 @@ public class SimKit extends StarMacro {
       } catch (Throwable t) { log.na("monitors added to plot " + nm(have) + ", a new plot is made", t); }
     }
     try {
-      MonitorPlot p = sim.getPlotManager().createMonitorPlot(monitors, plot);
+      MonitorPlot p = newPlot(monitors, plot);
       if (!plot.equals(nm(p))) p.setPresentationName(plot);
       log.line("  monitors + plot " + plot + " (" + monitors.size() + " report(s))");
       return new Object[] {monitors, p};

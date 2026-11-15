@@ -824,3 +824,8 @@ C. RESULTS SO FAR
   opened again when it keeps curves (closePlot, setCurves; ViewObject.isOpen/close/open); deleteReports deletes the
   plots it leaves without curves; monitorsAndPlot replaces an existing plot without curves by a new one. Batch: cyc:
   create all, delete reports, delete plots, create again; delete reports only, plots left, create again.
+  2402 (Linux): createMonitorPlot(monitors, name) opens a window per plot; each window selects its node in the
+  Simulation tree, which throws an NPE (SingleView.selectNodes) when the tree is not loaded yet (sim just opened).
+  The reports and plots were made. Plots are now made by newPlot: createMonitorPlot() empty, name, curves, window
+  closed; setCurves does not open a window again. 21.04: curves and names unchanged (SKT126). To check on 2402: no
+  plot tab opens and no dialog after Create in Predefined right after opening the sim.
