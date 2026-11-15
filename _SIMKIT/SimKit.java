@@ -6281,8 +6281,71 @@ public class SimKit extends StarMacro {
     return f.getObjects().isEmpty() && f.getGroupsManager().getObjects().isEmpty();
   }
 
+  /** Removes an empty folder: Ungroup as in the tree (its own groups manager), else removeObjects on the parent. */
   void dropFolder(star.base.neo.ClientServerObjectGroupManager gm, Object g) throws Exception {
-    Reflect.invoke(gm, "removeObjects", (Object) new star.base.neo.ClientServerObject[] {(star.base.neo.ClientServerObject) g});
+    try { ((star.base.neo.ClientServerObjectGroup) g).getGroupsManager().unGroupObjects(); } catch (Throwable t) { /* not available */ }
+    if (gm.getObjects().contains(g)) Reflect.invoke(gm, "removeObjects", (Object) new star.base.neo.ClientServerObject[] {(star.base.neo.ClientServerObject) g});
+  }
+
+  /** Removes the folder at path when it is empty, then its parent folders while they are empty. */
+  void pruneUp(Object manager, String path) {
+    try {
+      star.base.neo.ClientServerObjectGroupManager top = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(manager, "getGroupsManager");
+      for (String p = path; !p.isEmpty(); p = p.contains("/") ? p.substring(0, p.lastIndexOf('/')) : "") {
+        star.base.neo.ClientServerObjectGroupManager at = top;
+        Object f = null;
+        star.base.neo.ClientServerObjectGroupManager parent = top;
+        for (String part : p.split("/")) {
+          f = null;
+          for (Object g : at.getObjects()) if (part.equals(nm(g).replace("/", "∕")) && g instanceof star.base.neo.ClientServerObjectGroup) f = g;
+          if (f == null) break;
+          parent = at;
+          at = ((star.base.neo.ClientServerObjectGroup) f).getGroupsManager();
+        }
+        if (f == null || !emptyFolder(f)) return;
+        dropFolder(parent, f);
+        log.line("  removed empty folder " + p + " (" + nm(manager) + ")");
+      }
+    } catch (Throwable t) {
+      log.na("empty folder " + path, t);
+    }
+  }
+
+  /** Folders of objects before they are deleted, for pruneUp afterwards: {manager, path}. */
+  List<Object[]> foldersOf(Object manager, List<?> objs) {
+    List<Object[]> out = new ArrayList<>();
+    try {
+      star.base.neo.ClientServerObjectGroupManager gm = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(manager, "getGroupsManager");
+      for (Object o : objs) {
+        String p = folderPath(gm, o);
+        if (!p.isEmpty()) out.add(new Object[] {manager, p});
+      }
+    } catch (Throwable t) { /* no folders */ }
+    return out;
+  }
+
+  void pruneAll(List<Object[]> folders) {
+    folders.sort((a, b) -> ((String) b[1]).length() - ((String) a[1]).length());   // deepest first
+    Set<String> done = new HashSet<>();
+    for (Object[] f : folders) if (done.add(nm(f[0]) + "|" + f[1])) pruneUp(f[0], (String) f[1]);
+  }
+
+  /** After an action of the Reports window: closes the windows of the plots it made (STAR-CCM+ 2310 opens each new
+   *  plot) and folds back the tree nodes it expanded. Worker thread. */
+  void settleGui(Set<Object> plotsBefore, Set<String> treeBefore) {
+    if (!gui) return;
+    final List<Object> made = new ArrayList<>();
+    try { for (Object p : sim.getPlotManager().getObjects()) if (!plotsBefore.contains(p)) made.add(p); } catch (Throwable t) { /* none */ }
+    if (made.isEmpty() && treeBefore == null) return;
+    Thread t = new Thread(() -> {
+      for (int ms : new int[] {500, 1000, 1500}) {   // the windows open shortly after the macro call returns
+        try { Thread.sleep(ms); } catch (InterruptedException e) { return; }
+        for (Object p : made) closePlot(p);
+        Ui.restoreTree(treeBefore);
+      }
+    }, "SimKit settle");
+    t.setDaemon(true);
+    t.start();
   }
 
   /** Opens the Reports window. In batch, creates the standard reports that can be made. */
@@ -7622,6 +7685,12 @@ public class SimKit extends StarMacro {
     Set<Object> emptied = Collections.newSetFromMap(new IdentityHashMap<>());   // plots that lose all their curves
     List<Object> kept = new ArrayList<>();                                         // reports kept with their monitors
     List<String> keptWhy = new ArrayList<>();
+    List<Object[]> folders = new ArrayList<>(foldersOf(sim.getReportManager(), reports));
+    List<Object> monsAll = new ArrayList<>(), plotsAll = new ArrayList<>();
+    for (Object m : sim.getMonitorManager().getObjects()) if (m instanceof ReportMonitor && reports.contains(Reflect.tryCall(m, "getReport"))) monsAll.add(m);
+    for (Object p : sim.getPlotManager().getObjects()) if (p instanceof MonitorPlot) for (Object m : monsAll) if (((MonitorPlot) p).getObjects().contains(m)) { plotsAll.add(p); break; }
+    folders.addAll(foldersOf(sim.getMonitorManager(), monsAll));
+    folders.addAll(foldersOf(sim.getPlotManager(), plotsAll));
     for (Object r : deleteOrder(reports)) {
       try {
         String uses = null;   // a kept report uses this one: it stays too
@@ -7671,6 +7740,7 @@ public class SimKit extends StarMacro {
     List<Object> gone = new ArrayList<>();
     for (Object p : emptied) if (((MonitorPlot) p).getObjects().isEmpty()) gone.add(p);
     if (!gone.isEmpty()) pl = " " + deletePlots(gone);
+    pruneAll(folders);   // folders left empty, and their parents
     return plural(nr, "report", "reports") + " deleted" + (nm > 0 ? ", " + plural(nm, "monitor", "monitors") : "")
         + (nc > 0 ? ", " + plural(nc, "stopping criterion", "stopping criteria") : "") + "." + pl
         + (keptWhy.isEmpty() ? "" : " Kept: " + String.join("; ", keptWhy) + ".") + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
@@ -7780,12 +7850,14 @@ public class SimKit extends StarMacro {
 
   String deletePlots(List<Object> plots) {
     java.util.Vector<StarPlot> ps = new java.util.Vector<>();   // Vector: deletePlots takes a Vector in 2402, a List in 21.04
+    List<Object[]> folders = foldersOf(sim.getPlotManager(), plots);
     for (Object p : plots) { closePlot(p); ps.add((StarPlot) p); }
     try {
       List<String> names = new ArrayList<>();
       for (StarPlot p : ps) names.add(nm(p));
       sim.getPlotManager().deletePlots(ps);
       log.line("  deleted plots " + String.join(", ", names));
+      pruneAll(folders);
       lastUndo = null;
       return plural(ps.size(), "plot", "plots") + " deleted.";
     } catch (Throwable t) {
@@ -8954,10 +9026,14 @@ public class SimKit extends StarMacro {
       for (JButton t : tabs) t.setEnabled(false);
       done.setForeground(Ui.MUTED);
       done.setText("Working…");
+      final Set<String> treeBefore = Ui.treeState();   // expanded nodes of the STAR-CCM+ tree, folded back after
       Thread w = new Thread(() -> {
         String m;
         ReportsData nd;
+        Set<Object> plotsBefore = Collections.newSetFromMap(new IdentityHashMap<>());
+        try { plotsBefore.addAll(sim.getPlotManager().getObjects()); } catch (Throwable t) { /* none */ }
         try { m = job.get(); } catch (Throwable t) { m = "Failed: " + reason(t); }
+        settleGui(plotsBefore, treeBefore);
         try { nd = reload.get(); } catch (Throwable t) { nd = data[0]; }
         final String msg = m;
         final ReportsData fd = nd;
@@ -10977,6 +11053,12 @@ public class SimKit extends StarMacro {
         List<String> left = new ArrayList<>();
         for (Object p : sim.getPlotManager().getObjects()) left.add(nm(p));
         log.line("cyc: plots left " + left);
+        List<String> fl = new ArrayList<>();
+        for (Object m : new Object[] {sim.getReportManager(), sim.getMonitorManager(), sim.getPlotManager()}) {
+          star.base.neo.ClientServerObjectGroupManager gm = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(m, "getGroupsManager");
+          for (Object g : gm.getObjects()) fl.add(nm(m) + ":" + nm(g));
+        }
+        log.line("cyc: folders left " + fl);
         one = stdPlan();
         for (StdReport x : one) x.on = x.why == null;
         log.line("cyc: create after reports only -> " + stdApply(one));
@@ -11882,6 +11964,71 @@ public class SimKit extends StarMacro {
           g2.drawString(detail, x, (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
         }
         g2.dispose();
+      }
+    }
+
+    /** Keys ("A / B / C") of the expanded nodes of the trees in the STAR-CCM+ windows, or null when not readable.
+     *  Swing thread. The simulation tree has no API: its Swing trees are read. */
+    static Set<String> treeState() {
+      if (GraphicsEnvironment.isHeadless()) return null;
+      Set<String> out = new HashSet<>();
+      try {
+        for (java.awt.Window w : java.awt.Window.getWindows()) if (w.isShowing()) walkTrees(w, out, null);
+      } catch (Throwable t) {
+        return null;
+      }
+      return out;
+    }
+
+    /** Folds the tree nodes that are expanded now and were not in 'before'. Any thread; runs on the Swing thread. */
+    static void restoreTree(final Set<String> before) {
+      if (before == null) return;
+      javax.swing.SwingUtilities.invokeLater(() -> {
+        try {
+          for (java.awt.Window w : java.awt.Window.getWindows()) if (w.isShowing()) walkTrees(w, null, before);
+        } catch (Throwable t) { /* the tree is the window's own: never fail the tool for it */ }
+      });
+    }
+
+    /** The name a tree node shows (a NetBeans node: its display name). */
+    static String nodeName(Object node) {
+      Object d = Reflect.tryCall(node, "getDisplayName");
+      return String.valueOf(d != null ? d : node).replaceAll("<[^>]*>", "").trim();
+    }
+
+    static String pathKey(javax.swing.tree.TreePath p) {
+      StringBuilder b = new StringBuilder();
+      for (Object o : p.getPath()) b.append(b.length() == 0 ? "" : " / ").append(nodeName(o));
+      return b.toString();
+    }
+
+    /** Reads (collect) or folds back (before) the expanded nodes of JTrees and NetBeans Outlines (tree tables). */
+    static void walkTrees(java.awt.Container c, Set<String> collect, Set<String> before) {
+      for (java.awt.Component k : c.getComponents()) {
+        if (k instanceof javax.swing.JTree) {
+          javax.swing.JTree tree = (javax.swing.JTree) k;
+          for (int r = tree.getRowCount() - 1; r >= 0; r--) {   // from the bottom: the rows above keep their index
+            javax.swing.tree.TreePath p = tree.getPathForRow(r);
+            if (p == null || !tree.isExpanded(p)) continue;
+            if (collect != null) collect.add(pathKey(p));
+            else if (!before.contains(pathKey(p))) tree.collapsePath(p);
+          }
+        } else if (k instanceof JTable && k.getClass().getName().contains("Outline")) {
+          JTable o = (JTable) k;
+          Object cache = Reflect.tryCall(o, "getLayoutCache");
+          java.lang.reflect.Method row = null;
+          try { if (cache != null) row = cache.getClass().getMethod("getPathForRow", int.class); } catch (Throwable t) { /* not an Outline */ }
+          for (int r = o.getRowCount() - 1; r >= 0 && row != null; r--) {
+            Object p;
+            try { p = row.invoke(cache, r); } catch (Throwable t) { p = null; }
+            if (!(p instanceof javax.swing.tree.TreePath) || !Boolean.TRUE.equals(Reflect.tryCall(o, "isExpanded", p))) continue;
+            String key = pathKey((javax.swing.tree.TreePath) p);
+            if (collect != null) collect.add(key);
+            else if (!before.contains(key)) Reflect.tryCall(o, "collapsePath", p);
+          }
+        } else if (k instanceof java.awt.Container) {
+          walkTrees((java.awt.Container) k, collect, before);
+        }
       }
     }
 

@@ -848,3 +848,10 @@ C. RESULTS SO FAR
   file; an old file with a criterion column is read by header name, the column is ignored). Deleting reports still
   deletes the criteria on their monitors (made by earlier versions or by hand), with the check.
   Checked on Linux (STAR-CCM+ 2310): delete all in Existing, then Create in Predefined: no crash.
+  Folders left empty by a delete are removed, with their empty parents, in the report, monitor and plot trees:
+  deleteReports and deletePlots record the folders of what they delete (foldersOf) and prune them after (pruneUp,
+  deepest first). An empty folder is removed with Ungroup (its own groups manager, unGroupObjects), else
+  removeObjects. Batch cyc: no folder left after deleting all reports.
+  After an action of the Reports window (settleGui): the windows of the plots it made are closed (2310 opens each new
+  plot) and the tree nodes it expanded are folded back (Ui.treeState before, Ui.restoreTree at 0.5, 1.5 and 3 s);
+  nodes expanded before stay expanded. GUI only: to check on 2310.
