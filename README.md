@@ -61,4 +61,4 @@ The GUI test and the expected results are in `_SIMKIT/TESTING.txt`.
 
 ## Licence
 
-Not yet selected. Until a `LICENSE` file is added, all rights are reserved.
+[The Unlicense](LICENSE): public domain. Anyone may use, copy, modify, fork and distribute SimKit for any purpose, without crediting the origin. No warranty.

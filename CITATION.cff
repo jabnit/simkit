@@ -15,6 +15,6 @@ keywords:
   - CFD
   - simulation workflow
   - macros
-# TODO(owner): add a `license:` field once a licence has been chosen (see README "Licence").
+license: Unlicense
 authors:
   - name: "jabnit"
