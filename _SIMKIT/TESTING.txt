@@ -834,3 +834,12 @@ C. RESULTS SO FAR
   SingleView.selectNodes (RootProcessNode.getChildrenNodes null). The reports and plots were made. Cause: the tree
   collapse after Create (Ui.collapseInTree, Swing timers at 300/1000/2500 ms, nodes matched by name, and plot names
   now equal the Predefined folder names). Removed: collapseInTree, collapse, nodeName, namesOf and their three calls.
+  Linux (2310), video: after Delete in Existing, Stopping Criteria still lists stop_r_mdot_imbalance_pct and
+  stop_r_T_out_mfavg although deleteSolverStoppingCriterion returned without error; their monitors and reports were
+  deleted. The next stopping criterion created (Create in Predefined) -> server SIGSEGV in
+  SolverStoppingCriterionManager::getProperties, then on every later read. Change: deleteReports deletes the stopping
+  criteria of a report first and checks they are gone (deleteCriterion: deleteSolverStoppingCriterion, then
+  removeObjects); when one stays, the report and its monitors are kept and named in the result ("delete it in
+  STAR-CCM+ first"), and so are the reports it uses (usesReport). 21.04: criteria are deleted, nothing kept.
+  To check on 2310: delete Mass balance in Existing; the result says kept or deleted; Stopping Criteria shows no
+  criterion without its monitor; Create in Predefined gives no SIGSEGV.

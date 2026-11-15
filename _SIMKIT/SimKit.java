@@ -7654,16 +7654,32 @@ public class SimKit extends StarMacro {
   String deleteReports(List<Object> reports) {
     int nr = 0, nm = 0, nc = 0, bad = 0;
     Set<Object> emptied = Collections.newSetFromMap(new IdentityHashMap<>());   // plots that lose all their curves
+    List<Object> kept = new ArrayList<>();                                         // reports kept with their monitors
+    List<String> keptWhy = new ArrayList<>();
     for (Object r : deleteOrder(reports)) {
       try {
+        String uses = null;   // a kept report uses this one: it stays too
+        for (Object k : kept) if (usesReport(k, r)) uses = nm(k);
+        if (uses != null) { kept.add(r); keptWhy.add(nm(r) + " (used by " + uses + ")"); continue; }
         List<Monitor> mons = new ArrayList<>();
         for (Object m : sim.getMonitorManager().getObjects()) if (m instanceof ReportMonitor && Reflect.tryCall(m, "getReport") == r) mons.add((Monitor) m);
+        // stopping criteria first; a criterion that stays (STAR-CCM+ 2310 keeps it) keeps its monitor and report:
+        // a criterion without its monitor crashes the server when the criteria are read
+        String stays = null;
         for (Monitor m : mons) {
           for (Object c : new ArrayList<>(sim.getSolverStoppingCriterionManager().getObjects())) {
             if (Reflect.tryCall(c, "getMonitor") != m) continue;
-            sim.getSolverStoppingCriterionManager().deleteSolverStoppingCriterion((SolverStoppingCriterion) c);
-            nc++;
+            if (deleteCriterion(c)) nc++;
+            else stays = nm(c);
           }
+        }
+        if (stays != null) {
+          kept.add(r);
+          keptWhy.add(nm(r) + " (its stopping criterion " + stays + " could not be deleted: delete it in STAR-CCM+ first)");
+          log.line("  kept report " + nm(r) + ": stopping criterion " + stays + " is still in the simulation");
+          continue;
+        }
+        for (Monitor m : mons) {
           for (Object p : sim.getPlotManager().getObjects()) {
             if (!(p instanceof MonitorPlot) || !((MonitorPlot) p).getObjects().contains(m)) continue;
             List<Monitor> keep = new ArrayList<>(((MonitorPlot) p).getObjects());
@@ -7690,7 +7706,32 @@ public class SimKit extends StarMacro {
     for (Object p : emptied) if (((MonitorPlot) p).getObjects().isEmpty()) gone.add(p);
     if (!gone.isEmpty()) pl = " " + deletePlots(gone);
     return plural(nr, "report", "reports") + " deleted" + (nm > 0 ? ", " + plural(nm, "monitor", "monitors") : "")
-        + (nc > 0 ? ", " + plural(nc, "stopping criterion", "stopping criteria") : "") + "." + pl + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
+        + (nc > 0 ? ", " + plural(nc, "stopping criterion", "stopping criteria") : "") + "." + pl
+        + (keptWhy.isEmpty() ? "" : " Kept: " + String.join("; ", keptWhy) + ".") + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
+  }
+
+  /** Deletes a stopping criterion and checks that it is gone; tries removeObjects when deleteSolverStoppingCriterion
+   *  leaves it in the simulation. Returns true when it is gone. */
+  boolean deleteCriterion(Object c) {
+    String name = nm(c);
+    try { sim.getSolverStoppingCriterionManager().deleteSolverStoppingCriterion((SolverStoppingCriterion) c); }
+    catch (Throwable t) { log.na("delete stopping criterion " + name, t); }
+    if (!criterionThere(c, name)) return true;
+    try { Reflect.invoke(sim.getSolverStoppingCriterionManager(), "removeObjects", (Object) new star.base.neo.ClientServerObject[] {(star.base.neo.ClientServerObject) c}); }
+    catch (Throwable t) { log.na("remove stopping criterion " + name, t); }
+    return !criterionThere(c, name);
+  }
+
+  boolean criterionThere(Object c, String name) {
+    for (Object o : sim.getSolverStoppingCriterionManager().getObjects()) if (o == c || name.equals(nm(o))) return true;
+    return false;
+  }
+
+  /** True when report a uses report b: a formula with ${b}, or a mean (statistics) report of the monitor of b. */
+  static boolean usesReport(Object a, Object b) {
+    Object def = Reflect.tryCall(a, "getDefinition");
+    Object mon = Reflect.tryCall(a, "getMonitor");
+    return (def instanceof String && ((String) def).contains("${" + nm(b) + "}")) || (mon != null && Reflect.tryCall(mon, "getReport") == b);
   }
 
   /** The reports in an order STAR-CCM+ accepts for deletion: a report that uses another one of the list (formula with
