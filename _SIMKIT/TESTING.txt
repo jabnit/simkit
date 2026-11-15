@@ -619,3 +619,13 @@ C. RESULTS SO FAR
   11c: "bsub.starccmp --input=R002_finer.sim --cpus=4 --queue=mc_all_par --version=2606 --fairshare_group=ug_st_std
   --project=OTHER_ESA". Offline (OptTest): options added as expected. Not run: a submission on the cluster with
   SimKit, the window on Linux.
+  Run on cluster window after a Fable 5.2 review (user: works on the cluster, window below the GUI standard): window in
+  submitWindow (static, rendered offline: SubmitShot); sections Job / Command / Pre-submit check; CPUs with live queue
+  and red validation, Up/Down; last submission line (submissions.csv + run.txt last_job); More options folded with a
+  summary of non-default options, remembered open/closed; command in a selectable monospace area with Copy (Copied for
+  1.5 s); team settings line, red and blocking when project, command or release is missing; checks in a table (Warning /
+  Not read pills, names in the tooltip, 5 rows visible); "Save and submit"; Esc closes (the form fields are not cleared).
+  After the terminal starts, the launcher's log is read for 90 s: "Job <n> is submitted to queue <q>" -> status line +
+  run.txt last_job; "Job not submitted" / "Request aborted" / "command not found" -> red status line. Pre-submit texts:
+  sentence case, plurals, "Fix in Names.", "na" state. SKT92: exit codes 0 (08b/08c skipped: STAR-CCM+ window open);
+  07g pre-submit lines with the new texts; 11c command unchanged. Not run: the window and the job number on Linux.

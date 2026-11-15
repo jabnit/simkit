@@ -1306,14 +1306,18 @@ public class SimKit extends StarMacro {
    *  {queue}, {version}, {fairshare}, {project}. */
   String[] submitCommand(Path simFile, int ncpus, Map<String, String> opt) {
     Map<String, String> m = clusterConfig();
+    return submitCommand(m, m.getOrDefault("version", "").isEmpty() ? starRelease() : m.get("version"), simFile, ncpus, opt);
+  }
+
+  /** The command from the cluster settings and the release (no file read, no STAR-CCM+ call). */
+  static String[] submitCommand(Map<String, String> m, String ver, Path simFile, int ncpus, Map<String, String> opt) {
     String q = ncpus <= 1 ? m.get("queue_serial") : m.get("queue_parallel");
     String path = simFile.toString().replace('\\', '/');
     if (path.contains(" ")) path = "'" + path + "'";
     String file = simFile.getFileName().toString();
     if (file.contains(" ")) file = "'" + file + "'";
-    String ver = m.getOrDefault("version", "").isEmpty() ? starRelease() : m.get("version");
-    String cmd = m.get("command").replace("{sim}", path).replace("{file}", file).replace("{ncpus}", String.valueOf(ncpus))
-        .replace("{queue}", q).replace("{version}", ver).replace("{fairshare}", m.getOrDefault("fairshare", ""))
+    String cmd = m.getOrDefault("command", "").replace("{sim}", path).replace("{file}", file).replace("{ncpus}", String.valueOf(ncpus))
+        .replace("{queue}", q == null ? "" : q).replace("{version}", ver == null ? "" : ver).replace("{fairshare}", m.getOrDefault("fairshare", ""))
         .replace("{project}", m.getOrDefault("project", ""));
     StringBuilder more = new StringBuilder();
     for (String k : new String[] {"mem", "estimated_runtime"}) {
@@ -1367,150 +1371,55 @@ public class SimKit extends StarMacro {
     return script;
   }
 
+  /** What the Run on cluster window returns. */
+  static final class SubmitChoice {
+    int cpus;
+    final Map<String, String> opt = new HashMap<>();   // mem, estimated_runtime, jobname, result_dir, send_completed_notification
+    boolean moreOpen;
+    String command = "", queue = "";
+  }
+
   /** Run on cluster (Linux only: the cluster is reached from the Linux machines): saves the file in place (with the
-   *  _iter_ naming), shows the team's command for the CPUs chosen, then runs it in a terminal opened in the file's folder. */
+   *  _iter_ naming), runs the team's command in a terminal opened in the file's folder, then reads the job number from
+   *  the launcher's output. */
   void toolSubmit() throws IOException {
     if (Fs.WINDOWS) throw new Cancel("Run on cluster works on the Linux machines only (bsub is not reachable from Windows). Nothing done.");
     final CaseInfo c = requireCase();
     final Path f = Paths.get(sessionPath()).toAbsolutePath().normalize();
-    String pc = Env.pref("ncpus");
-    final int cpus0 = pc != null && pc.matches("[0-9]+") ? Integer.parseInt(pc) : 1;
-    final int[] cpus = {cpus0};
     final List<String[]> checks = preSubmitChecks();   // read here (STAR calls), shown in the window
     checks.sort((p, q) -> Boolean.compare("ok".equals(p[0]), "ok".equals(q[0])));   // warnings first
-    for (String[] k : checks) log.line("  pre-submit " + k[0] + "  " + k[1]);
+    for (String[] k : checks) log.line("  pre-submit " + k[0] + "  " + k[1] + (k.length > 2 ? " (" + k[2] + ")" : ""));
     final Map<String, String> cfg = clusterConfig();
     final String release = cfg.getOrDefault("version", "").isEmpty() ? starRelease() : cfg.get("version");
-    final Map<String, String> opt = new HashMap<>();
-    Boolean ok = Ui.edt(() -> {
-      final JTextField n = new JTextField(String.valueOf(cpus0), 5);
-      final JLabel queue = Ui.muted(" "), cmd = new JLabel(" ");
-      final String memPref = Env.pref("clusterMem"), rtPref = Env.pref("clusterRuntime");
-      final JTextField mem = new JTextField(memPref != null && memPref.matches("[0-9]+") ? memPref : cfg.getOrDefault("mem", "1000"), 6);
-      final JTextField rt = new JTextField(rtPref != null && rtPref.matches("[0-9]+") ? rtPref : cfg.getOrDefault("estimated_runtime", "360"), 6);
-      final JTextField jobname = Ui.hintField("", "launcher default: STARCCMP_<file>", 22);
-      final JTextField resdir = Ui.hintField("", "launcher default: the file's folder", 22);
-      final javax.swing.JCheckBox mail = new javax.swing.JCheckBox("Send an email when the job is completed", "1".equals(Env.pref("clusterMail")));
-      mail.setFont(mail.getFont().deriveFont(Font.PLAIN));
-      final Runnable readOpt = () -> {
-        opt.put("mem", mem.getText().trim());
-        opt.put("estimated_runtime", rt.getText().trim());
-        opt.put("jobname", jobname.getText().trim());
-        opt.put("result_dir", resdir.getText().trim());
-        opt.put("send_completed_notification", mail.isSelected() ? "1" : "");
-      };
-      cmd.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-      cmd.setForeground(new java.awt.Color(0x33, 0x3B, 0x45));
-      final Runnable upd = () -> {
-        String t = n.getText().trim();
-        int k = t.matches("[0-9]{1,5}") ? Integer.parseInt(t) : 0;
-        readOpt.run();
-        String[] sc = submitCommand(f, Math.max(1, k), opt);
-        queue.setText(k <= 0 ? "whole number" : (k == 1 ? "serial" : "parallel") + "  \u00B7  queue " + sc[1]);
-        cmd.setText("<html><div style='width:520px'>" + Html.esc(sc[0]) + "</div></html>");
-      };
-      for (JTextField tf : new JTextField[] {n, mem, rt, jobname, resdir}) {
-        tf.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-          @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
-          @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
-          @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
-        });
-      }
-      mail.addActionListener(e -> upd.run());
-      upd.run();
-      JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
-      row.add(new JLabel("CPUs"));
-      row.add(n);
-      row.add(queue);
-      JPanel body = new JPanel();
-      body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
-      JButton copy = Ui.link("Copy");
-      JButton go = Ui.primary("Submit");
-      copy.addActionListener(e -> {
-        String t = n.getText().trim();
-        if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return;
-        readOpt.run();
-        copyText(submitCommand(f, Integer.parseInt(t), opt)[0]);
-        copy.setText("Copied");
-      });
-      String base = f.getFileName().toString().replaceFirst("\\.sim$", "");
-      JPanel cmdRow = new JPanel(new BorderLayout(10, 0));
-      cmdRow.add(cmd, BorderLayout.CENTER);
-      cmdRow.add(copy, BorderLayout.EAST);
-      // less used options of the launcher, folded
-      JPanel more = new JPanel(new GridLayout(0, 2, 8, 4));
-      more.add(new JLabel("Memory per slot [MB]"));
-      more.add(wrapLeft(mem));
-      more.add(new JLabel("Estimated run time [h]"));
-      more.add(wrapLeft(rt));
-      more.add(new JLabel("Job name"));
-      more.add(wrapLeft(jobname));
-      more.add(new JLabel("Copy results to folder"));
-      more.add(wrapLeft(resdir));
-      JPanel morePane = new JPanel(new BorderLayout(0, 4));
-      morePane.add(more, BorderLayout.CENTER);
-      morePane.add(mail, BorderLayout.SOUTH);
-      morePane.setBorder(BorderFactory.createEmptyBorder(0, 16, 0, 0));
-      morePane.setVisible(false);
-      final JButton moreLink = Ui.link("More options \u25b8");
-      moreLink.setToolTipText("Memory, run time, job name, result folder, email");
-      moreLink.addActionListener(e -> {
-        morePane.setVisible(!morePane.isVisible());
-        moreLink.setText(morePane.isVisible() ? "More options \u25be" : "More options \u25b8");
-        java.awt.Window w = javax.swing.SwingUtilities.getWindowAncestor(moreLink);
-        if (w != null) w.pack();
-      });
-      JLabel team = Ui.muted("Project " + cfg.getOrDefault("project", "") + "  \u00b7  fairshare group " + cfg.getOrDefault("fairshare", "")
-          + "  \u00b7  STAR-CCM+ " + (release.isEmpty() ? "version not read" : release) + "  (config/cluster.csv)");
-      for (javax.swing.JComponent k : new javax.swing.JComponent[] {row, cmdRow, team,
-          Ui.muted("Returns as " + base + ITER_SEP + "<n>.sim"), moreLink, morePane}) {
-        k.setAlignmentX(0f);
-        body.add(k);
-        body.add(javax.swing.Box.createVerticalStrut(6));
-      }
-      int warn = 0;
-      for (String[] k : checks) if (!"ok".equals(k[0])) warn++;
-      JLabel ch = new JLabel("Pre-submit check: " + (checks.size() - warn) + " ok, " + warn + " warning(s). Submission is not blocked.");
-      ch.setFont(ch.getFont().deriveFont(Font.BOLD, 12f));
-      ch.setBorder(BorderFactory.createEmptyBorder(8, 0, 2, 0));
-      ch.setAlignmentX(0f);
-      body.add(ch);
-      for (String[] k : checks) {
-        JLabel l = new JLabel(("ok".equals(k[0]) ? "\u2713  " : "!  ") + k[1]);
-        l.setForeground("ok".equals(k[0]) ? new java.awt.Color(0x2E, 0x6B, 0x2E) : new java.awt.Color(0x8A, 0x5A, 0x00));
-        l.setAlignmentX(0f);
-        body.add(l);
-      }
-      return Ui.sheet("Run on cluster", f.getFileName().toString(), body, go, () -> {
-        String t = n.getText().trim();
-        if (!t.matches("[0-9]{1,5}") || Integer.parseInt(t) < 1) return "CPUs: 1 or more.";
-        if (!mem.getText().trim().matches("[0-9]{1,7}")) return "Memory per slot: a whole number of MB.";
-        if (!rt.getText().trim().matches("[0-9]{1,5}")) return "Estimated run time: a whole number of hours.";
-        cpus[0] = Integer.parseInt(t);
-        readOpt.run();
-        Env.setPref("clusterMem", mem.getText().trim());
-        Env.setPref("clusterRuntime", rt.getText().trim());
-        Env.setPref("clusterMail", mail.isSelected() ? "1" : "");
-        return null;
-      });
-    });
-    if (!Boolean.TRUE.equals(ok)) throw new Cancel(null);
-    Env.setPref("ncpus", String.valueOf(cpus[0]));
+    final Map<String, String> prefs = new HashMap<>();
+    for (String k : new String[] {"ncpus", "clusterMem", "clusterRuntime", "clusterMail", "clusterMore"}) {
+      String v = Env.pref(k);
+      if (v != null) prefs.put(k, v);
+    }
+    final String last = lastSubmission(c, f);
+    SubmitChoice r = Ui.edt(() -> submitWindow(f, c.caseId, checks, cfg, release, prefs, last));
+    if (r == null) throw new Cancel(null);
+    Env.setPref("ncpus", String.valueOf(r.cpus));
+    Env.setPref("clusterMem", r.opt.getOrDefault("mem", ""));
+    Env.setPref("clusterRuntime", r.opt.getOrDefault("estimated_runtime", ""));
+    Env.setPref("clusterMail", r.opt.getOrDefault("send_completed_notification", ""));
+    Env.setPref("clusterMore", r.moreOpen ? "1" : "");
     iterSeparator();
     sim.saveState(Fs.guard(f).toString());
-    String[] sc = submitCommand(f, cpus[0], opt);
+    String[] sc = submitCommand(cfg, release, f, r.cpus, r.opt);
     Path script = writeSubmitScript(f, sc[0]);
+    Path logFile = script.resolveSibling(script.getFileName().toString().replaceFirst("\\.sh$", ".log"));
     Path subs = script.getParent().resolve("submissions.csv");
     boolean fresh = !Files.isRegularFile(subs);
     try (java.io.Writer w = Files.newBufferedWriter(Fs.guard(subs), StandardCharsets.UTF_8,
         java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND)) {
       if (fresh) w.write(Csv.row(new String[] {"submitted", "by", "run", "file", "ncpus", "queue", "command", "script"}));
-      w.write(Csv.row(new String[] {Fmt.iso(), Env.user(), c.caseId, f.toString(), String.valueOf(cpus[0]), sc[1], sc[0],
+      w.write(Csv.row(new String[] {Fmt.iso(), Env.user(), c.caseId, f.toString(), String.valueOf(r.cpus), sc[1], sc[0],
           script.toString()}));
     } catch (Throwable t) {
       log.na("submission record", t);
     }
-    String term = clusterConfig().get("terminal");
+    String term = cfg.getOrDefault("terminal", "konsole");
     String inner = "bash '" + script + "'; echo; echo 'SimKit: this window can be closed.'; exec bash";
     List<String[]> tries = new ArrayList<>();
     tries.add(term.equals("konsole") ? new String[] {"konsole", "--workdir", f.getParent().toString(), "-e", "bash", "-c", inner}
@@ -1521,12 +1430,363 @@ public class SimKit extends StarMacro {
     for (String[] t : tries) {
       try {
         new ProcessBuilder(t).directory(f.getParent().toFile()).start();
-        result("submitted in a " + t[0] + " window: " + sc[0]);
+        log.line("command: " + sc[0]);
+        result("Submitted on " + plural(r.cpus, "CPU", "CPUs") + " to " + sc[1] + " (" + t[0] + "). Log: submit/" + logFile.getFileName());
+        watchJob(logFile, c);
         return;
       } catch (IOException e) { /* the next terminal */ }
     }
     copyText(sc[0]);
-    result("no terminal found (konsole, gnome-terminal, xterm): the command is copied, paste it in a terminal");
+    result("No terminal found (konsole, gnome-terminal, xterm). Command copied: paste it in a terminal opened in " + f.getParent());
+  }
+
+  /** "Last submitted <date> on <n> CPUs to <queue> (job <n>)" from the run's submissions.csv and record; null if none. */
+  String lastSubmission(CaseInfo c, Path f) {
+    try {
+      Path rd = runDirOf(f);
+      Path subs = (rd != null ? rd.resolve("submit") : f.getParent().resolve(".simkit")).resolve("submissions.csv");
+      if (!Files.isRegularFile(subs)) return null;
+      List<String[]> rows = Csv.parse(Fs.read(subs));
+      String[] last = null;
+      for (int i = 1; i < rows.size(); i++) if (rows.get(i).length > 5 && c.caseId.equals(rows.get(i)[2])) last = rows.get(i);
+      if (last == null) return null;
+      String job = "";
+      try { String j = readIdentity(runRecord(c.caseDir, c.nnn)).get("last_job"); if (j != null && !j.isEmpty()) job = " (job " + j + ")"; }
+      catch (Throwable t) { /* no record */ }
+      String when = last[0].length() >= 16 ? last[0].substring(0, 16).replace('T', ' ') : last[0];
+      return "Last submitted " + when + " on " + last[4] + " CPUs to " + last[5] + job + ".";
+    } catch (Throwable t) {
+      return null;
+    }
+  }
+
+  /** Reads the launcher's output (the tee'd log) for up to 90 s: "Job <n> is submitted to queue <q>" goes to the status
+   *  line and the run's record (last_job); a rejection goes to the status line in red. */
+  void watchJob(final Path logFile, final CaseInfo c) {
+    final java.util.regex.Pattern ok = java.util.regex.Pattern.compile("Job <([0-9]+)> is submitted to queue <([^>]+)>");
+    Thread w = new Thread(() -> {
+      for (int i = 0; i < 90; i++) {
+        try { Thread.sleep(1000); } catch (InterruptedException e) { return; }
+        String text;
+        try { if (!Files.isRegularFile(logFile)) continue; text = new String(Files.readAllBytes(logFile), StandardCharsets.UTF_8); }
+        catch (Throwable t) { continue; }
+        Matcher m = ok.matcher(text);
+        if (m.find()) {
+          postStatus("Job " + m.group(1) + " submitted to " + m.group(2) + " (" + c.caseId + ").", 0);
+          try {
+            Path rec = runRecord(c.caseDir, c.nnn);
+            Map<String, String> id = readIdentity(rec);
+            id.put("last_job", m.group(1));
+            Fs.write(rec, identityText(id));
+          } catch (Throwable t) { /* the status line has it */ }
+          return;
+        }
+        if (text.contains("Job not submitted") || text.contains("Request aborted") || text.contains("command not found")) {
+          postStatus("Not submitted: see the terminal (submit/" + logFile.getFileName() + ").", 2);
+          return;
+        }
+      }
+    }, "SimKit job number");
+    w.setDaemon(true);
+    w.start();
+  }
+
+  /** Sets the status line of the SimKit window from a background thread (0 done, 1 amber, 2 red). */
+  void postStatus(String text, int level) {
+    lastStatus = text;
+    lastLevel = level;
+    javax.swing.SwingUtilities.invokeLater(this::showStatus);
+  }
+
+  /** The Run on cluster window (Swing thread; no STAR-CCM+ call, so it can be shown offline). checks: {state, text[,
+   *  detail]}, warnings first. prefs: ncpus, clusterMem, clusterRuntime, clusterMail, clusterMore. last: the last
+   *  submission line or null. Returns the choice, or null when cancelled. */
+  static SubmitChoice submitWindow(final Path file, String runId, final List<String[]> checks, final Map<String, String> cfg,
+      final String release, Map<String, String> prefs, String last) {
+    java.util.function.Function<String, JLabel> head = s -> {
+      JLabel l = new JLabel(s);
+      l.setFont(l.getFont().deriveFont(Font.BOLD));
+      return l;
+    };
+    final String pc = prefs.getOrDefault("ncpus", "1");
+    final JTextField n = new JTextField(pc.matches("[0-9]+") ? pc : "1", 6);
+    final JLabel state = Ui.muted(" ");
+    final String dMem = cfg.getOrDefault("mem", "1000"), dRt = cfg.getOrDefault("estimated_runtime", "360");
+    final String pMem = prefs.getOrDefault("clusterMem", ""), pRt = prefs.getOrDefault("clusterRuntime", "");
+    final JTextField mem = new JTextField(pMem.matches("[0-9]+") ? pMem : dMem, 6);
+    final JTextField rt = new JTextField(pRt.matches("[0-9]+") ? pRt : dRt, 6);
+    final JTextField jobname = Ui.hintField("", "STARCCMP_<file>", 22);
+    final JTextField resdir = Ui.hintField("", "The run folder", 22);
+    final javax.swing.JCheckBox mail = new javax.swing.JCheckBox("Send an email when the job is completed", "1".equals(prefs.get("clusterMail")));
+    mail.setFont(mail.getFont().deriveFont(Font.PLAIN));
+    mail.setToolTipText("--send_completed_notification");
+    mem.setToolTipText("--mem, MB per slot (per CPU).");
+    rt.setToolTipText("--estimated_runtime, hours.");
+    jobname.setToolTipText("--jobname. Letters, digits, _ . - only.");
+    resdir.setToolTipText("--result_dir. Folder the results are copied to at the end of the job.");
+    for (JTextField t : new JTextField[] {n, mem, rt, jobname, resdir}) t.putClientProperty("simkit.esc.close", Boolean.TRUE);
+    final JLabel optErr = new JLabel(" "), folderNote = new JLabel(" "), summary = Ui.muted(" ");
+    optErr.setForeground(Ui.RED);
+    folderNote.setForeground(Ui.AMBER);
+    final javax.swing.JTextArea area = new javax.swing.JTextArea(3, 70);
+    area.setEditable(false);
+    area.setLineWrap(true);
+    area.setWrapStyleWord(true);
+    area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, area.getFont().getSize()));
+    area.setBackground(Ui.BAND);
+    area.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
+    final JButton copy = Ui.link("Copy"), go = Ui.primary("Save and submit");
+    copy.setMnemonic('O');
+    go.setToolTipText("Saves " + file.getFileName() + ", then runs the command in a terminal.");
+    final SubmitChoice choice = new SubmitChoice();
+    final String[] lastCmd = {""};
+    final Map<String, String> opt = new HashMap<>();
+    final java.util.function.Supplier<String> teamProblem = () -> {
+      if (cfg.getOrDefault("command", "").trim().isEmpty()) return "No command in config/cluster.csv.";
+      if (cfg.getOrDefault("command", "").contains("{project}") && cfg.getOrDefault("project", "").trim().isEmpty())
+        return "No project in config/cluster.csv: the launcher rejects the job.";
+      if (cfg.getOrDefault("command", "").contains("{version}") && release.isEmpty())
+        return "STAR-CCM+ release not read. Set version in config/cluster.csv (e.g. 2310).";
+      return null;
+    };
+    final java.util.function.Supplier<String> cpuProblem = () -> {
+      String t = n.getText().trim();
+      return t.matches("[0-9]{1,5}") && Integer.parseInt(t) >= 1 ? null : "Enter a whole number, 1 or more.";
+    };
+    final java.util.function.Supplier<String> optProblem = () -> {
+      if (!mem.getText().trim().matches("[0-9]{1,7}") || Integer.parseInt(mem.getText().trim()) < 1) return "Memory per slot: a whole number of MB, 1 or more.";
+      if (!rt.getText().trim().matches("[0-9]{1,5}") || Integer.parseInt(rt.getText().trim()) < 1) return "Estimated run time: a whole number of hours, 1 or more.";
+      if (!jobname.getText().trim().isEmpty() && !jobname.getText().trim().matches("[A-Za-z0-9_.-]+")) return "Job name: letters, digits, _ . - only.";
+      if (!resdir.getText().trim().isEmpty() && !resdir.getText().trim().startsWith("/")) return "Copy results to: an absolute path (starts with /).";
+      return null;
+    };
+    final java.util.function.Supplier<String> problem = () -> {
+      String p = teamProblem.get();
+      if (p == null) p = cpuProblem.get();
+      if (p == null) p = optProblem.get();
+      return p;
+    };
+
+    // more options (folded)
+    JPanel grid = new JPanel(new java.awt.GridBagLayout());
+    java.awt.GridBagConstraints g = new java.awt.GridBagConstraints();
+    g.anchor = java.awt.GridBagConstraints.WEST;
+    g.insets = new java.awt.Insets(2, 0, 2, 10);
+    Object[][] formRows = {{"Memory per slot", mem, "MB   Launcher default: " + dMem}, {"Estimated run time", rt, "h   Launcher default: " + dRt},
+        {"Job name", jobname, ""}, {"Copy results to", resdir, ""}};
+    for (int i = 0; i < formRows.length; i++) {
+      g.gridy = i;
+      g.gridx = 0;
+      grid.add(new JLabel((String) formRows[i][0]), g);
+      g.gridx = 1;
+      JPanel cellp = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));   // the unit next to its field
+      cellp.add((java.awt.Component) formRows[i][1]);
+      if (!((String) formRows[i][2]).isEmpty()) cellp.add(Ui.muted((String) formRows[i][2]));
+      grid.add(cellp, g);
+    }
+    g.gridx = 2;   // the spare width goes right of the fields: the grid stays at the left
+    g.gridy = 0;
+    g.weightx = 1;
+    grid.add(javax.swing.Box.createHorizontalGlue(), g);
+    final JPanel morePane = new JPanel();
+    morePane.setLayout(new javax.swing.BoxLayout(morePane, javax.swing.BoxLayout.Y_AXIS));
+    for (javax.swing.JComponent k : new javax.swing.JComponent[] {grid, folderNote, mail, optErr,
+        Ui.muted("Options left at the launcher default are not added to the command.")}) {
+      k.setAlignmentX(0f);
+      morePane.add(k);
+    }
+    morePane.setBorder(BorderFactory.createEmptyBorder(4, 16, 0, 0));
+    final JButton moreLink = Ui.link("More options ▸");
+    moreLink.setMnemonic('M');
+    morePane.setVisible("1".equals(prefs.get("clusterMore")));
+
+    final Runnable upd = () -> {
+      opt.put("mem", mem.getText().trim());
+      opt.put("estimated_runtime", rt.getText().trim());
+      opt.put("jobname", jobname.getText().trim());
+      opt.put("result_dir", resdir.getText().trim());
+      opt.put("send_completed_notification", mail.isSelected() ? "1" : "");
+      String cp = cpuProblem.get(), op = optProblem.get(), tp = teamProblem.get();
+      if (cp != null) {
+        state.setForeground(Ui.RED);
+        state.setText(cp);
+      } else {
+        int k = Integer.parseInt(n.getText().trim());
+        String[] sc = submitCommand(cfg, release, file, k, opt);
+        state.setForeground(Ui.MUTED);
+        state.setText((k == 1 ? "Serial" : "Parallel") + "  ·  queue " + sc[1]);
+        if (op == null) { lastCmd[0] = sc[0]; choice.queue = sc[1]; }
+      }
+      area.setText(lastCmd[0]);
+      area.setForeground(cp == null && op == null ? java.awt.Color.BLACK : Ui.FAINT);
+      optErr.setText(op == null ? " " : op);
+      if (op != null && !morePane.isVisible()) moreLink.doClick();
+      String rd = resdir.getText().trim();
+      folderNote.setText(!rd.isEmpty() && rd.startsWith("/") && !Files.isDirectory(Paths.get(rd)) ? "Folder not found from this machine." : " ");
+      List<String> s = new ArrayList<>();
+      if (!mem.getText().trim().equals(dMem)) s.add("memory " + mem.getText().trim() + " MB");
+      if (!rt.getText().trim().equals(dRt)) s.add("run time " + rt.getText().trim() + " h");
+      if (!jobname.getText().trim().isEmpty()) s.add("job name " + jobname.getText().trim());
+      if (!resdir.getText().trim().isEmpty()) s.add("results to " + resdir.getText().trim());
+      if (mail.isSelected()) s.add("email");
+      summary.setText(morePane.isVisible() || s.isEmpty() ? " " : Ui.cap(String.join("  ·  ", s)));
+      boolean okNow = cp == null && op == null && tp == null;
+      copy.setEnabled(okNow);
+      go.setEnabled(okNow);
+    };
+    moreLink.addActionListener(e -> {
+      morePane.setVisible(!morePane.isVisible());
+      moreLink.setText(morePane.isVisible() ? "More options ▾" : "More options ▸");
+      upd.run();
+      java.awt.Window w = javax.swing.SwingUtilities.getWindowAncestor(moreLink);
+      if (w != null) w.pack();
+    });
+    if (morePane.isVisible()) moreLink.setText("More options ▾");
+    for (JTextField t : new JTextField[] {n, mem, rt, jobname, resdir}) {
+      t.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+        @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+        @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { upd.run(); }
+      });
+    }
+    mail.addActionListener(e -> upd.run());
+    n.addFocusListener(new java.awt.event.FocusAdapter() {
+      @Override public void focusGained(java.awt.event.FocusEvent e) { javax.swing.SwingUtilities.invokeLater(n::selectAll); }
+    });
+    for (final int d : new int[] {1, -1}) {   // Up / Down: +1 / -1 CPU
+      String key = d > 0 ? "UP" : "DOWN";
+      n.getInputMap().put(javax.swing.KeyStroke.getKeyStroke(key), "simkit." + key);
+      n.getActionMap().put("simkit." + key, new javax.swing.AbstractAction() {
+        private static final long serialVersionUID = 1L;
+        @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+          String t = n.getText().trim();
+          int k = t.matches("[0-9]{1,5}") ? Integer.parseInt(t) : 1;
+          n.setText(String.valueOf(Math.max(1, k + d)));
+        }
+      });
+    }
+    final String copyText = "Copy", copiedText = "Copied";
+    copy.setPreferredSize(new java.awt.Dimension(Math.max(copy.getFontMetrics(copy.getFont()).stringWidth(copiedText),
+        copy.getFontMetrics(copy.getFont()).stringWidth(copyText)) + 12, copy.getPreferredSize().height));
+    copy.addActionListener(e -> {
+      if (lastCmd[0].isEmpty()) return;
+      copyText(lastCmd[0]);
+      copy.setText(copiedText);
+      javax.swing.Timer t = new javax.swing.Timer(1500, x -> copy.setText(copyText));
+      t.setRepeats(false);
+      t.start();
+    });
+
+    // checks
+    int warn = 0;
+    for (String[] k : checks) if (!"ok".equals(k[0])) warn++;
+    final javax.swing.table.AbstractTableModel cm = new javax.swing.table.AbstractTableModel() {
+      private static final long serialVersionUID = 1L;
+      @Override public int getRowCount() { return checks.size(); }
+      @Override public int getColumnCount() { return 2; }
+      @Override public Object getValueAt(int r, int c) { return c == 0 ? checks.get(r)[0] : checks.get(r)[1]; }
+    };
+    final JTable ct = plainTable(cm);
+    ct.setTableHeader(null);
+    ct.setFocusable(false);
+    ct.setRowSelectionAllowed(false);
+    ct.putClientProperty("simkit.empty", "No check available.");
+    final Ui.PillCell pill = new Ui.PillCell();
+    pill.setFont(ct.getFont());
+    pill.setBackground(java.awt.Color.WHITE);
+    final JLabel done = Ui.doneCell();
+    done.setBackground(java.awt.Color.WHITE);
+    ct.getColumnModel().getColumn(0).setCellRenderer((tb, v, sel, foc, r, c) -> {
+      String st = checks.get(r)[0];
+      if ("ok".equals(st)) return done;
+      return pill.set("na".equals(st) ? "Not read" : "Warning", Ui.PILL_AMBER, null, null);
+    });
+    ct.getColumnModel().getColumn(1).setCellRenderer(new javax.swing.table.DefaultTableCellRenderer() {
+      private static final long serialVersionUID = 1L;
+      @Override public java.awt.Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean f, int r, int c) {
+        super.getTableCellRendererComponent(tb, v, false, false, r, c);
+        String[] k = checks.get(r);
+        setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+        setBackground(java.awt.Color.WHITE);
+        setForeground("ok".equals(k[0]) ? Ui.MUTED : java.awt.Color.BLACK);
+        setToolTipText(k.length > 2 && k[2] != null && !k[2].isEmpty() ? "<html>" + Html.esc(k[1]) + "<br>" + Html.esc(k[2]) + "</html>" : k[1]);
+        return this;
+      }
+    });
+    ct.getColumnModel().getColumn(0).setMinWidth(90);
+    ct.getColumnModel().getColumn(0).setMaxWidth(90);
+
+    // layout
+    JPanel cpuRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+    JLabel cl = new JLabel("CPUs");
+    cl.setDisplayedMnemonic('C');
+    cl.setLabelFor(n);
+    n.setToolTipText("1 = serial queue (" + cfg.getOrDefault("queue_serial", "") + "). 2 or more = parallel queue ("
+        + cfg.getOrDefault("queue_parallel", "") + ").");
+    cpuRow.add(cl);
+    cpuRow.add(n);
+    cpuRow.add(state);
+    JPanel moreRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+    moreRow.add(moreLink);
+    moreRow.add(summary);
+    JPanel cmdHead = new JPanel(new BorderLayout());
+    cmdHead.add(head.apply("Command"), BorderLayout.WEST);
+    cmdHead.add(copy, BorderLayout.EAST);
+    JScrollPane cmdScroll = plainScroll(area, 620, area.getPreferredSize().height + 4);
+    cmdScroll.getViewport().setBackground(Ui.BAND);
+    cmdScroll.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+    String tp = teamProblem.get();
+    JLabel team = new JLabel(tp != null ? tp : "Team settings: project " + cfg.getOrDefault("project", "") + "  ·  fairshare group "
+        + cfg.getOrDefault("fairshare", "") + "  ·  STAR-CCM+ " + release);
+    team.setForeground(tp != null ? Ui.RED : Ui.MUTED);
+    team.setToolTipText("From config/cluster.csv. Release: " + (cfg.getOrDefault("version", "").isEmpty() ? "from the STAR-CCM+ that runs SimKit."
+        : "fixed in cluster.csv."));
+    JPanel chkHead = new JPanel(new BorderLayout());
+    chkHead.add(head.apply("Pre-submit check"), BorderLayout.WEST);
+    JLabel counts = new JLabel(warn > 0 ? plural(warn, "warning", "warnings") + "  ·  " + (checks.size() - warn) + " ok" : checks.size() + " ok");
+    counts.setForeground(warn > 0 ? Ui.AMBER : Ui.GREEN);
+    chkHead.add(counts, BorderLayout.EAST);
+    JScrollPane chkScroll = plainScroll(ct, 620, Math.max(1, Math.min(5, checks.size())) * ct.getRowHeight() + 4);
+    String base = file.getFileName().toString().replaceFirst("\\.sim$", "").replaceFirst(java.util.regex.Pattern.quote(ITER_SEP) + "[0-9]+$", "");
+    List<javax.swing.JComponent> parts = new ArrayList<>();
+    JLabel hJob = head.apply("Job");
+    parts.add(hJob);
+    parts.add(cpuRow);
+    if (last != null) parts.add(Ui.muted(last));
+    parts.add(moreRow);
+    parts.add(morePane);
+    parts.add(cmdHead);
+    parts.add(cmdScroll);
+    parts.add(team);
+    parts.add(chkHead);
+    parts.add(chkScroll);
+    if (warn > 0) parts.add(Ui.muted("Warnings do not block the submission."));
+    JLabel foot = Ui.muted("<html>The file is saved, then the command runs in a terminal opened in the run folder.<br>Files written by the job "
+        + "return as " + Html.esc(base + ITER_SEP) + "&lt;n&gt;.sim.</html>");
+    parts.add(foot);
+    JPanel body = new JPanel();
+    body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
+    for (javax.swing.JComponent k : parts) {
+      k.setAlignmentX(0f);
+      if (k == cmdHead || k == chkHead || k == foot) body.add(javax.swing.Box.createVerticalStrut(14));
+      body.add(k);
+      body.add(javax.swing.Box.createVerticalStrut(k == hJob || k == cmdHead || k == chkHead ? 4 : 6));
+    }
+    upd.run();
+    javax.swing.SwingUtilities.invokeLater(n::requestFocusInWindow);
+    String folder = String.valueOf(file.getParent());
+    String sub = runId + "  ·  " + file.getFileName() + "  ·  " + (folder.length() > 50 ? "…" + folder.substring(folder.length() - 49) : folder);
+    boolean ok = Ui.sheet("Run on cluster", sub, body, go, () -> {
+      upd.run();
+      String p = problem.get();
+      if (p != null) return p;
+      choice.cpus = Integer.parseInt(n.getText().trim());
+      choice.opt.putAll(opt);
+      choice.moreOpen = morePane.isVisible();
+      choice.command = lastCmd[0];
+      return null;
+    });
+    return ok ? choice : null;
   }
 
   static void copyText(String t) {
@@ -1535,36 +1795,38 @@ public class SimKit extends StarMacro {
     } catch (Throwable x) { /* no clipboard (batch) */ }
   }
 
-  /** {"ok" | "!", text} lines: mesh, stopping criteria, auto-save, standard reports, names, run number. */
+  /** {state, text[, detail]} lines: mesh, stopping criteria, auto-save, standard reports, names, run number. state:
+   *  "ok", "!" (warning) or "na" (could not be read); detail (optional): the names, shown as a tooltip. */
   List<String[]> preSubmitChecks() {
     List<String[]> out = new ArrayList<>();
     try {
       boolean mesh = false;
       for (Object rep : sim.getRepresentationManager().getObjects()) if (rep instanceof FvRepresentation) mesh = true;
-      out.add(new String[] {mesh ? "ok" : "!", mesh ? "volume mesh present" : "no volume mesh: the job meshes first, or fails"});
-    } catch (Throwable t) { out.add(new String[] {"!", "volume mesh: n/a (" + reason(t) + ")"}); }
+      out.add(new String[] {mesh ? "ok" : "!", mesh ? "Volume mesh present" : "No volume mesh: the job meshes first, or fails"});
+    } catch (Throwable t) { out.add(new String[] {"na", "Volume mesh", reason(t)}); }
     try {
       List<String> used = new ArrayList<>();
       for (Object c : sim.getSolverStoppingCriterionManager().getObjects()) {
         if (Boolean.TRUE.equals(Reflect.tryCall(c, "getIsUsed"))) used.add(nm(c));
       }
-      out.add(used.isEmpty() ? new String[] {"!", "no stopping criterion enabled: the job runs until killed"}
-          : new String[] {"ok", "stopping criteria: " + String.join(", ", used)});
-    } catch (Throwable t) { out.add(new String[] {"!", "stopping criteria: n/a (" + reason(t) + ")"}); }
+      out.add(used.isEmpty() ? new String[] {"!", "No stopping criterion enabled: the job runs until killed"}
+          : new String[] {"ok", plural(used.size(), "stopping criterion", "stopping criteria") + " enabled", String.join(", ", used)});
+    } catch (Throwable t) { out.add(new String[] {"na", "Stopping criteria", reason(t)}); }
     try {
       AutoSave as = sim.getSimulationIterator().getAutoSave();
       Object on = Reflect.tryCall(as.getStarUpdate(), "getEnabled");
       if (on == null) on = Reflect.tryCall(as.getStarUpdate(), "isEnabled");
       Object max = Reflect.tryCall(as, "getMaxAutosavedFiles");
-      if (!Boolean.TRUE.equals(on)) out.add(new String[] {"!", "auto-save off: nothing is saved before the end of the job"});
-      else if (max instanceof Number && ((Number) max).intValue() == 0) out.add(new String[] {"!", "auto-save keeps every file (maximum files = 0)"});
-      else out.add(new String[] {"ok", "auto-save on" + (max instanceof Number ? ", keeps " + max + " file(s)" : "")});
-    } catch (Throwable t) { out.add(new String[] {"!", "auto-save: n/a (" + reason(t) + ")"}); }
+      if (!Boolean.TRUE.equals(on)) out.add(new String[] {"!", "Auto-save off: nothing is saved before the end of the job"});
+      else if (max instanceof Number && ((Number) max).intValue() == 0) out.add(new String[] {"!", "Auto-save keeps every file (maximum files = 0)"});
+      else out.add(new String[] {"ok", "Auto-save on" + (max instanceof Number ? ", keeps " + plural(((Number) max).intValue(), "file", "files") : "")});
+    } catch (Throwable t) { out.add(new String[] {"na", "Auto-save", reason(t)}); }
     try {
       int n = 0;
       for (Object r : sim.getReportManager().getObjects()) if (nm(r).startsWith("r_")) n++;
-      out.add(n > 0 ? new String[] {"ok", n + " standard report(s) (r_*)"} : new String[] {"!", "no standard reports (r_*): Reports > Standard adds them"});
-    } catch (Throwable t) { out.add(new String[] {"!", "standard reports: n/a (" + reason(t) + ")"}); }
+      out.add(n > 0 ? new String[] {"ok", plural(n, "standard report", "standard reports") + " (r_*)"}
+          : new String[] {"!", "No standard reports (r_*). Add them in Reports > Standard."});
+    } catch (Throwable t) { out.add(new String[] {"na", "Standard reports", reason(t)}); }
     try {
       int def = 0, mism = 0, nopre = 0, noIf = 0;
       for (NameRow x : nameRows()) {
@@ -1573,12 +1835,12 @@ public class SimKit extends StarMacro {
         else if (x.kind.equals("boundary") && x.state.startsWith("no type prefix")) nopre++;
         else if (x.kind.equals("boundary") && x.problem) mism++;
       }
-      out.add(mism > 0 ? new String[] {"!", mism + " boundary type(s) do not match the name prefix (Names)"}
-          : new String[] {"ok", "boundary types match the name prefixes"});
-      if (noIf > 0) out.add(new String[] {"!", noIf + " IF_ boundary(ies) in no interface (Names)"});
-      if (nopre > 0) out.add(new String[] {"!", nopre + " boundary(ies) without a type prefix (Names)"});
-      if (def > 0) out.add(new String[] {"!", def + " object(s) with a default name (Names)"});
-    } catch (Throwable t) { out.add(new String[] {"!", "names: n/a (" + reason(t) + ")"}); }
+      out.add(mism > 0 ? new String[] {"!", plural(mism, "boundary type does", "boundary types do") + " not match the name prefix. Fix in Names."}
+          : new String[] {"ok", "Boundary types match the name prefixes"});
+      if (noIf > 0) out.add(new String[] {"!", plural(noIf, "IF_ boundary", "IF_ boundaries") + " in no interface. Fix in Names."});
+      if (nopre > 0) out.add(new String[] {"!", plural(nopre, "boundary", "boundaries") + " without a type prefix. Fix in Names."});
+      if (def > 0) out.add(new String[] {"!", plural(def, "object", "objects") + " with a default name. Fix in Names."});
+    } catch (Throwable t) { out.add(new String[] {"na", "Names", reason(t)}); }
     try {   // reports and the surfaces they are computed on
       Map<String, Object> reps = new LinkedHashMap<>();
       for (Object r : sim.getReportManager().getObjects()) reps.put(nm(r), r);
@@ -1612,19 +1874,21 @@ public class SimKit extends StarMacro {
           }
         }
       }
-      if (!empty.isEmpty()) out.add(new String[] {"!", "report(s) with no surfaces: " + String.join(", ", empty)});
-      if (!miss.isEmpty()) out.add(new String[] {"!", "standard report(s) missing new surfaces: " + String.join(", ", miss) + " (Reports > Standard adds them)"});
-      if (!notNet.isEmpty()) out.add(new String[] {"!", "flow boundary(ies) not in r_mdot_net: " + String.join(", ", notNet)});
-      if (empty.isEmpty() && miss.isEmpty() && notNet.isEmpty()) out.add(new String[] {"ok", "report surfaces up to date"});
-    } catch (Throwable t) { out.add(new String[] {"!", "report surfaces: n/a (" + reason(t) + ")"}); }
+      if (!empty.isEmpty()) out.add(new String[] {"!", plural(empty.size(), "report", "reports") + " with no surfaces", String.join(", ", empty)});
+      if (!miss.isEmpty()) out.add(new String[] {"!", plural(miss.size(), "standard report misses", "standard reports miss")
+          + " new surfaces. Add them in Reports > Standard.", String.join(", ", miss)});
+      if (!notNet.isEmpty()) out.add(new String[] {"!", plural(notNet.size(), "flow boundary", "flow boundaries") + " not in r_mdot_net",
+          String.join(", ", notNet)});
+      if (empty.isEmpty() && miss.isEmpty() && notNet.isEmpty()) out.add(new String[] {"ok", "Report surfaces up to date"});
+    } catch (Throwable t) { out.add(new String[] {"na", "Report surfaces", reason(t)}); }
     try {
       List<String> noCont = new ArrayList<>();
       for (Region r : sim.getRegionManager().getRegions()) if (r.getPhysicsContinuum() == null) noCont.add(nm(r));
-      out.add(noCont.isEmpty() ? new String[] {"ok", "every region has a physics continuum"}
-          : new String[] {"!", "region(s) without a physics continuum: " + String.join(", ", noCont)});
-    } catch (Throwable t) { out.add(new String[] {"!", "physics continua: n/a (" + reason(t) + ")"}); }
-    out.add(findParam(P_RUN) != null ? new String[] {"ok", "run number in the simulation (" + P_RUN + ")"}
-        : new String[] {"!", "no run number in the simulation: Save as new run first"});
+      out.add(noCont.isEmpty() ? new String[] {"ok", "Every region has a physics continuum"}
+          : new String[] {"!", plural(noCont.size(), "region", "regions") + " without a physics continuum", String.join(", ", noCont)});
+    } catch (Throwable t) { out.add(new String[] {"na", "Physics continua", reason(t)}); }
+    out.add(findParam(P_RUN) != null ? new String[] {"ok", "Run number in the simulation (" + P_RUN + ")"}
+        : new String[] {"!", "No run number in the simulation. Save as new run first."});
     return out;
   }
 
@@ -8836,7 +9100,9 @@ public class SimKit extends StarMacro {
         if (!stay) d.getRootPane().setDefaultButton(ok);
         d.getRootPane().registerKeyboardAction(e -> {   // Esc: clears a search field first, else closes
           java.awt.Component f = d.getFocusOwner();
-          if (f instanceof JTextField && !((JTextField) f).getText().isEmpty()) ((JTextField) f).setText("");
+          if (f instanceof JTextField && !((JTextField) f).getText().isEmpty() && ((JTextField) f).getClientProperty("simkit.esc.close") == null) {
+            ((JTextField) f).setText("");
+          }
           else d.dispose();
         }, javax.swing.KeyStroke.getKeyStroke("ESCAPE"),
             javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW);
