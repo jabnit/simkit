@@ -1513,7 +1513,11 @@ public class SimKit extends StarMacro {
       log.na("submission record", t);
     }
     String term = cfg.getOrDefault("terminal", "konsole");
-    String inner = "bash '" + script + "'; sleep 3";   // the terminal closes 3 s after the command; the output stays in the log
+    // The terminal closes when the launcher confirms the job, and stays open otherwise so the error can be read.
+    String inner = "bash '" + script + "'; echo; "
+        + "if grep -qE 'Job <[0-9]+> is submitted to queue' '" + logFile + "'; then "
+        + "echo 'SimKit: confirmed, closing window...'; sleep 2; "
+        + "else echo 'SimKit: submission not confirmed, keeping window open.'; exec bash; fi";
     List<String[]> tries = new ArrayList<>();
     tries.add(term.equals("konsole") ? new String[] {"konsole", "--workdir", f.getParent().toString(), "-e", "bash", "-c", inner}
         : new String[] {term, "-e", "bash", "-c", inner});
@@ -1585,7 +1589,7 @@ public class SimKit extends StarMacro {
           return;
         }
         if (text.contains("Job not submitted") || text.contains("Request aborted") || text.contains("command not found")) {
-          postStatus("Not submitted: see submit/" + logFile.getFileName() + ".", 2);
+          postStatus("Not submitted: see the terminal and submit/" + logFile.getFileName() + ".", 2);
           return;
         }
       }
