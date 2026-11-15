@@ -38,6 +38,7 @@ public class SimKit_InstallButtons extends StarMacro {
       {"SimKit_RunOnCluster", "SimKit: Run on cluster"},
       {"SimKit_CaseTracker", "SimKit: Tracker"},
       {"SimKit_Calculators", "SimKit: Calculators"},
+      {"SimKit_Names", "SimKit: Names"},
       {"SimKit_StandardReports", "SimKit: Reports"},
       {"SimKit_MeshStudy", "SimKit: Mesh study"},
   };

@@ -138,7 +138,7 @@ public class SimKit extends StarMacro {
 
   boolean gui;
 
-  Runnable namesCad;   // opens 3D-CAD faces from the Names window; null without a 3D-CAD model
+  volatile List<String> cadNotes = new ArrayList<>();   // 3D-CAD warnings shown in Names, read with the rows
 
   @Override
   public void execute() {
@@ -4353,15 +4353,20 @@ public class SimKit extends StarMacro {
     int cat;                         // index in NAME_CATS
     boolean pick, problem, kept;
     Object report;                   // monitor rows: the report the monitor follows
+    Object owner;                    // 3D-CAD rows: the CadModel
+    String base = "";                // 3D-CAD default-name rows: the body name
   }
 
-  static final String[] NAME_CATS = {"Boundaries", "Part surfaces", "Reports and plots", "Other objects"};
-  static final int CAT_REPORTS = 2, CAT_OTHER = 3;
+  static final String[] NAME_CATS = {"Boundaries", "Part surfaces", "Reports and plots", "Other objects", "3D-CAD faces"};
+  static final int CAT_REPORTS = 2, CAT_OTHER = 3, CAT_CAD = 4;
+  /** Order of the categories on the left of the Names window, as in the workflow from 3D-CAD to boundaries. */
+  static final int[] NAME_ORDER = {CAT_CAD, 1, 0, CAT_REPORTS, CAT_OTHER};
   static final String[] NAME_CAT_HELP = {
       "The name prefix must match the boundary type (Set type changes the type, Rename the name). IF_ boundaries must be in an interface.",
       "Boundary names are created from part surface names. Rename before assigning parts to regions.",
       "Reports follow config/report_names.csv. Monitors follow their report. Plots have no prefix.",
-      "Default names. Enter a name in New name."};
+      "Default names. Enter a name in New name.",
+      "Faces without a name take the default face name of their body. Name inlet and outlet faces in 3D-CAD first."};
 
   /** The name part a prefix goes on: the last dot-separated part of a boundary name ("Body 1.Surface 12" -> "Surface 12"). */
   static String lastPart(String n) { return n.substring(n.lastIndexOf('.') + 1); }
@@ -4420,7 +4425,7 @@ public class SimKit extends StarMacro {
     try {
       for (Object o : sim.get(SimulationPartManager.class).getParts()) {
         if (!(o instanceof GeometryPart)) continue;
-        if (isDefaultName(nm(o))) out.add(defaultRow(o, "part", "Parts / " + nm(o), CAT_OTHER));
+        out.add(objectRow(o, "part", "Parts / " + nm(o), CAT_OTHER));
         try {
           for (Object ps : ((GeometryPart) o).getPartSurfaces()) {
             NameRow x = new NameRow();
@@ -4439,10 +4444,14 @@ public class SimKit extends StarMacro {
         } catch (Throwable t) { log.na("part surfaces of " + nm(o), t); }
       }
     } catch (Throwable t) { log.na("geometry parts", t); }
-    try { for (Region r : sim.getRegionManager().getRegions()) if (isDefaultName(nm(r))) out.add(defaultRow(r, "region", "Regions / " + nm(r), CAT_OTHER)); }
+    try { for (Region r : sim.getRegionManager().getRegions()) out.add(objectRow(r, "region", "Regions / " + nm(r), CAT_OTHER)); }
     catch (Throwable t) { log.na("regions", t); }
     Map<String, Set<String>> taken = new HashMap<>();
     reportRows(out, taken);
+    try {
+      cadNameRows(out, taken);
+      cadNotes = cadWarnings();
+    } catch (Throwable t) { log.na("3D-CAD faces", t); }
     Object[][] more = {{"scene", null}, {"derived part", null}, {"field function", null}};
     try { more[0][1] = sim.getSceneManager().getScenes(); } catch (Throwable t) { log.na("scenes", t); }
     try { more[1][1] = sim.getPartManager().getObjects(); } catch (Throwable t) { log.na("derived parts", t); }
@@ -4453,7 +4462,7 @@ public class SimKit extends StarMacro {
     } catch (Throwable t) { log.na("field functions", t); }
     for (Object[] m : more) {
       if (!(m[1] instanceof Collection)) continue;
-      for (Object o : (Collection<?>) m[1]) if (isDefaultName(nm(o))) out.add(defaultRow(o, (String) m[0], m[0] + " / " + nm(o), CAT_OTHER));
+      for (Object o : (Collection<?>) m[1]) out.add(objectRow(o, (String) m[0], m[0] + " / " + nm(o), CAT_OTHER));
     }
     UserTag keep = null;
     try { keep = keepTag(false); } catch (Throwable t) { /* no tags */ }
@@ -4490,11 +4499,14 @@ public class SimKit extends StarMacro {
       for (Object r : sim.getReportManager().getObjects()) {
         String name = nm(r);
         taken.computeIfAbsent("report", k -> new HashSet<>()).add(name);
-        if (std.contains(name) || name.endsWith("_mean") && std.contains(name.substring(0, name.length() - 5))) continue;
         NameRow x = defaultRow(r, "report", "Reports / " + name, CAT_REPORTS);
         x.group = "Reports";
         x.state = reportDetail(r);
-        if (rule.containsKey(r)) {
+        if (std.contains(name) || name.endsWith("_mean") && std.contains(name.substring(0, name.length() - 5))) {
+          x.issue = "";
+          x.problem = false;
+          x.state = "standard report. " + x.state;
+        } else if (rule.containsKey(r)) {
           x.issue = "not the rule";
           x.proposed = rule.get(r);
         } else if (isDefaultName(name)) {
@@ -4515,13 +4527,21 @@ public class SimKit extends StarMacro {
         String name = nm(m);
         taken.computeIfAbsent("monitor", k -> new HashSet<>()).add(name);
         if (rep == null) {
-          if (isDefaultName(name)) { NameRow x = defaultRow(m, "monitor", "Monitors / " + name, CAT_REPORTS); x.group = "Monitors"; out.add(x); }
+          NameRow x = objectRow(m, "monitor", "Monitors / " + name, CAT_REPORTS);
+          x.group = "Monitors";
+          out.add(x);
           continue;
         }
         String want = nm(rep) + " Monitor";
-        if (name.equals(want)) continue;
         NameRow x = defaultRow(m, "monitor", "Monitors / " + name, CAT_REPORTS);
         x.group = "Monitors";
+        if (name.equals(want)) {
+          x.issue = "";
+          x.problem = false;
+          x.state = "monitor of " + nm(rep);
+          out.add(x);
+          continue;
+        }
         x.issue = "not the report name";
         x.state = "monitor of " + nm(rep);
         x.proposed = want;
@@ -4533,10 +4553,13 @@ public class SimKit extends StarMacro {
       for (Object p : sim.getPlotManager().getObjects()) {
         String name = nm(p);
         taken.computeIfAbsent("plot", k -> new HashSet<>()).add(name);
-        if ("ResidualPlot".equals(cls(p))) continue;
         NameRow x = defaultRow(p, "plot", "Plots / " + name, CAT_REPORTS);
         x.group = "Plots";
-        if (name.startsWith("pl_")) {
+        if ("ResidualPlot".equals(cls(p))) {
+          x.issue = "";
+          x.problem = false;
+          x.state = "ok";
+        } else if (name.startsWith("pl_")) {
           x.issue = "pl_ prefix";
           String key = name.substring(3);
           x.proposed = plotName(key);
@@ -4547,7 +4570,9 @@ public class SimKit extends StarMacro {
             if (rep != null) x.proposed = nm(rep).replaceFirst("^r_", "");
           }
         } else {
-          continue;
+          x.issue = "";
+          x.problem = false;
+          x.state = "ok";
         }
         out.add(x);
       }
@@ -4569,12 +4594,23 @@ public class SimKit extends StarMacro {
     Map<String, Set<String>> wanted = new HashMap<>();
     for (NameRow x : rows) {
       if (x.proposed.isEmpty() || x.proposed.equals(x.name) || x.cat < CAT_REPORTS) continue;
-      String k = x.kind;
+      String k = x.cat == CAT_CAD ? "cad|" + x.group : x.kind;   // 3D-CAD names must differ on one body only
       if (taken.getOrDefault(k, Collections.emptySet()).contains(x.proposed) || !wanted.computeIfAbsent(k, z -> new HashSet<>()).add(x.proposed)) {
         x.issue = "name in use";
         x.state = "'" + x.proposed + "' is the name of another " + x.kind + ". Enter another name.";
       }
     }
+  }
+
+  /** A row for an object whose only check is a default name. */
+  NameRow objectRow(Object o, String kind, String path, int cat) {
+    NameRow x = defaultRow(o, kind, path, cat);
+    if (!isDefaultName(x.name)) {
+      x.issue = "";
+      x.state = "ok";
+      x.problem = false;
+    }
+    return x;
   }
 
   NameRow defaultRow(Object o, String kind, String path, int cat) {
@@ -4641,10 +4677,9 @@ public class SimKit extends StarMacro {
    *  first, with their references in expressions and their monitor; a monitor row then gets the new report name. */
   void toolNames(int startCat) {
     final List<NameRow> rows = nameRows();
-    namesCad = cadModels().isEmpty() ? null : this::openCad;
     final int[] total = {0}, types0 = {0};
     Ui.edt(() -> namesWindow(rows, startCat, list -> {
-      int n = 0, bad = 0, refs = 0;
+      int n = 0, bad = 0, refs = 0, cad = 0;
       List<NameRow> order = new ArrayList<>(list);
       order.sort((a, b) -> Boolean.compare(!a.kind.equals("report"), !b.kind.equals("report")));
       for (NameRow x : order) {
@@ -4653,6 +4688,10 @@ public class SimKit extends StarMacro {
           if (x.report != null) {
             if (!nm(x.o).equals(x.name)) continue;   // renamed with its report
             if (nn.endsWith(" Monitor")) nn = nm(x.report) + " Monitor";   // the report may be renamed in this run
+          }
+          if (x.cat == CAT_CAD) {
+            if (cadApply(x, nn)) { n++; cad++; } else bad++;
+            continue;
           }
           ((NamedObject) x.o).setPresentationName(nn);
           log.line("  renamed " + x.kind + " " + x.path + " -> " + nn);
@@ -4665,7 +4704,7 @@ public class SimKit extends StarMacro {
       }
       total[0] += n;
       return plural(n, "object", "objects") + " renamed" + (refs > 0 ? ", " + plural(refs, "expression", "expressions") + " updated" : "")
-          + "." + (bad > 0 ? " " + bad + " failed: see the Output window." : "") + " Undo is not available.";
+          + "." + (cad > 0 ? cadPartsNote() : "") + (bad > 0 ? " " + bad + " failed: see the Output window." : "") + " Undo is not available.";
     }, (list, types) -> {
       int n = 0, bad = 0;
       for (NameRow x : list) {
@@ -4705,14 +4744,19 @@ public class SimKit extends StarMacro {
     };
     recount.run();
     final int[] cat = {0};
-    for (int c = 0; c < NAME_CATS.length; c++) if (issues[c] > 0) { cat[0] = c; break; }
+    boolean anyCad = false;
+    for (NameRow x : all) anyCad |= x.cat == CAT_CAD;
+    final boolean hasCad = anyCad;
+    cat[0] = 1;
+    for (int c : NAME_ORDER) if (issues[c] > 0 && (c != CAT_CAD || hasCad)) { cat[0] = c; break; }
     if (startCat >= 0 && startCat < NAME_CATS.length) cat[0] = startCat;
     final List<Object> view = new ArrayList<>();   // String for a group heading, else NameRow
     final Set<String> folded = new HashSet<>();
     final JTextField search = Ui.hintField("", "Filter by name", 20);
     final javax.swing.JCheckBox onlyIssues = new javax.swing.JCheckBox("Issues only", true);
     onlyIssues.setOpaque(false);
-    final JLabel catTitle = new JLabel(" "), catHelp = Ui.muted(" "), ticked = Ui.muted(" ");
+    final JLabel catTitle = new JLabel(" "), catHelp = Ui.muted(" "), ticked = Ui.muted(" "), cadWarn = new JLabel(" ");
+    cadWarn.setForeground(Ui.AMBER);
     catTitle.setFont(catTitle.getFont().deriveFont(Font.BOLD, 15f));
     final JButton apply = Ui.primary("Rename");
     final JButton typeBtn = new JButton("Set type");
@@ -4812,6 +4856,10 @@ public class SimKit extends StarMacro {
       }
       model.fireTableDataChanged();
       catTitle.setText(NAME_CATS[cat[0]]);
+      keepBtn.setVisible(cat[0] != CAT_CAD);
+      List<String> cw = cadNotes;
+      cadWarn.setVisible(cat[0] == CAT_CAD && !cw.isEmpty());
+      cadWarn.setText(cw.isEmpty() ? " " : "<html>" + Html.esc(String.join("\n", cw)).replace("\n", "<br>") + "</html>");
       catHelp.setText("<html><div style='width:560px'>" + Html.esc(NAME_CAT_HELP[cat[0]]) + "</div></html>");
       useAll.setEnabled(view.stream().anyMatch(o -> o instanceof NameRow && !((NameRow) o).proposed.isEmpty()));
     };
@@ -4850,7 +4898,12 @@ public class SimKit extends StarMacro {
           return this;
         }
         NameRow x = (NameRow) o;
-        if (c == 1) {
+        if (c == 1 && x.name.isEmpty()) {
+          setText("no default name");
+          setForeground(Ui.MUTED);
+          setBorder(BorderFactory.createEmptyBorder(0, 18, 0, 8));
+          setToolTipText(x.path);
+        } else if (c == 1) {
           int i = x.name.lastIndexOf('.');
           setText(i < 0 ? x.name : "<html><font color='#8A94A0'>" + Html.esc(x.name.substring(0, i + 1)) + "</font>"
               + Html.esc(x.name.substring(i + 1)) + "</html>");
@@ -4922,6 +4975,7 @@ public class SimKit extends StarMacro {
     final Runnable paintCats = () -> {
       for (int c = 0; c < catBtns.size(); c++) {
         JButton cb = catBtns.get(c);
+        if (cb == null) continue;
         boolean on = c == cat[0];
         cb.setText("<html><b>" + NAME_CATS[c] + "</b><br><font color='" + (issues[c] > 0 ? "#8A5A00" : "#2E6B2E") + "'>"
             + (issues[c] > 0 ? (issues[c] == 1 ? "1 issue" : issues[c] + " issues") : totals[c] == 0 ? "none" : "no issues") + "</font>"
@@ -4931,7 +4985,9 @@ public class SimKit extends StarMacro {
             BorderFactory.createEmptyBorder(8, 10, 8, 10)));
       }
     };
-    for (int c = 0; c < NAME_CATS.length; c++) {
+    for (int c = 0; c < NAME_CATS.length; c++) catBtns.add(null);
+    for (int c : NAME_ORDER) {
+      if (c == CAT_CAD && !hasCad) continue;
       final int cc = c;
       JButton cb = new JButton();
       cb.setHorizontalAlignment(javax.swing.SwingConstants.LEFT);
@@ -4940,20 +4996,13 @@ public class SimKit extends StarMacro {
       cb.setOpaque(true);
       cb.setAlignmentX(0f);
       cb.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, 56));
-      cb.addActionListener(e -> { cat[0] = cc; search.setText(""); folded.clear(); paintCats.run(); fill.run(); prefixBarRef[0].setVisible(cc < CAT_REPORTS); });
-      catBtns.add(cb);
+      cb.addActionListener(e -> { cat[0] = cc; search.setText(""); folded.clear(); paintCats.run(); fill.run();
+        prefixBarRef[0].setVisible(cc < CAT_REPORTS || cc == CAT_CAD); });
+      catBtns.set(c, cb);
       cats.add(cb);
       cats.add(javax.swing.Box.createVerticalStrut(4));
     }
     cats.add(javax.swing.Box.createVerticalGlue());
-    if (namesCad != null) {
-      JButton cadLink = Ui.link("3D-CAD faces\u2026");
-      cadLink.setToolTipText("Names the faces of the 3D-CAD bodies from the body names");
-      cadLink.setAlignmentX(0f);
-      cadLink.addActionListener(e -> namesCad.run());
-      cats.add(cadLink);
-      cats.add(javax.swing.Box.createVerticalStrut(8));
-    }
     JLabel src = Ui.muted("<html><div style='width:170px'>Prefixes: " + (Files.isRegularFile(Fs.config("naming.csv")) ? "config/naming.csv"
         : "built-in") + "</div></html>");
     src.setAlignmentX(0f);
@@ -4987,8 +5036,9 @@ public class SimKit extends StarMacro {
         for (Object o : view) if (o instanceof NameRow && ((NameRow) o).pick) on.add((NameRow) o);
         if (on.isEmpty()) for (int i : t.getSelectedRows()) if (view.get(i) instanceof NameRow) on.add((NameRow) view.get(i));
         for (NameRow x : on) {
-          if (x.cat >= CAT_REPORTS) continue;
-          x.proposed = withPrefix(x.name, p[0]);
+          if (x.cat == CAT_CAD) x.proposed = cadName(p[0], x.name.isEmpty() ? x.base : x.name);
+          else if (x.cat >= CAT_REPORTS) continue;
+          else x.proposed = withPrefix(x.name, p[0]);
           x.pick = true;
         }
         if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);
@@ -5007,7 +5057,7 @@ public class SimKit extends StarMacro {
     });
     JPanel head = new JPanel();
     head.setLayout(new javax.swing.BoxLayout(head, javax.swing.BoxLayout.Y_AXIS));
-    for (javax.swing.JComponent k : new javax.swing.JComponent[] {catTitle, catHelp, tools, prefixBar}) {
+    for (javax.swing.JComponent k : new javax.swing.JComponent[] {catTitle, catHelp, cadWarn, tools, prefixBar}) {
       k.setAlignmentX(0f);
       head.add(k);
       head.add(javax.swing.Box.createVerticalStrut(k == catTitle ? 2 : 8));
@@ -5031,7 +5081,7 @@ public class SimKit extends StarMacro {
     body.add(cats, BorderLayout.WEST);
     body.add(right, BorderLayout.CENTER);
     body.setPreferredSize(new java.awt.Dimension(1060, 560));
-    prefixBar.setVisible(cat[0] < CAT_REPORTS);
+    prefixBar.setVisible(cat[0] < CAT_REPORTS || cat[0] == CAT_CAD);
     // keys: Space ticks, F2 edits the new name, Ctrl+A ticks all rows shown, Ctrl+F goes to the filter
     t.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke("F2"), "simkit.edit");
     t.getActionMap().put("simkit.edit", new javax.swing.AbstractAction() {
@@ -5161,15 +5211,6 @@ public class SimKit extends StarMacro {
 
   // ----- 3D-CAD face names -----
 
-  /** One 3D-CAD body in the 3D-CAD faces window. */
-  static final class CadRow {
-    Object model, body;   // star.cadmodeler.CadModel, star.cadmodeler.Body
-    String modelName = "", name = "", rest = "", check = "";
-    int faces, unnamed;
-    final List<String> names = new ArrayList<>(), noPrefix = new ArrayList<>();
-    boolean pick, problem;
-  }
-
   List<star.cadmodeler.CadModel> cadModels() {
     List<star.cadmodeler.CadModel> out = new ArrayList<>();
     try {
@@ -5180,48 +5221,128 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** Face name TYPE_assembly_body, or TYPE_body without an assembly. Blanks, dots and slashes become '-'. */
-  static String cadName(String type, String assembly, String body) {
-    String a = assembly.trim().replaceAll("[\\s./\\\\]+", "-"), b = body.trim().replaceAll("[\\s./\\\\]+", "-");
-    return type + "_" + (a.isEmpty() ? "" : a + "_") + b;
+  /** Face name <prefix>_<name>. An existing type prefix of the name is replaced; blanks, dots and slashes become '_'. */
+  static String cadName(String prefix, String name) {
+    String n = name.trim();
+    Matcher m = prefixRx.matcher(n);
+    if (m.find()) n = n.substring(m.end());
+    return prefix + "_" + n.replaceAll("[\\s./\\\\]+", "_").replaceAll("^_+|_+$", "");
   }
 
-  /** One row per body of every 3D-CAD model, with face counts, face names and the naming check. */
-  List<CadRow> cadRows() {
-    List<CadRow> out = new ArrayList<>();
-    for (star.cadmodeler.CadModel m : cadModels()) {
+  /** 3D-CAD rows: one per face name (NamedFaces) and one per body for its default face name, which the faces without
+   *  a name take, also after later CAD changes. taken gets the names in use on each body ("cad|<group>"). */
+  void cadNameRows(List<NameRow> out, Map<String, Set<String>> taken) {
+    List<star.cadmodeler.CadModel> ms = cadModels();
+    String wall = prefixFor("WallBoundary");
+    if (wall == null) wall = "WALL";
+    for (star.cadmodeler.CadModel m : ms) {
       for (star.cadmodeler.Body b : m.getBodyManager().getBodies()) {
-        CadRow x = new CadRow();
-        x.model = m;
-        x.body = b;
-        x.modelName = nm(m);
-        x.name = nm(b);
-        try { x.faces = b.getFaceManager().getFaces().size(); } catch (Throwable t) { log.na("faces of " + x.name, t); }
+        String grp = (ms.size() > 1 ? nm(m) + " / " : "") + nm(b);
+        Set<String> tk = taken.computeIfAbsent("cad|" + grp, k -> new HashSet<>());
+        int unnamed = 0;
+        String def = "";
         try {
           String r = b.getUnNamedFacesDefaultAttributeName();
-          x.rest = r == null ? "" : r.trim();
-        } catch (Throwable t) { log.na("unnamed face name of " + x.name, t); }
+          def = r == null ? "" : r.trim();
+        } catch (Throwable t) { log.na("default face name of " + nm(b), t); }
         try {
           star.cadmodeler.NamedFacesManager nf = b.getNamedFacesManager();
           star.cadmodeler.UnNamedFacesDefault u = nf.getUnNamedFacesDefault();
-          x.unnamed = u == null || !u.unNamedFacesArePresent() ? 0 : u.getFaces().size();
+          unnamed = u == null || !u.unNamedFacesArePresent() ? 0 : u.getFaces().size();
           for (star.cadmodeler.NamedFaces g : nf.getNamedFaces()) {
             if (g instanceof star.cadmodeler.UnNamedFacesDefault) continue;
-            String n = nm(g);
-            x.names.add(n + " (" + g.getFaces().size() + ")");
-            if (bcToken(n) == null) x.noPrefix.add(n);
+            NameRow x = cadRow(m, g, "3D-CAD face name", nm(g), grp);
+            int nfc = g.getFaces().size();
+            x.state = plural(nfc, "face", "faces");
+            tk.add(x.name);
+            if (bcToken(x.name) == null) {
+              x.issue = "no prefix";
+              x.state += ". Use a prefix button or enter a name.";
+              x.problem = true;
+            }
+            out.add(x);
           }
-        } catch (Throwable t) { log.na("face names of " + x.name, t); }
-        List<String> k = new ArrayList<>();
-        if (x.unnamed > 0 && x.rest.isEmpty()) k.add(x.unnamed + " unnamed");
-        if (!x.noPrefix.isEmpty()) k.add("no prefix: " + String.join(", ", x.noPrefix));
-        x.problem = !k.isEmpty();
-        if (x.unnamed > 0 && !x.rest.isEmpty()) k.add(x.unnamed + " in " + x.rest);
-        x.check = String.join("; ", k);
+        } catch (Throwable t) { log.na("face names of " + nm(b), t); }
+        NameRow x = cadRow(m, b, "3D-CAD default name", def, grp);
+        x.base = nm(b);
+        x.state = plural(unnamed, "face without a name", "faces without a name");
+        if (!def.isEmpty()) tk.add(def);
+        if (def.isEmpty() && unnamed > 0) {
+          x.problem = true;
+          if (isDefaultName(nm(b))) {
+            x.issue = "default body name";
+            x.state += ". Rename the body in 3D-CAD or enter a name.";
+          } else {
+            x.issue = "no default name";
+            x.proposed = cadName(wall, nm(b));
+          }
+        } else if (!def.isEmpty() && bcToken(def) == null) {
+          x.issue = "no prefix";
+          x.problem = true;
+        }
         out.add(x);
       }
     }
-    return out;
+  }
+
+  NameRow cadRow(star.cadmodeler.CadModel m, Object o, String kind, String name, String grp) {
+    NameRow x = new NameRow();
+    x.o = o;
+    x.owner = m;
+    x.kind = kind;
+    x.name = name;
+    x.group = grp;
+    x.path = grp + " / " + (name.isEmpty() ? "default face name" : name);
+    x.cat = CAT_CAD;
+    x.state = "ok";
+    return x;
+  }
+
+  /** Sets a 3D-CAD name: the default face name of a body, or a new name for the faces of a face name. */
+  boolean cadApply(NameRow x, String nn) {
+    final star.cadmodeler.CadModel m = (star.cadmodeler.CadModel) x.owner;
+    try {
+      if (x.o instanceof star.cadmodeler.Body) {
+        final star.cadmodeler.Body b = (star.cadmodeler.Body) x.o;
+        cadChange(m, () -> b.setUnNamedFacesDefaultAttributeName(nn));
+      } else {
+        final List<star.cadmodeler.Face> fs = new ArrayList<>(((star.cadmodeler.NamedFaces) x.o).getFaces());
+        cadChange(m, () -> m.setFaceNameAttributes(fs, nn));
+      }
+      log.line("  3D-CAD " + x.path + " -> " + nn);
+      return true;
+    } catch (Throwable t) {
+      log.na("3D-CAD name " + x.path, t);
+      return false;
+    }
+  }
+
+  /** After 3D-CAD names change: updates the 3D-CAD parts that are not assigned to a region, so their part surfaces
+   *  take the names. Parts assigned to a region are left to the user, because their boundaries may change. */
+  String cadPartsNote() {
+    List<GeometryPart> parts = new ArrayList<>();
+    try {
+      for (Object p : sim.get(SimulationPartManager.class).getParts()) if (p instanceof star.cadmodeler.SolidModelPart) parts.add((GeometryPart) p);
+    } catch (Throwable t) { log.na("3D-CAD parts", t); }
+    if (parts.isEmpty()) return " New parts take the names.";
+    Set<Object> assigned = new HashSet<>();
+    try { for (Region r : sim.getRegionManager().getRegions()) assigned.addAll(r.getPartGroup().getObjects()); }
+    catch (Throwable t) { log.na("parts of the regions", t); }
+    List<GeometryPart> free = new ArrayList<>();
+    int inRegion = 0;
+    for (GeometryPart p : parts) if (assigned.contains(p)) inRegion++; else free.add(p);
+    String note = "";
+    if (!free.isEmpty()) {
+      try {
+        sim.get(SimulationPartManager.class).updateParts(free);
+        note = " " + plural(free.size(), "part", "parts") + " updated.";
+      } catch (Throwable t) {
+        log.na("part update", t);
+        note = " Update the parts in STAR-CCM+ to take the names.";
+      }
+    }
+    if (inRegion > 0) note += " " + plural(inRegion, "part is", "parts are") + " assigned to regions. Update them in STAR-CCM+ and check the boundaries.";
+    return note;
   }
 
   /** Warnings for Unite features with Transfer face names off, which lose the face names. */
@@ -5256,264 +5377,16 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Names the faces of the bodies TYPE_assembly_body. Only unnamed faces are named unless 'all' is set. */
-  String cadNameFromBody(List<CadRow> rows, String type, String assembly, boolean all) {
-    int n = 0, faces = 0, bad = 0;
-    for (CadRow x : rows) {
-      final star.cadmodeler.CadModel m = (star.cadmodeler.CadModel) x.model;
-      final star.cadmodeler.Body b = (star.cadmodeler.Body) x.body;
-      final String name = cadName(type, assembly, x.name);
-      try {
-        final List<star.cadmodeler.Face> fs = new ArrayList<>();
-        if (all) fs.addAll(b.getFaceManager().getFaces());
-        else {
-          star.cadmodeler.UnNamedFacesDefault u = b.getNamedFacesManager().getUnNamedFacesDefault();
-          if (u != null && u.unNamedFacesArePresent()) fs.addAll(u.getFaces());
-        }
-        if (fs.isEmpty()) continue;
-        cadChange(m, () -> m.setFaceNameAttributes(fs, name));
-        log.line("  3D-CAD " + x.modelName + " / " + x.name + ": " + fs.size() + " face(s) named " + name);
-        n++;
-        faces += fs.size();
-      } catch (Throwable t) {
-        log.na("3D-CAD names of " + x.name, t);
-        bad++;
-      }
-    }
-    return (faces == 1 ? "1 face" : faces + " faces") + " named on " + (n == 1 ? "1 body." : n + " bodies.")
-        + (bad > 0 ? " " + bad + " failed: see the Output window." : "") + " Parts take the names at the next part update.";
-  }
-
-  /** Sets the unnamed-faces name TYPE_assembly_body_rest. It also applies to faces from later CAD changes. */
-  String cadSetRest(List<CadRow> rows, String type, String assembly) {
-    int n = 0, bad = 0;
-    for (CadRow x : rows) {
-      final star.cadmodeler.CadModel m = (star.cadmodeler.CadModel) x.model;
-      final star.cadmodeler.Body b = (star.cadmodeler.Body) x.body;
-      final String name = cadName(type, assembly, x.name) + "_rest";
-      try {
-        cadChange(m, () -> b.setUnNamedFacesDefaultAttributeName(name));
-        log.line("  3D-CAD " + x.modelName + " / " + x.name + ": unnamed faces named " + name);
-        n++;
-      } catch (Throwable t) {
-        log.na("3D-CAD rest name of " + x.name, t);
-        bad++;
-      }
-    }
-    return "Rest name set on " + (n == 1 ? "1 body." : n + " bodies.") + (bad > 0 ? " " + bad + " failed: see the Output window." : "")
-        + " Parts take the names at the next part update.";
-  }
-
-  /** Runs a window action. a = {"body" or "rest", type, assembly, "1" to include named faces}. */
-  String cadAct(List<CadRow> rows, String[] a) {
-    return "rest".equals(a[0]) ? cadSetRest(rows, a[1], a[2]) : cadNameFromBody(rows, a[1], a[2], "1".equals(a[3]));
-  }
-
-  /** Writes the 3D-CAD bodies and the check to the log (batch action cadnames). */
+  /** Writes the 3D-CAD rows and warnings to the log (batch action cadnames). */
   void logCad() {
-    List<CadRow> rows = cadRows();
+    List<NameRow> rows = new ArrayList<>();
+    cadNameRows(rows, new HashMap<>());
     if (rows.isEmpty()) log.line("3D-CAD: no 3D-CAD body");
-    for (CadRow x : rows) {
-      log.line("3D-CAD " + x.modelName + " / " + x.name + ": " + x.faces + " faces, " + x.unnamed + " unnamed, rest name '" + x.rest
-          + "', names " + x.names + ", check: " + (x.check.isEmpty() ? "ok" : x.check) + (x.problem ? " (issue)" : ""));
+    for (NameRow x : rows) {
+      log.line("3D-CAD " + x.path + ": " + x.state + (x.issue.isEmpty() ? "" : " [" + x.issue + "]")
+          + (x.proposed.isEmpty() ? "" : " -> " + x.proposed));
     }
     for (String w : cadWarnings()) log.line("3D-CAD warning: " + w);
-  }
-
-  /** Opens the 3D-CAD faces window. The bodies are read in a worker thread. */
-  void openCad() {
-    Thread w = new Thread(() -> {
-      final List<CadRow> rows = new ArrayList<>();
-      final List<String> warn = new ArrayList<>();
-      try {
-        rows.addAll(cadRows());
-        warn.addAll(cadWarnings());
-      } catch (Throwable t) {
-        log.na("3D-CAD faces", t);
-      }
-      javax.swing.SwingUtilities.invokeLater(() -> cadWindow(rows, warn, this::cadAct, this::cadRows, this::cadWarnings));
-    }, "SimKit 3D-CAD");
-    w.setDaemon(true);
-    w.start();
-  }
-
-  /** The 3D-CAD faces window, one row per body. Runs on the Swing thread, the actions run in a worker thread. */
-  Boolean cadWindow(final List<CadRow> all, final List<String> warn, final java.util.function.BiFunction<List<CadRow>, String[], String> act,
-      final java.util.function.Supplier<List<CadRow>> reload, final java.util.function.Supplier<List<String>> rewarn) {
-    List<String> types = new ArrayList<>();
-    for (String[] p : prefixes) types.add(p[0]);
-    final javax.swing.JComboBox<String> type = new javax.swing.JComboBox<>(types.toArray(new String[0]));
-    type.setSelectedItem("WALL");
-    final JTextField asm = Ui.hintField("", "optional, e.g. burner", 14);
-    final JLabel preview = Ui.muted(" "), status = Ui.muted(" "), warnLbl = new JLabel(" ");
-    warnLbl.setForeground(new java.awt.Color(0x8A, 0x5A, 0x00));
-    final javax.swing.JCheckBox named = new javax.swing.JCheckBox("Also faces that have a name");
-    named.setOpaque(false);
-    named.setToolTipText("Off: faces that already have a name keep it");
-    final JButton fromBody = Ui.primary("Name from body");
-    fromBody.putClientProperty("simkit.stay", Boolean.TRUE);
-    fromBody.setToolTipText("Names the faces of the ticked bodies TYPE_assembly_body");
-    final JButton rest = new JButton("Set rest name");
-    rest.setToolTipText("The unnamed faces of the ticked bodies, now and after CAD changes, take TYPE_assembly_body_rest");
-    final JButton tickAll = Ui.link("Tick all");
-    final String[] lastMsg = {null};
-    final java.awt.Color amber = new java.awt.Color(0x8A, 0x5A, 0x00), green = new java.awt.Color(0x2E, 0x6B, 0x2E);
-    final java.util.function.Function<CadRow, String> newName = x -> cadName(String.valueOf(type.getSelectedItem()), asm.getText(), x.name);
-
-    final javax.swing.table.AbstractTableModel model = new javax.swing.table.AbstractTableModel() {
-      private static final long serialVersionUID = 1L;
-      @Override public int getRowCount() { return all.size(); }
-      @Override public int getColumnCount() { return 5; }
-      @Override public String getColumnName(int c) { return new String[] {"", "Body", "Faces", "Check", "Name from body"}[c]; }
-      @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
-      @Override public boolean isCellEditable(int r, int c) { return c == 0; }
-      @Override public Object getValueAt(int r, int c) {
-        CadRow x = all.get(r);
-        return c == 0 ? x.pick : c == 1 ? x.name : c == 2 ? x.faces + (x.unnamed > 0 ? " (" + x.unnamed + " unnamed)" : "")
-            : c == 3 ? (x.check.isEmpty() ? "ok" : x.check) : newName.apply(x);
-      }
-      @Override public void setValueAt(Object v, int r, int c) {
-        all.get(r).pick = Boolean.TRUE.equals(v);
-        fireTableRowsUpdated(0, all.size() - 1);
-      }
-    };
-    final JTable t = new JTable(model);
-    t.setRowHeight(26);
-    t.setShowVerticalLines(false);
-    t.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
-    t.setFillsViewportHeight(true);
-    t.getColumnModel().getColumn(0).setMaxWidth(30);
-    t.getColumnModel().getColumn(1).setPreferredWidth(220);
-    t.getColumnModel().getColumn(2).setPreferredWidth(120);
-    t.getColumnModel().getColumn(3).setPreferredWidth(260);
-    t.getColumnModel().getColumn(4).setPreferredWidth(260);
-    t.setDefaultRenderer(String.class, new javax.swing.table.DefaultTableCellRenderer() {
-      private static final long serialVersionUID = 1L;
-      @Override public java.awt.Component getTableCellRendererComponent(JTable tb, Object v, boolean sel, boolean f, int r, int c) {
-        super.getTableCellRendererComponent(tb, v, false, false, r, c);
-        CadRow x = all.get(r);
-        setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
-        setBackground(tb.isRowSelected(r) ? Ui.PALE : java.awt.Color.WHITE);
-        setForeground(java.awt.Color.BLACK);
-        setFont(tb.getFont().deriveFont(Font.PLAIN));
-        setToolTipText(null);
-        if (c == 1) {
-          setText("<html><font color='#8A94A0'>" + Html.esc(x.modelName) + " / </font>" + Html.esc(x.name) + "</html>");
-          setToolTipText(x.names.isEmpty() ? "No named faces" : "<html>" + Html.esc(String.join(", ", x.names)) + "</html>");
-        } else if (c == 3) {
-          setForeground(x.problem ? amber : green);
-          setFont(tb.getFont().deriveFont(Font.BOLD, 11f));
-        } else if (c == 4) {
-          setForeground(x.pick ? Ui.BLUE : new java.awt.Color(0x7F, 0x9C, 0xC4));
-        }
-        return this;
-      }
-    });
-    final Runnable count = () -> {
-      int n = 0;
-      for (CadRow x : all) if (x.pick) n++;
-      if (n > 0) lastMsg[0] = null;
-      fromBody.setText(n == 0 ? "Name from body" : n == 1 ? "Name from body (1 body)" : "Name from body (" + n + " bodies)");
-      fromBody.setEnabled(n > 0);
-      rest.setEnabled(n > 0);
-      status.setForeground(Ui.MUTED);
-      status.setText(n == 0 && lastMsg[0] != null ? lastMsg[0] : n == 0 ? "No bodies ticked." : n == 1 ? "1 body ticked." : n + " bodies ticked.");
-      String ty = String.valueOf(type.getSelectedItem());
-      preview.setText("Names: " + cadName(ty, asm.getText(), "<body>") + "      Rest: " + cadName(ty, asm.getText(), "<body>") + "_rest");
-      warnLbl.setText(warn.isEmpty() ? " " : "<html>" + Html.esc(String.join("  ", warn)) + "</html>");
-    };
-    model.addTableModelListener(e -> count.run());
-    type.addActionListener(e -> { count.run(); t.repaint(); });
-    asm.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-      @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { count.run(); t.repaint(); }
-      @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { count.run(); t.repaint(); }
-      @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { count.run(); t.repaint(); }
-    });
-    tickAll.addActionListener(e -> { for (CadRow x : all) x.pick = true; model.fireTableRowsUpdated(0, Math.max(0, all.size() - 1)); });
-
-    final java.util.function.Consumer<String[]> work = a -> {
-      final List<CadRow> go = new ArrayList<>();
-      for (CadRow x : all) if (x.pick) go.add(x);
-      if (go.isEmpty()) return;
-      status.setText("rest".equals(a[0]) ? "Setting the rest name..." : "Naming faces...");
-      fromBody.setEnabled(false);
-      rest.setEnabled(false);
-      Thread w = new Thread(() -> {   // STAR-CCM+ calls off the Swing thread
-        String msg;
-        List<CadRow> fresh = null;
-        List<String> fw = null;
-        try {
-          msg = act.apply(go, a);
-          fresh = reload == null ? null : reload.get();
-          fw = rewarn == null ? null : rewarn.get();
-        } catch (Throwable x) {
-          msg = "Stopped: " + reason(x);
-        }
-        final String m = msg;
-        final List<CadRow> f = fresh;
-        final List<String> g = fw;
-        javax.swing.SwingUtilities.invokeLater(() -> {
-          if (f != null) {
-            all.clear();
-            all.addAll(f);
-          }
-          if (g != null) {
-            warn.clear();
-            warn.addAll(g);
-          }
-          for (CadRow x : all) x.pick = false;
-          lastMsg[0] = m;
-          model.fireTableDataChanged();
-          count.run();
-        });
-      }, "SimKit 3D-CAD");
-      w.setDaemon(true);
-      w.start();
-    };
-    fromBody.addActionListener(e -> work.accept(new String[] {"body", String.valueOf(type.getSelectedItem()), asm.getText(), named.isSelected() ? "1" : "0"}));
-    rest.addActionListener(e -> work.accept(new String[] {"rest", String.valueOf(type.getSelectedItem()), asm.getText(), "0"}));
-
-    JPanel row = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
-    row.add(new JLabel("Type"));
-    row.add(type);
-    row.add(javax.swing.Box.createHorizontalStrut(10));
-    row.add(new JLabel("Assembly"));
-    row.add(asm);
-    row.add(javax.swing.Box.createHorizontalStrut(10));
-    row.add(tickAll);
-    JPanel head = new JPanel();
-    head.setLayout(new javax.swing.BoxLayout(head, javax.swing.BoxLayout.Y_AXIS));
-    JLabel help = Ui.muted("<html><div style='width:700px'>Name from body: faces of the ticked bodies get TYPE_assembly_body "
-        + "(faces with a name keep it unless the box is ticked). Set rest name: their unnamed faces, now and after CAD changes, get "
-        + "TYPE_assembly_body_rest. Unite: turn on Transfer face names, or the face names are lost.</div></html>");
-    for (javax.swing.JComponent k : new javax.swing.JComponent[] {row, preview, help}) {
-      k.setAlignmentX(0f);
-      head.add(k);
-      head.add(javax.swing.Box.createVerticalStrut(8));
-    }
-    JScrollPane sp = new JScrollPane(t);
-    sp.getViewport().setBackground(java.awt.Color.WHITE);
-    sp.setBorder(BorderFactory.createLineBorder(new java.awt.Color(0xE3, 0xE7, 0xEC)));
-    JPanel acts = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
-    acts.add(named);
-    acts.add(rest);
-    JPanel south = new JPanel(new BorderLayout(10, 6));
-    south.add(warnLbl, BorderLayout.NORTH);
-    south.add(status, BorderLayout.CENTER);
-    south.add(acts, BorderLayout.EAST);
-    JPanel body = new JPanel(new BorderLayout(0, 6));
-    body.add(head, BorderLayout.NORTH);
-    body.add(sp, BorderLayout.CENTER);
-    body.add(south, BorderLayout.SOUTH);
-    body.setPreferredSize(new java.awt.Dimension(960, 480));
-    count.run();
-    return Ui.sheet("3D-CAD faces", "Face names from the 3D-CAD bodies. Parts take the names at the next part update.", body, fromBody, null);
-  }
-
-  static int[] append(int[] a, int v) {
-    int[] b = Arrays.copyOf(a, a.length + 1);
-    b[a.length] = v;
-    return b;
   }
 
   // =====================================================================================================
@@ -8322,10 +8195,16 @@ public class SimKit extends StarMacro {
           + "', presentation '" + f0.getPresentationName() + "'");
     } catch (Throwable t) { log.na("cad: names by hand", t); }
     logCad();
-    List<CadRow> two = new ArrayList<>(), third = new ArrayList<>();
-    for (CadRow x : cadRows()) (x.name.startsWith("electrode") ? third : two).add(x);
-    log.line("cad: name from body -> " + cadNameFromBody(two, "WALL", "burner", false));
-    log.line("cad: rest name -> " + cadSetRest(third, "WALL", "burner"));
+    List<NameRow> rows = new ArrayList<>();
+    Map<String, Set<String>> taken = new HashMap<>();
+    cadNameRows(rows, taken);
+    for (NameRow x : rows) if (x.problem && !x.proposed.isEmpty()) log.line("cad: apply " + x.path + " -> " + x.proposed + ": " + cadApply(x, x.proposed));
+    for (NameRow x : rows) if (x.name.equals("swirl")) log.line("cad: rename swirl -> " + cadName("WALL", "swirl") + ": " + cadApply(x, cadName("WALL", "swirl")));
+    List<NameRow> clash = new ArrayList<>();
+    cadNameRows(clash, taken = new HashMap<>());
+    for (NameRow x : clash) if (x.base.equals("stator")) x.proposed = "IN_fuel";
+    nameClashes(clash, taken);
+    for (NameRow x : clash) if (x.base.equals("stator")) log.line("cad: default name IN_fuel on stator (also a face name there): [" + x.issue + "]");
     logCad();
     try {
       star.cadmodeler.UniteBodiesFeature uf = m.getFeatureManager().createUniteBodies2(bodies);
@@ -8348,6 +8227,7 @@ public class SimKit extends StarMacro {
         if (s instanceof Collection) for (Object o : (Collection<?>) s) ps.add(nm(o));
         log.line("cad: part " + nm(p) + " surfaces " + ps);
       }
+      log.line("cad: parts note:" + cadPartsNote());
     } catch (Throwable t) { log.na("cad: parts", t); }
     log.line("cad: done (the simulation is not saved)");
   }

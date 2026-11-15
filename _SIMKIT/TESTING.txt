@@ -658,3 +658,15 @@ C. RESULTS SO FAR
   name or the former pl_ name gets the new monitors (MonitorPlot.setObjects) and a pl_ name is changed.
   Google features removed (2026-11-15): the tracker's Export CSV button and case_tracker.csv (batch Tracker logs the
   run count), Google wording in the code and the docs. The case guideline moves from Google/ to docs/.
+  Names toolbar button (2026-11-15): buttons/SimKit_Names.java (TOOL NAMES), icon N in the Set-up colour, installed
+  between Calculators and Reports. Names lists every object of a category; Issues only off shows the rows without an
+  issue ("ok"), including standard reports, monitors and plots that follow the rules, scenes, derived parts, user field
+  functions, parts and regions.
+  3D-CAD faces as a Names category (first on the left, shown with a 3D-CAD model); the separate 3D-CAD faces window,
+  the rest name, the Type combo, the Assembly field and "Also faces that have a name" are removed. Rows per body: each
+  face name (NamedFaces) with its face count, and the default face name (Body.setUnNamedFacesDefaultAttributeName).
+  Issues: no default name (proposal <WALL prefix>_<body>, blanks/dots/slashes -> _), no prefix (prefix buttons apply
+  <prefix>_<name>), default body name (no proposal), name in use (same name on the same body). Renaming a face name
+  sets the new name on its faces (CadModel.setFaceNameAttributes). After a 3D-CAD rename, SolidModelParts not assigned
+  to a region are updated (SimulationPartManager.updateParts); parts in a region get a note. Unite with Transfer face
+  names off: amber line above the table. Keep name is hidden in this category.
