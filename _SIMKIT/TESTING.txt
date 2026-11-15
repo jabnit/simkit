@@ -847,3 +847,4 @@ C. RESULTS SO FAR
   stoppingCriterion and the criterion column of standard_reports.csv are removed (mean is column 8, options 9 in the
   file; an old file with a criterion column is read by header name, the column is ignored). Deleting reports still
   deletes the criteria on their monitors (made by earlier versions or by hand), with the check.
+  Checked on Linux (STAR-CCM+ 2310): delete all in Existing, then Create in Predefined: no crash.
