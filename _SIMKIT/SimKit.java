@@ -5840,7 +5840,7 @@ public class SimKit extends StarMacro {
       {"r_mdot_in", "massBalance", "mass flow", "", "IN", "", "mass flow entering (IN_ surfaces)"},
       {"r_mdot_out", "massBalance", "mass flow", "", "OUT+OPEN", "", "mass flow leaving (OUT_ and OPEN_)"},
       {"r_mdot_net", "massBalance", "mass flow", "", "IN+OUT+OPEN", "", "net mass flow: tends to 0 when mass is conserved"},
-      {"r_mdot_imbalance_pct", "convergence", "expression", "abs(${r_mdot_net}) / abs(${r_mdot_in}) * 100", "", "needs r_mdot_net r_mdot_in", "mass imbalance in % of the inflow (converged: below 0.1)", "below 0.1", ""},
+      {"r_mdot_imbalance_pct", "massBalance", "expression", "abs(${r_mdot_net}) / abs(${r_mdot_in}) * 100", "", "needs r_mdot_net r_mdot_in", "mass imbalance in % of the inflow (converged: below 0.1)", "below 0.1", "", "plot=%"},
       {"r_p_in_avg", "pressure", "area average", "Pressure", "IN", "", "inlet static pressure (area average)"},
       {"r_p_out_avg", "pressure", "area average", "Pressure", "OUT", "", "outlet static pressure (area average)"},
       {"r_p0_in_avg", "pressure", "area average", "TotalPressure", "IN", "", "inlet total pressure (area average)"},
@@ -5896,7 +5896,6 @@ public class SimKit extends StarMacro {
   static String groupTitle(String g) {
     switch (g) {
       case "massBalance": return "Mass balance";
-      case "convergence": return "Convergence";
       case "pressure": return "Pressure";
       case "temperature": return "Temperature";
       case "heat": return "Walls: heat";
@@ -6177,16 +6176,12 @@ public class SimKit extends StarMacro {
 
   /** The reports in the simulation of a standard report row: the report, its reports per continuum and its means. */
   List<Object> rowReports(String name) {
+    Set<String> names = new HashSet<>();   // the report, one per continuum, and the mean of each
+    names.add(name);
+    for (Cont k : continua()) names.add(name + "_" + k.token);
+    for (String n : new ArrayList<>(names)) names.add(n + "_mean");
     List<Object> out = new ArrayList<>();
-    Set<String> others = new HashSet<>();   // other rows whose names start with this one, e.g. r_p_min and r_p_min_abs
-    for (String[] r : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) if (r[0] != null && !r[0].trim().equals(name)) others.add(r[0].trim());
-    for (Object o : sim.getReportManager().getObjects()) {
-      String n = nm(o);
-      if (!n.equals(name) && !n.startsWith(name + "_")) continue;
-      boolean other = false;
-      for (String q : others) other |= q.startsWith(name + "_") && (n.equals(q) || n.startsWith(q + "_"));
-      if (!other) out.add(o);
-    }
+    for (Object o : sim.getReportManager().getObjects()) if (names.contains(nm(o))) out.add(o);
     return out;
   }
 
@@ -6255,6 +6250,33 @@ public class SimKit extends StarMacro {
       }
     }
     return out;
+  }
+
+  /** Removes a folder of the tree (path "A/B") and its sub-folders when they are left empty. Returns "" or a note. */
+  String pruneFolder(Object manager, String path) {
+    try {
+      star.base.neo.ClientServerObjectGroupManager at = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(manager, "getGroupsManager");
+      Object f = null;
+      star.base.neo.ClientServerObjectGroupManager parent = at;
+      for (String part : path.split("/")) {
+        f = null;
+        for (Object g : at.getObjects()) if (part.equals(nm(g).replace("/", "∕")) && g instanceof star.base.neo.ClientServerObjectGroup) f = g;
+        if (f == null) return "";
+        parent = at;
+        at = ((star.base.neo.ClientServerObjectGroup) f).getGroupsManager();
+      }
+      prune(parent, f);
+      return "";
+    } catch (Throwable t) {
+      log.na("folder " + path, t);
+      return "";
+    }
+  }
+
+  private void prune(star.base.neo.ClientServerObjectGroupManager parent, Object f) throws Exception {
+    star.base.neo.ClientServerObjectGroupManager sub = ((star.base.neo.ClientServerObjectGroup) f).getGroupsManager();
+    for (Object g : new ArrayList<Object>(sub.getObjects())) if (g instanceof star.base.neo.ClientServerObjectGroup) prune(sub, g);
+    if (emptyFolder(f)) dropFolder(parent, f);
   }
 
   /** A folder of the tree with no object and no sub-folder. */
@@ -7639,7 +7661,7 @@ public class SimKit extends StarMacro {
    *  the plots first. Cannot be undone. */
   String deleteReports(List<Object> reports) {
     int nr = 0, nm = 0, nc = 0, bad = 0;
-    for (Object r : reports) {
+    for (Object r : deleteOrder(reports)) {
       try {
         List<Monitor> mons = new ArrayList<>();
         for (Object m : sim.getMonitorManager().getObjects()) if (m instanceof ReportMonitor && Reflect.tryCall(m, "getReport") == r) mons.add((Monitor) m);
@@ -7670,6 +7692,36 @@ public class SimKit extends StarMacro {
     lastUndo = null;   // an earlier change may refer to what was deleted
     return plural(nr, "report", "reports") + " deleted" + (nm > 0 ? ", " + plural(nm, "monitor", "monitors") : "")
         + (nc > 0 ? ", " + plural(nc, "stopping criterion", "stopping criteria") : "") + "." + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
+  }
+
+  /** The reports in an order STAR-CCM+ accepts for deletion: a report that uses another one of the list (formula with
+   *  ${name}, or mean of its monitor) comes before it. */
+  List<Object> deleteOrder(List<Object> reports) {
+    Map<Object, Set<Object>> uses = new IdentityHashMap<>();
+    for (Object r : reports) {
+      Set<Object> u = Collections.newSetFromMap(new IdentityHashMap<>());
+      Object def = Reflect.tryCall(r, "getDefinition");
+      Object mon = Reflect.tryCall(r, "getMonitor");
+      Object of = mon == null ? null : Reflect.tryCall(mon, "getReport");
+      for (Object q : reports) {
+        if (q == r) continue;
+        if ((def instanceof String && ((String) def).contains("${" + nm(q) + "}")) || of == q) u.add(q);
+      }
+      uses.put(r, u);
+    }
+    List<Object> left = new ArrayList<>(reports), out = new ArrayList<>();
+    while (!left.isEmpty()) {
+      Object next = null;
+      for (Object r : left) {   // a report no other remaining report uses
+        boolean used = false;
+        for (Object q : left) used |= q != r && uses.get(q).contains(r);
+        if (!used) { next = r; break; }
+      }
+      if (next == null) next = left.get(0);   // a cycle: keep the given order
+      left.remove(next);
+      out.add(next);
+    }
+    return out;
   }
 
   /** Renames a report (expressions with ${old} and the monitor "<old> Monitor" follow) or a plot. Undo renames back. */
@@ -8252,14 +8304,29 @@ public class SimKit extends StarMacro {
     };
     rt.getSelectionModel().addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) showRep.run(); });
     // Delete: right-click menu or the Delete key, after a confirmation that lists what goes
-    final Runnable delReports = () -> {
-      if (picked.isEmpty() || p.exec == null) return;
+    // delete of reports: a report used by a report outside the list (or by a field function) is kept
+    final java.util.function.BiConsumer<List<RepInfo>, String> delList = (list, folder) -> {
+      if (list.isEmpty() || p.exec == null) return;
       final List<Object> go = new ArrayList<>();
       List<String> kept = new ArrayList<>();
       int mons = 0, crits = 0;
       Set<String> plots = new TreeSet<>();
-      for (RepInfo x : picked) {
-        if (!x.usedBy.isEmpty()) { kept.add(x.name + " (used by " + String.join(", ", x.usedBy) + ")"); continue; }
+      Set<String> going = new HashSet<>();
+      for (RepInfo x : list) going.add(x.name);
+      for (boolean again = true; again; ) {   // a kept report keeps the reports it uses
+        again = false;
+        for (RepInfo x : list) {
+          if (!going.contains(x.name)) continue;
+          for (String u : x.usedBy) if (!going.contains(u)) { going.remove(x.name); again = true; break; }
+        }
+      }
+      for (RepInfo x : list) {
+        if (!going.contains(x.name)) {
+          List<String> out = new ArrayList<>();
+          for (String u : x.usedBy) if (!going.contains(u)) out.add(u);
+          kept.add(x.name + " (used by " + String.join(", ", out) + ")");
+          continue;
+        }
         go.add(x.report);
         if (x.monitor != null) mons++;
         crits += x.criteria;
@@ -8271,8 +8338,19 @@ public class SimKit extends StarMacro {
           + (plots.size() == 1 ? "the plot " : plots.size() + " plots: ") + String.join(", ", plots) + "."))
           + (kept.isEmpty() ? "" : "\nKept, because other reports or field functions use them: " + String.join("; ", kept) + ".")
           + (go.isEmpty() ? "" : "\nThis cannot be undone.");
-      if (!confirmDelete(go.isEmpty() ? "Delete reports" : "Delete " + plural(go.size(), "report", "reports"), text, !go.isEmpty())) return;
-      p.exec.accept(() -> deleteReports(go));
+      String title = folder != null ? "Delete reports in " + folder.replace("/", " / ") : go.isEmpty() ? "Delete reports" : "Delete " + plural(go.size(), "report", "reports");
+      if (!confirmDelete(title, text, !go.isEmpty())) return;
+      p.exec.accept(() -> deleteReports(go) + (folder == null ? "" : pruneFolder(sim.getReportManager(), folder) + pruneFolder(sim.getMonitorManager(), folder)));
+    };
+    final Runnable delReports = () -> delList.accept(new ArrayList<>(picked), null);
+    final java.util.function.Consumer<String> delPlotFolder = folder -> {
+      final List<Object> go = new ArrayList<>();
+      List<String> names = new ArrayList<>();
+      for (PlotInfo x : data[0].plotList) if (x.folder.equals(folder) || x.folder.startsWith(folder + "/")) { go.add(x.plot); names.add(x.name); }
+      if (go.isEmpty() || p.exec == null) return;
+      if (!confirmDelete("Delete plots in " + folder.replace("/", " / "), "Deletes " + plural(go.size(), "plot", "plots") + ": " + String.join(", ", names)
+          + ". Their monitors and reports are kept.\nThis cannot be undone.", true)) return;
+      p.exec.accept(() -> deletePlots(go) + pruneFolder(sim.getPlotManager(), folder));
     };
     final Runnable delPlots = () -> {
       if (plotPicked[0] == null || p.exec == null) return;
@@ -8322,7 +8400,22 @@ public class SimKit extends StarMacro {
         void menu(java.awt.event.MouseEvent e) {
           if (!e.isPopupTrigger()) return;
           int r = tb.rowAtPoint(e.getPoint());
-          if (r < 0 || (tb == rt ? repRows.get(r).head : plotRows.get(r).head) != null) return;
+          if (r < 0) return;
+          final String head = tb == rt ? repRows.get(r).head : plotRows.get(r).head;
+          if (head != null) {   // a folder: delete everything in it and its sub-folders
+            javax.swing.JPopupMenu hm = new javax.swing.JPopupMenu();
+            String label = head.substring(head.lastIndexOf('/') + 1);
+            javax.swing.JMenuItem all = new javax.swing.JMenuItem((tb == rt ? "Delete all reports in " : "Delete all plots in ") + label + "…");
+            all.addActionListener(a -> {
+              if (tb == pt) { delPlotFolder.accept(head); return; }
+              List<RepInfo> in = new ArrayList<>();
+              for (RepInfo x : data[0].reps) if (x.folder.equals(head) || x.folder.startsWith(head + "/")) in.add(x);
+              delList.accept(in, head);
+            });
+            hm.add(all);
+            hm.show(tb, e.getX(), e.getY());
+            return;
+          }
           if (!tb.isRowSelected(r)) tb.setRowSelectionInterval(r, r);
           javax.swing.JPopupMenu m = new javax.swing.JPopupMenu();
           javax.swing.JMenuItem d = new javax.swing.JMenuItem(tb == rt ? (tb.getSelectedRowCount() == 1 ? "Delete report\u2026" : "Delete "
@@ -10806,6 +10899,26 @@ public class SimKit extends StarMacro {
         log.line("div: folder of " + nm(rs.get(0)) + ": " + folderPath(rg, rs.get(0)));
         for (Object p : sim.getPlotManager().getObjects()) if (nm(p).startsWith("Divergence")) log.line("div: folder of plot " + nm(p) + ": " + folderPath(pg, p));
       } catch (Throwable t) { log.na("div: folders", t); }
+      for (String g : new String[] {"massBalance", "temperature"}) {
+        List<StdReport> one = stdPlan();
+        for (StdReport x : one) x.on = x.def[1].equals(g) && x.why == null;
+        log.line("del: create " + g + " -> " + stdApply(one) + " " + namesList(setReports(g)));
+        log.line("del: delete group " + g + " -> " + removeSet(g, null) + " left " + namesList(setReports(g)));
+      }
+      try {   // Existing: all reports of a folder in one delete, then the empty folders
+        List<StdReport> one = stdPlan();
+        for (StdReport x : one) x.on = x.def[1].equals("massBalance") && x.why == null;
+        stdApply(one);
+        star.base.neo.ClientServerObjectGroupManager rg = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(sim.getReportManager(), "getGroupsManager");
+        List<Object> in = new ArrayList<>();
+        for (Object r : sim.getReportManager().getObjects()) if (folderPath(rg, r).startsWith("Predefined/Mass balance")) in.add(r);
+        log.line("del: folder Predefined/Mass balance " + namesList(in) + " -> " + deleteReports(in) + pruneFolder(sim.getReportManager(), "Predefined/Mass balance"));
+        List<String> left = new ArrayList<>();
+        for (Object r : sim.getReportManager().getObjects()) if (nm(r).startsWith("r_mdot")) left.add(nm(r) + " in " + folderPath(rg, r));
+        List<String> sub = new ArrayList<>();
+        for (Object g0 : rg.getObjects()) if ("Predefined".equals(nm(g0))) for (Object g2 : ((star.base.neo.ClientServerObjectGroup) g0).getGroupsManager().getObjects()) sub.add(nm(g2));
+        log.line("del: after folder delete " + left + ", Predefined sub-folders " + sub);
+      } catch (Throwable t) { log.na("del: folder delete", t); }
       log.line("div: sets " + debugSets());
       log.line("div: delete row r_div_T_max -> " + removeSet("divergence", "r_div_T_max") + " left " + namesList(rowReports("r_div_T_max")));
       log.line("div: remove -> " + removeSet("divergence", null));

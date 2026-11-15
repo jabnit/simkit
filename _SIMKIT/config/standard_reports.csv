@@ -15,7 +15,7 @@ name,group,type,field,surfaces,condition,meaning,criterion,mean,options
 r_mdot_in,massBalance,mass flow,,IN,,mass flow entering (IN_ surfaces),,
 r_mdot_out,massBalance,mass flow,,OUT+OPEN,,mass flow leaving (OUT_ and OPEN_),,
 r_mdot_net,massBalance,mass flow,,IN+OUT+OPEN,,net mass flow: tends to 0 when mass is conserved,,
-r_mdot_imbalance_pct,convergence,expression,abs(${r_mdot_net}) / abs(${r_mdot_in}) * 100,,needs r_mdot_net r_mdot_in,mass imbalance in % of the inflow (converged: below 0.1),below 0.1,
+r_mdot_imbalance_pct,massBalance,expression,abs(${r_mdot_net}) / abs(${r_mdot_in}) * 100,,needs r_mdot_net r_mdot_in,mass imbalance in % of the inflow (converged: below 0.1),below 0.1,,plot=%
 r_p_in_avg,pressure,area average,Pressure,IN,,inlet static pressure (area average),,
 r_p_out_avg,pressure,area average,Pressure,OUT,,outlet static pressure (area average),,
 r_p0_in_avg,pressure,area average,TotalPressure,IN,,inlet total pressure (area average),,

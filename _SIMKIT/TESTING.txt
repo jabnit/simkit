@@ -803,3 +803,16 @@ C. RESULTS SO FAR
   for the By object tab (was Per object; existing Per object folders are kept). Delete of a group removes the empty
   Predefined / <group> folders, then Predefined when empty. Batch: div: folder of reports and plots, folders after
   remove.
+  Predefined: r_mdot_imbalance_pct is in the group Mass balance (group Convergence removed), with plot=%: its curve
+  goes in the plot "Mass balance %" (percent), the mass flows stay in "Mass balance" (kg/s). Reports made before
+  stay in their folder Predefined / Convergence.
+  Delete of several reports (Existing, Predefined row or group): deleteOrder puts a report that uses another one of
+  the list (formula ${name}, mean of its monitor) before it, so one delete removes a whole group with its formula and
+  mean reports. Batch: del: create and delete the groups Mass balance (with the imbalance formula) and Temperature
+  (with the mean report), nothing left after one delete.
+  Reports > Existing: Delete keeps a report only when a report outside the selection (or a field function) uses it;
+  reports used only by selected reports are deleted with them (deleteOrder). Right-click a folder heading: "Delete all
+  reports in <folder>..." (reports of the folder and its sub-folders, same confirmation) or "Delete all plots in
+  <folder>..."; the folder and its sub-folders left empty are removed (pruneFolder; reports and monitors, or plots).
+  rowReports: only the report, <name>_<continuum> and their _mean (r_mdot_in_air is not a report of r_mdot_in).
+  Batch: del: folder Predefined/Mass balance deleted in one go, empty folder removed, r_mdot_in_air kept.
