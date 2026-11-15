@@ -15,3 +15,12 @@ mem,1000
 estimated_runtime,360
 # terminal opened on Linux to run the command (konsole, gnome-terminal or xterm)
 terminal,konsole
+# suggested CPUs = (fluid cells + solid_cell_weight x solid cells) / cells_per_cpu. Team estimates, tune from own scaling runs.
+cells_per_cpu,50000
+solid_cell_weight,0.3
+# amber note below this many cells per CPU (poor scaling)
+cells_per_cpu_min,20000
+# suggestions of 16 CPUs or more are rounded to a multiple of this
+cpu_step,8
+# largest CPU count per job (queue or team limit); empty = no limit
+cpus_max,

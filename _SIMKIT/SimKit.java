@@ -856,6 +856,64 @@ public class SimKit extends StarMacro {
     }
   }
 
+  /** {fluid cells, solid cells} of all regions (solid: SolidRegion), through temporary cell-count reports; null if n/a
+   *  or no cells. If the split fails, all cells count as fluid. */
+  double[] cellSplit() {
+    List<Region> fluid = new ArrayList<>(), solid = new ArrayList<>();
+    for (Region r : sim.getRegionManager().getRegions()) (isSolid(r) ? solid : fluid).add(r);
+    double[] out = new double[2];
+    ElementCountReport r = null;
+    try {
+      r = sim.getReportManager().createReport(ElementCountReport.class);
+      if (!fluid.isEmpty()) {
+        r.getParts().setObjects(fluid);
+        out[0] = r.getReportMonitorValue();
+      }
+      if (!solid.isEmpty()) {
+        r.getParts().setObjects(solid);
+        out[1] = r.getReportMonitorValue();
+      }
+    } catch (Throwable t) {
+      String all = cellCount();
+      try { out = new double[] {all == null ? 0 : Fmt.parse(all), 0}; } catch (Throwable x) { out = new double[2]; }
+    } finally {
+      if (r != null) try { sim.getReportManager().removeObjects(r); } catch (Throwable t) { /* left in the tree */ }
+    }
+    return out[0] + out[1] > 0 ? out : null;
+  }
+
+  /** A number from the cluster settings; def if missing or not a number. */
+  static double cfgNum(Map<String, String> cfg, String key, double def) {
+    try { return Double.parseDouble(cfg.getOrDefault(key, "").trim()); } catch (Throwable t) { return def; }
+  }
+
+  /** Cells weighted for the CPU suggestion: fluid + solid_cell_weight x solid; NaN if not known. */
+  static double effectiveCells(Map<String, String> cfg, double[] cells) {
+    if (cells == null) return Double.NaN;
+    double w = cfgNum(cfg, "solid_cell_weight", 0.3);
+    if (w < 0) w = 0.3;
+    return cells[0] + w * cells[1];
+  }
+
+  /** {suggested CPUs, 1 if capped by cpus_max}, or null (no cells, or cells_per_cpu <= 0). Below 1.5 CPUs: 1; below 16:
+   *  the nearest whole number (2 or more); else the nearest multiple of cpu_step. Nodes are shared: no node rounding. */
+  static int[] suggestCpus(Map<String, String> cfg, double[] cells) {
+    double eff = effectiveCells(cfg, cells), cpc = cfgNum(cfg, "cells_per_cpu", 50000);
+    if (Double.isNaN(eff) || eff <= 0 || cpc <= 0) return null;
+    double raw = eff / cpc;
+    int step = (int) Math.round(cfgNum(cfg, "cpu_step", 8));
+    if (step < 1) step = 8;
+    long k = raw < 1.5 ? 1 : raw < 16 ? Math.max(2, Math.round(raw)) : Math.max(step, Math.round(raw / step) * step);
+    int max = (int) cfgNum(cfg, "cpus_max", 0);
+    if (max > 0 && k > max) return new int[] {max, 1};
+    return new int[] {(int) Math.min(k, 99999), 0};
+  }
+
+  /** 50000 -> "50 000". */
+  static String grouped(double v) {
+    return String.format(Locale.ROOT, "%,d", Math.round(v)).replace(',', ' ');
+  }
+
   void setParam(String name, double v) {
     ScalarGlobalParameter p = findParam(name);
     if (p == null) p = newParam(name, null, v, null);
@@ -1289,6 +1347,11 @@ public class SimKit extends StarMacro {
     m.put("mem", "1000");                 // MB per slot: the launcher's default
     m.put("estimated_runtime", "360");    // hours: the launcher's default
     m.put("terminal", "konsole");
+    m.put("cells_per_cpu", "50000");      // suggested CPUs = (fluid + solid_cell_weight x solid cells) / cells_per_cpu
+    m.put("solid_cell_weight", "0.3");
+    m.put("cells_per_cpu_min", "20000");  // amber note below this
+    m.put("cpu_step", "8");               // suggestions of 16 or more: a multiple of this
+    m.put("cpus_max", "");                // largest CPU count per job; empty = no limit
     for (String[] r : config("cluster.csv", new String[] {"key", "value"}, null)) {
       if (r[0] != null && !r[0].trim().isEmpty() && r[1] != null) m.put(r[0].trim(), r[1].trim());
     }
@@ -1397,7 +1460,11 @@ public class SimKit extends StarMacro {
       if (v != null) prefs.put(k, v);
     }
     final String last = lastSubmission(c, f);
-    SubmitChoice r = Ui.edt(() -> submitWindow(f, c.caseId, checks, cfg, release, prefs, last));
+    String[] lastRow = lastSubmissionRow(c, f);
+    final int lastCpus = lastRow != null && lastRow[4].trim().matches("[0-9]{1,5}") ? Integer.parseInt(lastRow[4].trim()) : 0;
+    final double[] cells = cellSplit();
+    if (cells != null) log.line("  cells: " + Fmt.num(cells[0]) + " fluid, " + Fmt.num(cells[1]) + " solid");
+    SubmitChoice r = Ui.edt(() -> submitWindow(f, c.caseId, checks, cfg, release, prefs, last, cells, lastCpus));
     if (r == null) throw new Cancel(null);
     Env.setPref("ncpus", String.valueOf(r.cpus));
     Env.setPref("clusterMem", r.opt.getOrDefault("mem", ""));
@@ -1440,8 +1507,8 @@ public class SimKit extends StarMacro {
     result("No terminal found (konsole, gnome-terminal, xterm). Command copied: paste it in a terminal opened in " + f.getParent());
   }
 
-  /** "Last submitted <date> on <n> CPUs to <queue> (job <n>)" from the run's submissions.csv and record; null if none. */
-  String lastSubmission(CaseInfo c, Path f) {
+  /** The run's last row of submissions.csv, or null. */
+  String[] lastSubmissionRow(CaseInfo c, Path f) {
     try {
       Path rd = runDirOf(f);
       Path subs = (rd != null ? rd.resolve("submit") : f.getParent().resolve(".simkit")).resolve("submissions.csv");
@@ -1449,6 +1516,16 @@ public class SimKit extends StarMacro {
       List<String[]> rows = Csv.parse(Fs.read(subs));
       String[] last = null;
       for (int i = 1; i < rows.size(); i++) if (rows.get(i).length > 5 && c.caseId.equals(rows.get(i)[2])) last = rows.get(i);
+      return last;
+    } catch (Throwable t) {
+      return null;
+    }
+  }
+
+  /** "Last submitted <date> on <n> CPUs to <queue> (job <n>)" from the run's submissions.csv and record; null if none. */
+  String lastSubmission(CaseInfo c, Path f) {
+    try {
+      String[] last = lastSubmissionRow(c, f);
       if (last == null) return null;
       String job = "";
       try { String j = readIdentity(runRecord(c.caseDir, c.nnn)).get("last_job"); if (j != null && !j.isEmpty()) job = " (job " + j + ")"; }
@@ -1500,17 +1577,35 @@ public class SimKit extends StarMacro {
 
   /** The Run on cluster window (Swing thread; no STAR-CCM+ call, so it can be shown offline). checks: {state, text[,
    *  detail]}, warnings first. prefs: ncpus, clusterMem, clusterRuntime, clusterMail, clusterMore. last: the last
-   *  submission line or null. Returns the choice, or null when cancelled. */
+   *  submission line or null. cells: {fluid, solid} or null (no mesh). lastCpus: CPUs of the run's last submission, 0 if
+   *  none. Returns the choice, or null when cancelled. */
   static SubmitChoice submitWindow(final Path file, String runId, final List<String[]> checks, final Map<String, String> cfg,
-      final String release, Map<String, String> prefs, String last) {
+      final String release, Map<String, String> prefs, String last, final double[] cells, int lastCpus) {
     java.util.function.Function<String, JLabel> head = s -> {
       JLabel l = new JLabel(s);
       l.setFont(l.getFont().deriveFont(Font.BOLD));
       return l;
     };
-    final String pc = prefs.getOrDefault("ncpus", "1");
-    final JTextField n = new JTextField(pc.matches("[0-9]+") ? pc : "1", 6);
+    final int[] sug = suggestCpus(cfg, cells);   // the run's last value, else the suggestion, else the user's last value
+    final double eff = effectiveCells(cfg, cells);
+    final double cpcMin = cfgNum(cfg, "cells_per_cpu_min", 20000);
+    final int cpuMax = (int) cfgNum(cfg, "cpus_max", 0);
+    final String pc = lastCpus > 0 ? String.valueOf(lastCpus) : sug != null ? String.valueOf(sug[0]) : prefs.getOrDefault("ncpus", "1");
+    final JTextField n = new JTextField(pc.matches("[0-9]{1,5}") ? pc : "1", 6);
     final JLabel state = Ui.muted(" ");
+    final JButton sugLink = Ui.link(sug == null ? "" : "Suggested: " + sug[0] + (sug[1] == 1 ? " (team limit)" : ""));
+    sugLink.setMnemonic('S');
+    sugLink.setVisible(sug != null);
+    if (sug != null) {
+      sugLink.setToolTipText(cellsShort(cells[0] + cells[1]) + " cells" + (cells[1] > 0 ? " (" + cellsShort(cells[0]) + " fluid, "
+          + cellsShort(cells[1]) + " solid × " + shortNum(cfgNum(cfg, "solid_cell_weight", 0.3)) + ")" : "") + "  ·  "
+          + grouped(cfgNum(cfg, "cells_per_cpu", 50000)) + " cells per CPU. Set in config/cluster.csv.");
+      sugLink.addActionListener(e -> {
+        n.setText(String.valueOf(sug[0]));
+        n.requestFocusInWindow();
+        n.selectAll();
+      });
+    }
     final String dMem = cfg.getOrDefault("mem", "1000"), dRt = cfg.getOrDefault("estimated_runtime", "360");
     final String pMem = prefs.getOrDefault("clusterMem", ""), pRt = prefs.getOrDefault("clusterRuntime", "");
     final JTextField mem = new JTextField(pMem.matches("[0-9]+") ? pMem : dMem, 6);
@@ -1613,8 +1708,12 @@ public class SimKit extends StarMacro {
       } else {
         int k = Integer.parseInt(n.getText().trim());
         String[] sc = submitCommand(cfg, release, file, k, opt);
-        state.setForeground(Ui.MUTED);
-        state.setText((k == 1 ? "Serial" : "Parallel") + "  ·  queue " + sc[1]);
+        String note = "";
+        if (cpuMax > 0 && k > cpuMax) note = "  ·  above the team limit of " + cpuMax;
+        else if (k >= 2 && !Double.isNaN(eff) && eff / k < cpcMin)
+          note = "  ·  " + grouped(Math.round(eff / k / 100.0) * 100) + " cells per CPU, poor scaling below " + grouped(cpcMin);
+        state.setForeground(note.isEmpty() ? Ui.MUTED : Ui.AMBER);
+        state.setText((k == 1 ? "Serial" : "Parallel") + "  ·  queue " + sc[1] + note);
         if (op == null) { lastCmd[0] = sc[0]; choice.queue = sc[1]; }
       }
       area.setText(lastCmd[0]);
@@ -1630,6 +1729,7 @@ public class SimKit extends StarMacro {
       if (!resdir.getText().trim().isEmpty()) s.add("results to " + resdir.getText().trim());
       if (mail.isSelected()) s.add("email");
       summary.setText(morePane.isVisible() || s.isEmpty() ? " " : Ui.cap(String.join("  ·  ", s)));
+      if (sug != null) sugLink.setEnabled(!String.valueOf(sug[0]).equals(n.getText().trim()));
       boolean okNow = cp == null && op == null && tp == null;
       copy.setEnabled(okNow);
       go.setEnabled(okNow);
@@ -1725,6 +1825,7 @@ public class SimKit extends StarMacro {
         + cfg.getOrDefault("queue_parallel", "") + ").");
     cpuRow.add(cl);
     cpuRow.add(n);
+    cpuRow.add(sugLink);
     cpuRow.add(state);
     JPanel moreRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
     moreRow.add(moreLink);

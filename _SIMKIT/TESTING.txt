@@ -629,3 +629,13 @@ C. RESULTS SO FAR
   run.txt last_job; "Job not submitted" / "Request aborted" / "command not found" -> red status line. Pre-submit texts:
   sentence case, plurals, "Fix in Names.", "na" state. SKT92: exit codes 0 (08b/08c skipped: STAR-CCM+ window open);
   07g pre-submit lines with the new texts; 11c command unchanged. Not run: the window and the job number on Linux.
+  Run on cluster, suggested CPUs (Fable 5.2 spec; nodes are shared, so no node count): toolSubmit reads fluid and solid
+  cells (cellSplit, temporary ElementCountReport, solid = SolidRegion) and the CPUs of the run's last submission.
+  Suggested = (fluid + solid_cell_weight x solid) / cells_per_cpu: below 1.5 -> 1, below 16 -> nearest whole number (min 2),
+  else nearest multiple of cpu_step; capped by cpus_max ("(team limit)"). Link "Suggested: n" (Alt+S) next to the field
+  fills it, disabled when equal; tooltip: cell counts and cells per CPU. State line amber when cells per CPU <
+  cells_per_cpu_min (2 CPUs or more) or above cpus_max; never blocks. Field starts at the last submission's CPUs, else
+  the suggestion, else the user's last value. config/cluster.csv: cells_per_cpu 50000, solid_cell_weight 0.3,
+  cells_per_cpu_min 20000, cpu_step 8, cpus_max empty (team estimates; tune from own scaling runs). Offline (SubmitShot,
+  9.8 M fluid + 2.6 M solid): Suggested 208; 640 CPUs -> "16 500 cells per CPU, poor scaling below 20 000" in amber.
+  Not run: cellSplit in STAR-CCM+ (Linux GUI only), the window on Linux.
