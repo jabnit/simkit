@@ -17,20 +17,19 @@ tree, standard reports and scenes, a mesh study helper and engineering calculato
 | `_SIMKIT/` | **The kit.** Copy this folder as-is to the team share. Its inner layout must be kept: every macro finds the kit root from its own location. |
 | `_SIMKIT/SimKit.java` | The macro users play: Save as new run, Run on cluster, Tracker and the other tools. |
 | `_SIMKIT/buttons/` | One small macro per toolbar button, their icons and `SimKit_InstallButtons.java` (see `_SIMKIT/buttons/README.txt`). |
-| `_SIMKIT/config/` | Projects, naming rules, Guideline links and MatML material folders (CSV, edited by the owner). |
+| `_SIMKIT/config/` | Naming prefixes, report names, standard reports and cluster settings (CSV, edited by the owner). |
 | `_SIMKIT/lib/generic/` | `SimKitCalc.java` (Calculators window) and its property tables in `data/`. |
-| `_SIMKIT/templates/ISO/` | ISO template guide text and the template-owner macros. |
 | `_SIMKIT/tests/` | Batch validation runners (Windows PowerShell and Linux bash) and the test-sim builder. |
 | `_SIMKIT/TESTING.txt` | Site set-up, batch validation and GUI test procedure (toolkit owner only). |
-| `Google/` | Case list workbook (import into Google Sheets) and the case guideline (put in Google Docs). |
+| `docs/` | Case guideline for the team (`.docx`). |
 
 ## Site set-up (once)
 
 1. Copy the `_SIMKIT` folder anywhere on the share (e.g. `S:\CFD\_SIMKIT` on Windows = `/mnt/cfd/_SIMKIT` on Linux).
    No environment variable and no path in the macros need to be set.
-2. Edit `config/projects.csv` (projects, configuration codes) and `config/links.csv` (Google Doc / Sheet links).
+2. Edit the files in `config/` where the team's settings differ: `naming.csv`, `report_names.csv`, `standard_reports.csv`,
+   `cluster.csv`.
 3. Each user plays `_SIMKIT/buttons/SimKit_InstallButtons.java` once (File > Macro > Play Macro, from the share): a SimKit toolbar appears with the buttons (STAR-CCM+ favourite macros) and their icons, pointing at the files on the share. Own favourites are kept.
-4. Import `Google/SimKit_Case_List_ISO.xlsx` into Google Sheets and put the guideline `.docx` in Google Docs.
 
 Cases are never stored in the kit: the first *Save as new* of a sim asks the user for the folder that will
 hold the case folders.

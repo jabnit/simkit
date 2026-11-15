@@ -27,8 +27,8 @@ jobs:
           for f in README.md CONTRIBUTING.md CITATION.cff \
                    _SIMKIT/SimKit.java _SIMKIT/VERSION.txt _SIMKIT/TESTING.txt \
                    _SIMKIT/lib/generic/SimKitCalc.java \
-                   _SIMKIT/config/projects.csv _SIMKIT/config/naming_rules.csv \
-                   _SIMKIT/config/links.csv _SIMKIT/config/material_folders.csv \
+                   _SIMKIT/config/naming.csv _SIMKIT/config/report_names.csv \
+                   _SIMKIT/config/standard_reports.csv _SIMKIT/config/cluster.csv \
                    _SIMKIT/tests/Run-SimKitTests.ps1 _SIMKIT/tests/run-simkit-tests.sh; do
             if [ ! -f "$f" ]; then echo "MISSING: $f"; exit 1; fi
           done

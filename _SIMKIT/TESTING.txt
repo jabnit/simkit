@@ -42,7 +42,6 @@ Site set-up (once)
   3. Each user plays buttons/SimKit_InstallButtons.java once (File > Macro > Play Macro, from the share): the SimKit
      buttons go to a SimKit toolbar (STAR-CCM+ favourite macros), pointing at the files on the share (do not
      copy them: each button finds the root from its own location and always runs the current kit).
-  4. Put the guideline docx in Google Docs.
 
 A. BATCH VALIDATION (no GUI; about 15 min)
   Windows 10/11:
@@ -141,8 +140,8 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       in Notepad: two lines "ID  path". Select two versions (or a case row), right-click > Set status > done:
       all of them done; the bottom line counts them. Click a "based on" link: jumps to that version. Filter "prism": only matching versions,
       cases unfolded; status filter Active / Done / Dropped / No status. Change...: another cases folder.
-      Open the tracker from another STAR-CCM+ session (another user) -> same status and comments. Export CSV ->
-      case_tracker.csv imports in Google Sheets (tab Versions). Leave the tracker open and keep working on the model
+      Open the tracker from another STAR-CCM+ session (another user) -> same status and comments. Leave the
+      tracker open and keep working on the model
       (it never touches the simulation).
       Hide...: select a version -> "These versions": the row disappears; Show hidden -> it is back in grey; select it,
       the button reads Show again: click it. Select a case header, Hide...: gone from the tracker and from
@@ -159,8 +158,6 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       1 atm, 2 mm, Cd 0.61 -> 1.341e-3 kg/s, choked = 1. Then on any page: Compute; "Copy value for STAR-CCM+..." -> paste in a STAR field: the number pastes as
       typed (e.g. 1.23457E-5) and the unit to select is shown (e.g. m). To parameter... creates p_<name>.
    7. Save as new > "New case from this one" (step 3 sim): the new case shows the parent; the parent file is untouched.
-   8. Case list; Guideline (opens the links.csv URL); About (shows the kit
-      root = the folder of SimKit.java on the share).
    9. Toolbar buttons: play buttons/SimKit_InstallButtons.java: 10 ticked buttons with their icons; Install ->
       "10 button(s) on the SimKit toolbar". A toolbar named SimKit appears at once with the 10 icons and tooltips
       (else close and reopen STAR-CCM+: note which). Each runs its tool directly (no menu window). No Compile tab
@@ -659,3 +656,5 @@ C. RESULTS SO FAR
   opens Names on Reports and plots. Plots: standard report plots are named Mass balance, Convergence, Pressure,
   Temperature, Walls heat, Walls y+, Unsteady; per object {q}_{s} or the object name; an existing plot with the new
   name or the former pl_ name gets the new monitors (MonitorPlot.setObjects) and a pl_ name is changed.
+  Google features removed (2026-11-15): the tracker's Export CSV button and case_tracker.csv (batch Tracker logs the
+  run count), Google wording in the code and the docs. The case guideline moves from Google/ to docs/.

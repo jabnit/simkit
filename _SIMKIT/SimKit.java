@@ -2076,18 +2076,6 @@ public class SimKit extends StarMacro {
     return "yes".equals(id.get("hidden")) || "yes".equals(id.get("hidden_v" + v));
   }
 
-  /** Files of the hidden rows. */
-  static Set<String> hiddenFiles(Path casesDir, List<String[]> rows) {
-    Set<String> out = new HashSet<>();
-    Map<String, Map<String, String>> ids = new HashMap<>();
-    for (String[] r : rows) {
-      String cid = caseOf(r[COL_ID]);
-      Map<String, String> id = ids.computeIfAbsent(cid, k -> identityOf(casesDir, k));
-      if (isHidden(id, verOf(r[COL_ID]))) out.add(r[COL_FILE]);
-    }
-    return out;
-  }
-
   static Path fileOf(Path dir, String[] r) {
     return dir.resolve(r[COL_FILE]);
   }
@@ -2101,22 +2089,20 @@ public class SimKit extends StarMacro {
   }
 
   static final String[] STATUSES = {"", "planned", "meshing", "running", "diverged", "done", "dropped"};   // "reported" of older projects is still coloured
-  static final String TRACKER_CSV = "case_tracker.csv";
 
   /** Tracker rows from the files only, without the simulation. */
   static List<String[]> trackerRows(Path dir) {
     return studyRows(dir);
   }
 
-  /** Opens the tracker window for the project of the open run, or of a chosen folder. In batch, writes the CSV only. */
+  /** Opens the tracker window for the project of the open run, or of a chosen folder. In batch, logs the run count. */
   void toolTracker() throws IOException {
     CaseInfo c = caseOrNull();
     Path dir = c != null ? c.caseDir : projectDirToOpen();
     Fs.allow(dir);
     List<String[]> rows = trackerRows(dir);
     if (!gui) {
-      writeTrackerCsv(dir, rows);
-      log.line("tracker: " + rows.size() + " run(s) -> " + dir.resolve(TRACKER_CSV));
+      log.line("tracker: " + rows.size() + " run(s) in " + dir);
       return;
     }
     log.line("tracker: " + rows.size() + " run(s) in " + dir + " (window open)");
@@ -2143,20 +2129,6 @@ public class SimKit extends StarMacro {
     if (st == null) throw new Cancel(dir + " is not a project folder (no " + STUDY_FILE + "): Save as new run creates one");
     Env.setPref("trackerDir", st.toString());
     return st;
-  }
-
-  /** Writes case_tracker.csv with the tracker columns and a hidden column (yes or empty). */
-  static void writeTrackerCsv(Path dir, List<String[]> rows) throws IOException {
-    Set<String> hid = hiddenFiles(dir, rows);
-    String[] head = Arrays.copyOf(TRACKER_COLS, TRACKER_COLS.length + 1);
-    head[TRACKER_COLS.length] = "hidden";
-    List<String[]> out = new ArrayList<>();
-    for (String[] r : rows) {
-      String[] x = Arrays.copyOf(r, r.length + 1);
-      x[r.length] = hid.contains(r[COL_FILE]) ? "yes" : "";
-      out.add(x);
-    }
-    Csv.write(dir.resolve(TRACKER_CSV), head, out);
   }
 
   /** Opens a .sim in this session as another simulation with its own tab. Returns null when it is already open. Slow,
@@ -2972,16 +2944,6 @@ public class SimKit extends StarMacro {
       JButton change = new JButton("Change...");
       change.setToolTipText("Show the runs of another project");
       change.addActionListener(e -> changeFolder());
-      JButton export = new JButton("Export CSV");
-      export.setToolTipText("Write " + TRACKER_CSV + " in the project folder (Google Sheets: File > Import > Upload)");
-      export.addActionListener(e -> {
-        try {
-          writeTrackerCsv(dir, rows);
-          say("Written " + dir.resolve(TRACKER_CSV), green);
-        } catch (Throwable t) {
-          say("NOT written: " + reason(t), red);
-        }
-      });
 
       w = new JDialog(Ui.owner(), "Case tracker", java.awt.Dialog.ModalityType.MODELESS);
       w.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
@@ -3049,7 +3011,6 @@ public class SimKit extends StarMacro {
 
       JPanel bottom = new JPanel(new BorderLayout());
       JPanel btns = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 6, 0));
-      btns.add(export);
       btns.add(close);
       JPanel msgRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
       msgRow.add(message);
@@ -3391,7 +3352,6 @@ public class SimKit extends StarMacro {
 
     void afterSave(String what) {
       log.line("case tracker: " + Character.toLowerCase(what.charAt(0)) + what.substring(1));
-      try { writeTrackerCsv(dir, rows); } catch (Throwable t) { /* The CSV is only a copy. Export CSV reports errors. */ }
       say(what, green);
     }
 
@@ -3869,7 +3829,6 @@ public class SimKit extends StarMacro {
           bad.add(r[COL_ID]);
         }
       }
-      try { writeTrackerCsv(dir, rows); } catch (Throwable t) { /* the CSV is only a copy */ }
       if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);
       log.line("tracker: status '" + status + "' on " + n + " run(s)");
       say(bad.isEmpty() ? "Saved: status " + (status.isEmpty() ? "(none)" : "'" + status + "'") + " on " + n + " run(s)"
@@ -8240,8 +8199,6 @@ public class SimKit extends StarMacro {
           r[COL_BASED].isEmpty() ? "-" : runOf(r[COL_BASED]) > 0 ? runId(runOf(r[COL_BASED])) : r[COL_BASED], r[COL_COMMENT].replace("\n", " | ")));
     }
     log.line("study row label of the returned file: " + fileLabel(back.getFileName().toString()));
-    writeTrackerCsv(dir, trackerRows(dir));
-    log.line("study tracker csv: " + dir.resolve(TRACKER_CSV));
     // Save as new run > "Root of a new study instead" makes the open run R001 of a new study
     CaseInfo before = requireCase();
     Path dir2 = dir.resolveSibling(dir.getFileName() + "_branch");
@@ -8797,8 +8754,8 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Light formatting marks in comments and descriptions. The text stays readable as plain text in case_identity.txt,
-   *  the CSV files and Google Sheets, and is shown formatted in the tracker and the case report. */
+  /** Light formatting marks in comments and descriptions. The text stays readable as plain text in run.txt and is
+   *  shown formatted in the tracker. */
   static final class Md {
     static final Pattern BULLET = Pattern.compile("^\\s*[-*•]\\s+(.*)$");
     static final Pattern NUMBER = Pattern.compile("^\\s*(\\d+)[.)]\\s+(.*)$");
