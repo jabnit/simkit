@@ -10,7 +10,7 @@ version,
 # Fairshare group and project of the team.
 fairshare,ug_st_std
 project,OTHER_ESA
-# Launcher defaults for --mem [MB per slot] and --estimated_runtime [h]. The options are passed only when changed at submit.
+# Launcher defaults for --mem [MB per slot] and --estimated_runtime [min]. The options are passed only when changed at submit.
 mem,1000
 estimated_runtime,360
 # Terminal opened on Linux to run the command: konsole, gnome-terminal or xterm.

@@ -611,7 +611,7 @@ C. RESULTS SO FAR
   Run on cluster: site launcher bsub.starccmp --input={file} --cpus={ncpus}
   --queue={queue} --version={version} --fairshare_group={fairshare} --project={project}; queues mc_all_ser / mc_all_par;
   version = release of the STAR-CCM+ that runs SimKit (ReleaseNumber 21.04.009 -> 2606; 18.06 -> 2310); fairshare
-  ug_st_std, project OTHER_ESA in config/cluster.csv. More options: --mem (MB, default 1000), --estimated_runtime (h,
+  ug_st_std, project OTHER_ESA in config/cluster.csv. More options: --mem (MB, default 1000), --estimated_runtime (min,
   default 360) only when changed, --jobname, --result_dir, --send_completed_notification. Batch run: exit codes 0;
   11c: "bsub.starccmp --input=R002_finer.sim --cpus=4 --queue=mc_all_par --version=2606 --fairshare_group=ug_st_std
   --project=OTHER_ESA". Offline: options added as expected. Not run: a submission on the cluster with

@@ -1398,7 +1398,7 @@ public class SimKit extends StarMacro {
     m.put("fairshare", "ug_st_std");
     m.put("project", "OTHER_ESA");
     m.put("mem", "1000");                 // [MB] per slot, launcher default
-    m.put("estimated_runtime", "360");    // [h], launcher default
+    m.put("estimated_runtime", "360");    // [min], launcher default
     m.put("terminal", "konsole");
     m.put("cells_per_cpu", "50000");      // suggested CPUs = (fluid + solid_cell_weight x solid cells) / cells_per_cpu
     m.put("solid_cell_weight", "0.3");
@@ -1416,7 +1416,7 @@ public class SimKit extends StarMacro {
     return submitCommand(simFile, ncpus, new HashMap<>());
   }
 
-  /** As above with the launcher options mem [MB per slot], jobname, result_dir, estimated_runtime [h] and
+  /** As above with the launcher options mem [MB per slot], jobname, result_dir, estimated_runtime [min] and
    *  send_completed_notification ("1"). Options equal to the launcher default are left out. Placeholders in the
    *  command are {sim} full path, {file} file name (the command runs in the file's folder), {ncpus}, {queue},
    *  {version}, {fairshare} and {project}. */
@@ -1672,7 +1672,7 @@ public class SimKit extends StarMacro {
     mail.setFont(mail.getFont().deriveFont(Font.PLAIN));
     mail.setToolTipText("--send_completed_notification");
     mem.setToolTipText("--mem, MB per slot (per CPU).");
-    rt.setToolTipText("--estimated_runtime, hours.");
+    rt.setToolTipText("--estimated_runtime, minutes.");
     jobname.setToolTipText("--jobname. Letters, digits, _ . - only.");
     resdir.setToolTipText("--result_dir. Folder the results are copied to at the end of the job.");
     for (JTextField t : new JTextField[] {n, mem, rt, jobname, resdir}) t.putClientProperty("simkit.esc.close", Boolean.TRUE);
@@ -1706,7 +1706,7 @@ public class SimKit extends StarMacro {
     };
     final java.util.function.Supplier<String> optProblem = () -> {
       if (!mem.getText().trim().matches("[0-9]{1,7}") || Integer.parseInt(mem.getText().trim()) < 1) return "Memory per slot: a whole number of MB, 1 or more.";
-      if (!rt.getText().trim().matches("[0-9]{1,5}") || Integer.parseInt(rt.getText().trim()) < 1) return "Estimated run time: a whole number of hours, 1 or more.";
+      if (!rt.getText().trim().matches("[0-9]{1,5}") || Integer.parseInt(rt.getText().trim()) < 1) return "Estimated run time: a whole number of minutes, 1 or more.";
       if (!jobname.getText().trim().isEmpty() && !jobname.getText().trim().matches("[A-Za-z0-9_.-]+")) return "Job name: letters, digits, _ . - only.";
       if (!resdir.getText().trim().isEmpty() && !resdir.getText().trim().startsWith("/")) return "Copy results to: an absolute path (starts with /).";
       return null;
@@ -1723,7 +1723,7 @@ public class SimKit extends StarMacro {
     java.awt.GridBagConstraints g = new java.awt.GridBagConstraints();
     g.anchor = java.awt.GridBagConstraints.WEST;
     g.insets = new java.awt.Insets(2, 0, 2, 10);
-    Object[][] formRows = {{"Memory per slot", mem, "MB   Launcher default: " + dMem}, {"Estimated run time", rt, "h   Launcher default: " + dRt},
+    Object[][] formRows = {{"Memory per slot", mem, "MB   Launcher default: " + dMem}, {"Estimated run time", rt, "min   Launcher default: " + dRt},
         {"Job name", jobname, ""}, {"Copy results to", resdir, ""}};
     for (int i = 0; i < formRows.length; i++) {
       g.gridy = i;
@@ -1780,7 +1780,7 @@ public class SimKit extends StarMacro {
       folderNote.setText(!rd.isEmpty() && rd.startsWith("/") && !Files.isDirectory(Paths.get(rd)) ? "Folder not found from this machine." : " ");
       List<String> s = new ArrayList<>();
       if (!mem.getText().trim().equals(dMem)) s.add("memory " + mem.getText().trim() + " MB");
-      if (!rt.getText().trim().equals(dRt)) s.add("run time " + rt.getText().trim() + " h");
+      if (!rt.getText().trim().equals(dRt)) s.add("run time " + rt.getText().trim() + " min");
       if (!jobname.getText().trim().isEmpty()) s.add("job name " + jobname.getText().trim());
       if (!resdir.getText().trim().isEmpty()) s.add("results to " + resdir.getText().trim());
       if (mail.isSelected()) s.add("email");
