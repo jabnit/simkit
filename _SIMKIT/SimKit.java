@@ -1,4 +1,4 @@
-// SimKit.java -- SimKit 0.3 (2026-11-14) -- STAR-CCM+ 2402 and later, Windows 10/11 and Linux RHEL 7/9.
+// SimKit.java -- SimKit 0.3 -- STAR-CCM+ 2402 and later, Windows 10/11 and Linux RHEL 7/9.
 //
 // Helper macro for STAR-CCM+ projects. It adds these tools to the normal STAR-CCM+ workflow:
 //   * Save as new run. A project is one folder. Each run is a folder R<nnn>_<name>/ with R<nnn>_<name>.sim,
