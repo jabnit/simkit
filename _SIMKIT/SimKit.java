@@ -7303,9 +7303,8 @@ public class SimKit extends StarMacro {
             if (c == 2) return "";
             int k = 0, n = 0;
             for (SelTarget x : members((String) o)) { n++; if (now.getOrDefault(x.o, 0) == 2) k++; }
-            String key = (String) o, label = key.substring(key.lastIndexOf('/') + 1);
-            return "<html><b>" + (folded.contains(o) ? "▸ " : "▾ ") + Html.esc(label) + "</b>&nbsp;&nbsp;<font color='#6B7580'>"
-                + k + " of " + n + "</font></html>";
+            String key = (String) o;
+            return Ui.groupText(key.substring(key.lastIndexOf('/') + 1), key.contains("/"), k + " of " + n, folded.contains(o));
           }
           SelTarget x = (SelTarget) o;
           return c == 0 ? now.getOrDefault(x.o, 0) : c == 1 ? x.name : x.region;
@@ -7323,7 +7322,8 @@ public class SimKit extends StarMacro {
         Object o = view.get(r);
         tick.state = v instanceof Integer ? (Integer) v : 0;
         tick.off = !editable || o instanceof SelTarget && why.apply((SelTarget) o) != null;
-        tick.setBackground(t.isRowSelected(r) ? Ui.SEL : o instanceof String ? HEAD : java.awt.Color.WHITE);
+        tick.setBackground(t.isRowSelected(r) ? Ui.SEL : o instanceof String ? (((String) o).contains("/") ? Ui.SUB_BG : Ui.GROUP_BG) : java.awt.Color.WHITE);
+        tick.setBorder(o instanceof String ? Ui.groupBorder(((String) o).contains("/"), r, 0) : null);
         return tick;
       });
       final javax.swing.table.DefaultTableCellRenderer text = new javax.swing.table.DefaultTableCellRenderer();
@@ -7331,10 +7331,11 @@ public class SimKit extends StarMacro {
         text.getTableCellRendererComponent(t, v, false, false, r, c2);
         Object o = view.get(r);
         String w = o instanceof SelTarget ? why.apply((SelTarget) o) : null;
-        text.setBackground(t.isRowSelected(r) ? Ui.SEL : o instanceof String ? HEAD : java.awt.Color.WHITE);
-        text.setForeground(w != null ? Ui.FAINT : c2 == 2 ? Ui.MUTED : java.awt.Color.BLACK);
-        int indent = o instanceof String ? (((String) o).contains("/") ? 16 : 4) : c2 == 2 ? 4 : ((SelTarget) o).group.contains("/") ? 28 : 16;
-        text.setBorder(BorderFactory.createEmptyBorder(0, indent, 0, 4));
+        boolean head = o instanceof String, sub = head && ((String) o).contains("/");
+        text.setBackground(t.isRowSelected(r) ? Ui.SEL : head ? (sub ? Ui.SUB_BG : Ui.GROUP_BG) : java.awt.Color.WHITE);
+        text.setForeground(w != null ? Ui.FAINT : c2 == 2 ? Ui.MUTED : head ? new java.awt.Color(0x2B, 0x35, 0x42) : java.awt.Color.BLACK);
+        int indent = head ? (sub ? 16 : 4) : c2 == 2 ? 4 : ((SelTarget) o).group.contains("/") ? 28 : 16;
+        text.setBorder(head ? Ui.groupBorder(sub, r, indent) : BorderFactory.createEmptyBorder(0, indent, 0, 4));
         text.setToolTipText(w);
         return text;
       });
@@ -7422,6 +7423,7 @@ public class SimKit extends StarMacro {
           g.drawRoundRect(x, y, s - 1, s - 1, 4, 4);
         }
         g.dispose();
+        paintBorder(g0);
       }
     }
 
@@ -7531,6 +7533,10 @@ public class SimKit extends StarMacro {
         if (open || !folded.contains(g.getKey())) view.addAll(hit);
       }
       model.fireTableDataChanged();
+      for (int i = 0; i < view.size(); i++) {   // headings taller than the object rows
+        Object o = view.get(i);
+        table.setRowHeight(i, o instanceof String ? (((String) o).contains("/") ? Ui.SUB_H : Ui.GROUP_H) : 24);
+      }
       counts();
     }
 
@@ -8397,9 +8403,8 @@ public class SimKit extends StarMacro {
           for (ObjTarget x : g) if (x.pick) k++;
           if (c == 0) return k == g.size();
           if (c == 2) return "";
-          String key = (String) o, label = key.substring(key.lastIndexOf('/') + 1);
-          return "<html><b>" + (oFolded.contains(o) ? "▸ " : "▾ ") + Html.esc(label) + "</b>&nbsp;&nbsp;<font color='#6B7580'>"
-              + k + " of " + g.size() + " selected</font></html>";
+          String key = (String) o;
+          return Ui.groupText(key.substring(key.lastIndexOf('/') + 1), key.contains("/"), k + " of " + g.size() + " selected", oFolded.contains(o));
         }
         ObjTarget x = (ObjTarget) o;
         return c == 0 ? x.pick : c == 1 ? x.name : x.region() ? "Region" : x.region;
@@ -8423,16 +8428,22 @@ public class SimKit extends StarMacro {
         ? java.awt.Color.BLACK : Ui.MUTED);
     ot.setDefaultRenderer(String.class, (tb, v, sel, foc, r, c) -> {
       java.awt.Component k = oText.getTableCellRendererComponent(tb, v, sel, foc, r, c);
-      if (oView.get(r) instanceof String && !tb.isRowSelected(r)) k.setBackground(headBg);
       Object o = oView.get(r);
-      int indent = o instanceof String ? (((String) o).contains("/") ? 16 : 4) : ((ObjTarget) o).kind.equals("derived") ? 30 : 18;
-      if (k instanceof JLabel) ((JLabel) k).setBorder(BorderFactory.createEmptyBorder(0, indent, 0, 6));
+      boolean head = o instanceof String, sub = head && ((String) o).contains("/");
+      if (head && !tb.isRowSelected(r)) k.setBackground(sub ? Ui.SUB_BG : Ui.GROUP_BG);
+      int indent = head ? (sub ? 16 : 4) : ((ObjTarget) o).kind.equals("derived") ? 30 : 18;
+      if (k instanceof JLabel) ((JLabel) k).setBorder(head ? Ui.groupBorder(sub, r, indent) : BorderFactory.createEmptyBorder(0, indent, 0, 6));
       return k;
     });
     final javax.swing.table.TableCellRenderer oboxes = ot.getDefaultRenderer(Boolean.class);
     ot.setDefaultRenderer(Boolean.class, (tb, v, sel, foc, r, c) -> {
       java.awt.Component k = oboxes.getTableCellRendererComponent(tb, v, false, false, r, c);
-      k.setBackground(tb.isRowSelected(r) ? Ui.SEL : oView.get(r) instanceof String ? headBg : java.awt.Color.WHITE);
+      Object o = oView.get(r);
+      k.setBackground(tb.isRowSelected(r) ? Ui.SEL : o instanceof String ? (((String) o).contains("/") ? Ui.SUB_BG : Ui.GROUP_BG) : java.awt.Color.WHITE);
+      if (k instanceof javax.swing.AbstractButton) {
+        ((javax.swing.AbstractButton) k).setBorderPainted(o instanceof String);
+        ((javax.swing.AbstractButton) k).setBorder(o instanceof String ? Ui.groupBorder(((String) o).contains("/"), r, 0) : null);
+      }
       return k;
     });
     spaceToggles(ot);
@@ -8454,6 +8465,10 @@ public class SimKit extends StarMacro {
         if (!q.isEmpty() || !oFolded.contains(g.getKey())) oView.addAll(hit);
       }
       om.fireTableDataChanged();
+      for (int i = 0; i < oView.size(); i++) {   // headings taller than the object rows
+        Object o = oView.get(i);
+        ot.setRowHeight(i, o instanceof String ? (((String) o).contains("/") ? Ui.SUB_H : Ui.GROUP_H) : 24);
+      }
     };
     ot.addMouseListener(new java.awt.event.MouseAdapter() {
       @Override public void mouseClicked(java.awt.event.MouseEvent e) {   // a click on a heading folds or unfolds its group
@@ -8558,7 +8573,8 @@ public class SimKit extends StarMacro {
     });
     pt.setDefaultRenderer(String.class, (tb, v, sel, foc, r, c) -> {
       java.awt.Component k = pText.getTableCellRendererComponent(tb, v, sel, foc, r, c);
-      if (pView.get(r) instanceof String && !tb.isRowSelected(r)) k.setBackground(headBg);
+      if (pView.get(r) instanceof String && !tb.isRowSelected(r)) k.setBackground(Ui.GROUP_BG);
+      if (pView.get(r) instanceof String && k instanceof JLabel) { ((JLabel) k).setBorder(Ui.groupBorder(false, r, 4)); return k; }
       if (k instanceof JLabel) ((JLabel) k).setBorder(BorderFactory.createEmptyBorder(0, pView.get(r) instanceof String ? 4 : 18, 0, 6));
       return k;
     });
@@ -8568,7 +8584,8 @@ public class SimKit extends StarMacro {
       Object o = pView.get(r);
       if (o instanceof String) {
         java.awt.Component k = pText.getTableCellRendererComponent(tb, "", false, false, r, c);
-        k.setBackground(tb.isRowSelected(r) ? Ui.SEL : headBg);
+        k.setBackground(tb.isRowSelected(r) ? Ui.SEL : Ui.GROUP_BG);
+        if (k instanceof JLabel) ((JLabel) k).setBorder(Ui.groupBorder(false, r, 4));
         return k;
       }
       ObjRow x = (ObjRow) o;
@@ -8581,7 +8598,7 @@ public class SimKit extends StarMacro {
     final javax.swing.table.TableCellRenderer pboxes = pt.getDefaultRenderer(Boolean.class);
     pt.setDefaultRenderer(Boolean.class, (tb, v, sel, foc, r, c) -> {
       Object o = pView.get(r);
-      java.awt.Color bgc = tb.isRowSelected(r) ? Ui.SEL : o instanceof String ? headBg : java.awt.Color.WHITE;
+      java.awt.Color bgc = tb.isRowSelected(r) ? Ui.SEL : o instanceof String ? Ui.GROUP_BG : java.awt.Color.WHITE;
       if (o instanceof ObjRow && !((ObjRow) o).action.equals("create")) { doneMark.setBackground(bgc); return doneMark; }
       java.awt.Component k = pboxes.getTableCellRendererComponent(tb, v, false, false, r, c);
       k.setBackground(bgc);
@@ -8610,6 +8627,7 @@ public class SimKit extends StarMacro {
         pView.addAll(g.getValue());
       }
       pm.fireTableDataChanged();
+      for (int i = 0; i < pView.size(); i++) pt.setRowHeight(i, pView.get(i) instanceof String ? Ui.GROUP_H : 24);
       int no = 0, nq = 0;
       for (ObjTarget x : objs) if (x.pick) no++;
       for (ObjQty q : qs) if (q.pick) nq++;
@@ -10776,6 +10794,23 @@ public class SimKit extends StarMacro {
         w.setVisible(true);
         return null;
       });
+    }
+
+    /** Group headings of grouped lists: a darker band with a line above; sub-groups in a lighter band. */
+    static final java.awt.Color GROUP_BG = new java.awt.Color(0xE4, 0xE9, 0xF0), SUB_BG = new java.awt.Color(0xF1, 0xF4, 0xF8),
+        GROUP_LINE = new java.awt.Color(0xC9, 0xD2, 0xDD);
+    static final int GROUP_H = 30, SUB_H = 26;
+
+    /** Border of a heading cell: a line above the main headings (not on the first row) and the left indent. */
+    static javax.swing.border.Border groupBorder(boolean sub, int row, int left) {
+      javax.swing.border.Border pad = BorderFactory.createEmptyBorder(0, left, 0, 4);
+      return sub || row == 0 ? pad : BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, GROUP_LINE), pad);
+    }
+
+    /** Heading text: a main heading in capitals, a sub-group as it is; the count in grey. */
+    static String groupText(String label, boolean sub, String count, boolean folded) {
+      return "<html><b>" + (folded ? "\u25B8 " : "\u25BE ") + Html.esc(sub ? label : label.toUpperCase(Locale.ROOT)) + "</b>&nbsp;&nbsp;"
+          + "<font color='#6B7580'>" + Html.esc(count) + "</font></html>";
     }
 
     static final java.awt.Color BLUE = new java.awt.Color(0x1F, 0x5F, 0xAF), MUTED = new java.awt.Color(0x6B, 0x75, 0x80),
