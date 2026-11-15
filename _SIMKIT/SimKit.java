@@ -1,24 +1,21 @@
 // SimKit.java -- SimKit 0.3 (2026-11-14) -- STAR-CCM+ 2402 and later, Windows 10/11 and Linux RHEL 7/9.
 //
-// Team helper for STAR-CCM+ work. It keeps the native STAR-CCM+ workflow; it only adds:
-//   * Save as new run: a project = one folder (any name, anywhere); each run = one folder R<nnn>_<name>/ holding
-//     R<nnn>_<name>.sim, run.txt (name, based on, comment, status), submit/ (scripts, logs) and what the cluster
-//     sends back. The run number also lives inside the simulation (p_simkit_run). Runs may be grouped in sub-folders.
-//   * Run on cluster, Tracker (runs, family tree), Calculators (lib/generic/SimKitCalc.java), Standard reports,
-//     Mesh study.
-//   The normal STAR-CCM+ Save (Ctrl+S) keeps saving the open file.
-// Where things are: this file sits at the SimKit ROOT (one shared folder; lib/, config/, buttons/ below it). The
-//   root is found from this file's own location (STAR-CCM+ resolvePath), so no environment variable or path has
-//   to be set. Projects are wherever the user wants.
-// Toolbar buttons: buttons/SimKit_<Tool>.java run one tool directly (no menu); see buttons/README.txt.
-// Non-blocking: the SimKit window floats next to STAR-CCM+ and the macro ends at once, so the user keeps working
-//   on the model. A tool runs in a background thread (STAR-CCM+ calls as in a Simulation Assistant); only its short
-//   questions wait for an answer; results open in floating windows.
-// Batch: SIMKIT_ACTION=<action> starccm+ -batch SimKit.java <sim> runs one test action (see runBatch).
+// Helper macro for STAR-CCM+ projects. It adds these tools to the normal STAR-CCM+ workflow:
+//   * Save as new run. A project is one folder. Each run is a folder R<nnn>_<name>/ with R<nnn>_<name>.sim,
+//     run.txt (name, based on, comment, status), submit/ (scripts, logs) and the files returned by the cluster.
+//     The run number is also stored in the simulation (p_simkit_run), so a returned copy under any name still
+//     identifies its run. Run folders may be grouped in sub-folders.
+//   * Run on cluster, Tracker, Names, Reports, Mesh study and Calculators (lib/generic/SimKitCalc.java).
+//   Ctrl+S saves the open file as usual.
+// The kit root is the folder of this file (found with resolvePath), with lib/, config/ and buttons/ below it.
+// No environment variable or path setting is needed. Projects can be anywhere.
+// buttons/SimKit_<Tool>.java are toolbar macros that run one tool without the menu (see buttons/README.txt).
+// The SimKit window is modeless and the macro returns at once. Tools run in a background thread, so the model
+// stays usable while a tool runs.
+// Batch test run: SIMKIT_ACTION=<action> starccm+ -batch SimKit.java <sim> (actions in runBatch).
 //
-// Conventions: every STAR-CCM+ call that may differ between releases runs inside try/catch and logs
-// "n/a (<reason>)" instead of failing. SimKit writes only inside the project folder
-// (Fs.guard) and never inside the kit. Nothing is ever deleted.
+// STAR-CCM+ calls that differ between releases run inside try/catch and log "n/a (<reason>)" instead of failing.
+// SimKit writes only inside the project folder (Fs.guard), never inside the kit, and deletes no files.
 package macro;
 
 import java.awt.BorderLayout;
@@ -77,8 +74,8 @@ import star.common.*;
 import star.meshing.*;
 import star.vis.*;
 
-// Some STAR-CCM+ calls used here are marked deprecated in 2606 but still work, and are kept so the kit also runs on
-// 2402: the warnings are silenced so that STAR-CCM+ does not open its Compile tab every time the macro is played.
+// Some calls are deprecated in 2606 but are needed for 2402. The warnings are suppressed so that STAR-CCM+ does
+// not open its Compile tab each time the macro is played.
 @SuppressWarnings({"deprecation", "unchecked", "rawtypes"})
 public class SimKit extends StarMacro {
 
@@ -88,10 +85,10 @@ public class SimKit extends StarMacro {
 
   static final String VERSION = "SimKit 0.3 (2026-11-14)";
 
-  /** Kit files used by SimKit, relative to the SimKit root ('/' on every OS). */
+  /** Kit files relative to the kit root, with '/' as separator on every OS. */
   static final String CONFIG_DIR = "config", VERSION_FILE = "VERSION.txt", CALC_MACRO = "lib/generic/SimKitCalc.java";
 
-  /** The tools: title (button), the line under the button, tooltip. Toolbar buttons pass the enum name (simkit.tool). */
+  /** Tools: button title, line under the button, tooltip. Toolbar buttons pass the enum name in simkit.tool. */
   enum Tool {
     SAVE("Save as new run\u2026", "Copy as the next run, from this one",
         "Saves the next run of the project (R008_<name>.sim) from this one; the open file is kept. No project yet: creates one"),
@@ -113,7 +110,7 @@ public class SimKit extends StarMacro {
       this.help = help;
     }
 
-    /** The tool a toolbar button asks for: its enum name, or the number of the buttons of SimKit 0.3 before 2026-11-14. */
+    /** Tool for a toolbar button argument: the enum name, or the numeric id used by older button macros. null if unknown. */
     static Tool of(String t) {
       if (t == null) return null;
       String k = t.trim().toUpperCase(Locale.ROOT);
@@ -141,11 +138,11 @@ public class SimKit extends StarMacro {
 
   boolean gui;
 
-  Runnable namesCad;   // opens 3D-CAD faces from the Names window (null: no 3D-CAD model)
+  Runnable namesCad;   // opens 3D-CAD faces from the Names window; null without a 3D-CAD model
 
   @Override
   public void execute() {
-    int preloaded = preloadOwnClasses(getClass());   // before anything else: see preloadOwnClasses
+    int preloaded = preloadOwnClasses(getClass());   // must run first, see preloadOwnClasses
     sim = getActiveSimulation();
     log = new Log(sim);
     Fs.ROOT = Paths.get(resolvePath(".")).toAbsolutePath().normalize();   // this file is <root>/SimKit.java
@@ -167,9 +164,8 @@ public class SimKit extends StarMacro {
     log.line("SimKit window open (it floats next to STAR-CCM+; the model stays free to use).");
   }
 
-  /** STAR-CCM+ compiles a macro into a temporary folder and DELETES the class files when execute() returns. The
-   *  SimKit windows live on after that (non-blocking), so every class of this macro is loaded into memory now,
-   *  while the files still exist. Returns the number of classes loaded (-1 if the folder could not be read). */
+  /** STAR-CCM+ deletes the compiled class files of a macro when execute() returns, but the SimKit windows stay open.
+   *  All classes of this macro are therefore loaded now. Returns the number of classes loaded, or -1 on failure. */
   static int preloadOwnClasses(Class<?> self) {
     try {
       java.nio.file.Path dir = java.nio.file.Paths.get(self.getProtectionDomain().getCodeSource().getLocation().toURI());
@@ -192,13 +188,13 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Batch mode: action from -Dsimkit.action or env SIMKIT_ACTION (test actions). */
+  /** Runs the test action given by -Dsimkit.action or the environment variable SIMKIT_ACTION. */
   void runBatch() {
     String action = Env.action();
     log.line("batch action: " + (action.isEmpty() ? "(none)" : action));
     try {
       switch (action) {
-        case "reports": {   // test action: create the standard reports and save the sim in place
+        case "reports": {   // creates the standard reports and saves the sim in place
           CaseInfo c = requireCase();
           toolStandardReports();
           sim.saveState(Fs.guard(c.simFile).toString());
@@ -206,17 +202,17 @@ public class SimKit extends StarMacro {
           break;
         }
         case "names": logNames(); break;
-        case "chttest": testCht(); break;   // test: solid region + interface in memory (not saved): Names, reports, pre-submit
-        case "cadnames": logCad(); break;   // the 3D-CAD bodies and their check, written to the log
-        case "cadtest": testCad(); break;   // test: 3D-CAD faces on a model built in memory (not saved)
-        case "objtest": testObjReports(); break;   // test: Reports per object in memory (not saved)
+        case "chttest": testCht(); break;   // solid region and interface built in memory, not saved
+        case "cadnames": logCad(); break;   // logs the 3D-CAD bodies and their check
+        case "cadtest": testCad(); break;   // model built in memory, not saved
+        case "objtest": testObjReports(); break;   // in memory, not saved
         case "presubmit": for (String[] k : preSubmitChecks()) log.line("pre-submit " + k[0] + "  " + k[1]); break;
         case "tracker": toolTracker(); break;
-        case "opensim": testOpenSim(); break;   // test: the tracker's Open in STAR-CCM+
-        case "saverun": toolSave(); break;   // Save as new run in batch: next run, same name (asks nothing)
-        case "studytest": testStudy(); break;   // test: start a study, save a run, prepare a submission (no bsub)
-        case "meshstudy": toolMeshStudy(); break;   // test action: levels coarse (2) and medium (1), meshed
-        case "meshparams": {   // test action: parametrize the mesh (no prism layers) and save the sim in place
+        case "opensim": testOpenSim(); break;   // Open in STAR-CCM+ of the tracker
+        case "saverun": toolSave(); break;   // next run with the same name, no dialog
+        case "studytest": testStudy(); break;   // starts a project, saves a run and prepares a submission without bsub
+        case "meshstudy": toolMeshStudy(); break;   // meshes the levels coarse (2) and medium (1)
+        case "meshparams": {   // parametrizes the mesh without prism layers and saves the sim in place
           CaseInfo c = requireCase();
           toolParametrizeMesh();
           sim.saveState(Fs.guard(c.simFile).toString());
@@ -233,7 +229,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** A toolbar button in batch: only the tools without dialogs can run. */
+  /** Toolbar button in batch mode. Only the Tracker runs without a dialog. */
   void runBatchTool(Tool id) {
     log.line("button " + id.title + " (batch)");
     try {
@@ -246,15 +242,14 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Tools report on the status line (Details... shows their text); an error opens the text window. Everything is also
-   *  in the STAR-CCM+ Output window. */
-  volatile String summary;                         // one-line outcome of the tool (set by the tool)
-  volatile String lastText, lastTitle;             // full text of the last tool, for Details...
+  /** Outcome of the last tool, shown on the status line and by Details. */
+  volatile String summary;                         // set by the tool through result()
+  volatile String lastText, lastTitle;             // log text of the last tool
   volatile String lastStatus;
 
-  volatile int lastLevel;                          // 0 done, 1 cancelled / skipped items, 2 error
+  volatile int lastLevel;                          // 0 done, 1 cancelled or items skipped, 2 error
 
-  /** Runs one tool; any failure is logged, never thrown into the session. */
+  /** Runs one tool. Failures are logged and not thrown. */
   void runTool(Tool id) {
     log.take();
     summary = null;
@@ -297,7 +292,7 @@ public class SimKit extends StarMacro {
     if (id != Tool.CALC && error) Ui.showText(lastTitle, text);
   }
 
-  /** Shows the outcome of the last tool on the status line (amber: cancelled or items skipped, red: error). */
+  /** Shows the outcome of the last tool on the status line, amber when cancelled or items were skipped, red on error. */
   void showStatus() {
     if (statusLine == null) return;
     statusLine.setText(lastStatus == null ? "Ready" : lastStatus);
@@ -307,7 +302,7 @@ public class SimKit extends StarMacro {
     if (detailsButton != null) detailsButton.setEnabled(lastText != null);
   }
 
-  /** Records the one-line outcome of a tool (shown on the status line) and logs it. */
+  /** Sets the one-line outcome of the running tool for the status line. */
   void result(String s) {
     summary = s;
   }
@@ -316,16 +311,14 @@ public class SimKit extends StarMacro {
   // Menu window
   // =====================================================================================================
 
-  /** Key under which the open SimKit window is kept for this STAR-CCM+ session (one window at a time). */
+  /** System property holding the open SimKit window, so that a new play can close it. */
   static final String WINDOW_KEY = "simkit.window";
 
   final List<JButton> toolButtons = new ArrayList<>();
 
   volatile boolean busy;
 
-  /** Opens the floating SimKit window (non-modal, attached to the STAR-CCM+ window) and returns at once.
-   *  A window left open by an earlier play is closed first (it may belong to another simulation). */
-  /** Main window layout: one column per stage of the work; each button with a one-line explanation under it. */
+  /** Columns of the main window: section title and its tools. */
   static final Object[][] SECTIONS = {
       {"Runs", new Tool[] {Tool.SAVE, Tool.CLUSTER, Tool.TRACKER}},
       {"Set-up", new Tool[] {Tool.NAMES, Tool.REPORTS, Tool.MESH}},
@@ -337,6 +330,8 @@ public class SimKit extends StarMacro {
 
   final Map<Tool, JButton> buttonById = new HashMap<>();
 
+  /** Opens the modeless SimKit window and returns at once. A window left by an earlier play is closed first, as it
+   *  may belong to another simulation. */
   void openWindow() {
     Object old = System.getProperties().get(WINDOW_KEY);
     if (old instanceof java.awt.Window) ((java.awt.Window) old).dispose();
@@ -349,10 +344,10 @@ public class SimKit extends StarMacro {
       }
     });
     System.getProperties().put(WINDOW_KEY, d);
-    d.setVisible(true);   // non-modal: returns at once
+    d.setVisible(true);
   }
 
-  /** Builds the main window (not shown). */
+  /** Builds the main window without showing it. */
   JDialog buildWindow() {
     final JDialog d = new JDialog(Ui.owner(), "SimKit  -  " + simName(), java.awt.Dialog.ModalityType.MODELESS);
     d.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
@@ -431,13 +426,13 @@ public class SimKit extends StarMacro {
     south.add(statusLine, BorderLayout.WEST);
     south.add(right, BorderLayout.EAST);
     root.add(south, BorderLayout.SOUTH);
-    refreshHeader();   // again now that the buttons exist (greys the case-only ones)
+    refreshHeader();
     d.setContentPane(root);
     d.pack();
     return d;
   }
 
-  /** Header: case and version, description, file. */
+  /** Header lines: run and iteration, project and comment, file path. */
   void refreshHeader() {
     if (headTitle == null) return;
     String path = sessionPath();
@@ -466,7 +461,7 @@ public class SimKit extends StarMacro {
     toolButtons.add(b);
   }
 
-  /** Runs a tool in a background thread (STAR-CCM+ stays responsive); one tool at a time. */
+  /** Runs a tool in a background thread so STAR-CCM+ stays responsive. One tool at a time. */
   void startTool(Tool id) {
     if (busy) return;
     busy = true;
@@ -502,13 +497,11 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Project and runs: a project is a folder (any name, anywhere) holding simkit_project.txt and one folder per run.
-  // Each saved run is R<nnn>[_<name>].sim; its number also lives INSIDE the simulation (p_simkit_run), so every copy
-  // that comes back from the cluster, whatever its name, still says which run it is and what it was based on.
+  // Project and runs
   // =====================================================================================================
 
-  /** A run of a project: caseDir = the project folder, caseId = R007, nnn = 7, label = the run name, simFile = the
-   *  file as it is named (the run file or a copy that came back from the cluster). */
+  /** A run of a project. caseDir is the project folder, caseId is R007, nnn is 7, label is the run name, simFile is
+   *  the file as named (the run file or a copy returned by the cluster). */
   static final class CaseInfo {
     String caseId, label = "";
     int nnn;
@@ -518,7 +511,7 @@ public class SimKit extends StarMacro {
     Path identityFile() { return runRecord(caseDir, nnn); }
   }
 
-  /** Run of the open sim, or a Cancel with the remedy. */
+  /** Run of the open simulation. Throws Cancel with the remedy when there is none. */
   CaseInfo requireCase() {
     CaseInfo r = runOrNull();
     if (r != null) return r;
@@ -533,7 +526,7 @@ public class SimKit extends StarMacro {
 
   static final Pattern RUN_FILE = Pattern.compile("^R([0-9]{3,4})(?:_([A-Za-z0-9][A-Za-z0-9_-]{0,39}?))?(?:(?:_iter_|@)[^/\\\\]*)?\\.sim$");
 
-  /** A run name as it goes in the file name: spaces become _, then letters, digits, _ and - (up to 40). */
+  /** Run name for the file name. Spaces become _; allowed are letters, digits, _ and -, up to 40 characters. */
   static String runName(String typed) {
     String n = typed == null ? "" : typed.trim().replaceAll("\\s+", "_");
     if (n.isEmpty()) throw new Cancel("Name the run (e.g. finer_mesh).");
@@ -551,8 +544,8 @@ public class SimKit extends StarMacro {
 
   static String runId(int n) { return String.format(Locale.ROOT, "R%03d", n); }
 
-  /** How deep below the project SimKit looks for runs: run.txt and .sim files up to this many folder levels (a run
-   *  folder in a group folder, a job folder in the run folder ...). The same limit is used upwards from a file. */
+  /** Folder levels searched for run.txt and .sim files below a project, e.g. a run folder in a group folder or a job
+   *  folder in a run folder. The same limit applies when searching upwards from a file. */
   static final int SCAN_DEPTH = 6;
 
   /** The project folder holding a file (up to SCAN_DEPTH folders above it), or null. */
@@ -562,7 +555,7 @@ public class SimKit extends StarMacro {
     return null;
   }
 
-  /** The open simulation as a run of its study (number from p_simkit_run, else from the file name), or null. */
+  /** The open simulation as a run of its project, or null. The number comes from p_simkit_run, else from the file name. */
   CaseInfo runOrNull() {
     String p = sessionPath();
     if (p.isEmpty()) return null;
@@ -573,7 +566,7 @@ public class SimKit extends StarMacro {
     try {
       ScalarGlobalParameter q = findParam(P_RUN);
       if (q != null) n = (int) Math.round(q.getQuantity().getValue());
-    } catch (Throwable t) { /* from the name */ }
+    } catch (Throwable t) { /* number from the file name */ }
     Matcher m = RUN_FILE.matcher(f.getFileName().toString());
     if (n <= 0 && m.matches()) n = Integer.parseInt(m.group(1));
     if (n <= 0) return null;
@@ -596,14 +589,13 @@ public class SimKit extends StarMacro {
     return dir != null && (Files.isRegularFile(dir.resolve(STUDY_FILE)) || Files.isRegularFile(dir.resolve(OLD_STUDY_FILE)));
   }
 
-  /** The project's own file (simkit_project.txt, or simkit_study.txt of the first projects). */
+  /** The project file: simkit_project.txt, or simkit_study.txt in older projects. */
   static Path studyFile(Path dir) {
     return Files.isRegularFile(dir.resolve(OLD_STUDY_FILE)) && !Files.isRegularFile(dir.resolve(STUDY_FILE)) ? dir.resolve(OLD_STUDY_FILE)
         : dir.resolve(STUDY_FILE);
   }
 
-  /** The record of every run of a project: <run folder>/run.txt (anywhere below the project, so runs can be grouped in
-   *  folders), or record/R<nnn>.txt of the first projects. */
+  /** run.txt of every run by run number, anywhere below the project. Older projects keep them in record/R<nnn>.txt. */
   static Map<Integer, Path> runRecords(Path study) {
     Map<Integer, Path> out = new TreeMap<>();
     for (Path f : Fs.list(study.resolve("record"), "R*.txt")) {
@@ -614,15 +606,14 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** The record of the run of key "<what>_v<nnn>" of a study, and the key in it ("comment", "status", "hidden"). */
+  /** run.txt of a run, or record/R<nnn>.txt when the run has no run folder. */
   static Path runRecord(Path study, int run) {
     Path f = runRecords(study).get(run);
     return f != null ? f : study.resolve("record").resolve(runId(run) + ".txt");
   }
 
-  /** One walk of a project (run.txt and .sim files), kept a few seconds: the tracker asks for the records and the files
-   *  of every run several times per refresh, and a walk of a network share is slow. Any write by SimKit in the
-   *  project clears it (Fs.write, Fs.mkdirs, saveRun); files changed by others are seen after MAX_AGE_MS. */
+  /** Cached walk of a project for run.txt and .sim files. The tracker reads them several times per refresh and a walk
+   *  of a network share is slow. Writes by SimKit clear the cache; changes by others show after MAX_AGE_MS. */
   static final class Scan {
     static final long MAX_AGE_MS = 10_000;
     static final Map<String, Scan> CACHE = new HashMap<>();
@@ -649,8 +640,8 @@ public class SimKit extends StarMacro {
             if (m.matches()) sc.files.computeIfAbsent(Integer.parseInt(m.group(1)), x -> new ArrayList<>()).add(p);
           }
         });
-      } catch (IOException | java.io.UncheckedIOException e) { /* what was readable */ }
-      for (List<Path> l : sc.files.values()) {   // oldest first; same time (a copy keeps its date): the higher iteration last
+      } catch (IOException | java.io.UncheckedIOException e) { /* keep what was read */ }
+      for (List<Path> l : sc.files.values()) {   // oldest first; at equal time (a copy keeps its date) by iteration
         l.sort((x, y) -> {
           int d = Long.compare(mtime(x), mtime(y));
           return d != 0 ? d : Double.compare(iterNum(x.getFileName().toString()), iterNum(y.getFileName().toString()));
@@ -660,7 +651,7 @@ public class SimKit extends StarMacro {
       return c;
     }
 
-    /** Forgets the walks of the projects holding p (or of every project when p is null). */
+    /** Clears the cache for the projects holding p, or all when p is null. */
     static synchronized void clear(Path p) {
       if (p == null) { CACHE.clear(); return; }
       String k = Fs.key(p);
@@ -668,10 +659,10 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Run numbers taken in a project: <project>/.simkit/run_numbers/R<nnn>.txt, created once and kept (who, when). */
+  /** Reserved run numbers, one file R<nnn>.txt per number with user and time. Files are never removed. */
   static final String RUN_NUMBERS = ".simkit/run_numbers";
 
-  /** Next free run number of a project (from its records, every run file below it and the numbers taken). */
+  /** Next free run number, above all records, run files and reserved numbers. */
   static int nextRun(Path study) {
     int max = 0;
     for (int n : runRecords(study).keySet()) max = Math.max(max, n);
@@ -683,9 +674,8 @@ public class SimKit extends StarMacro {
     return max + 1;
   }
 
-  /** Takes the next free run number of a project. The number file is created with CREATE_NEW (exclusive on a local
-   *  disk, SMB and NFS): two users saving at the same time get two numbers. A number taken by a save that then fails
-   *  stays taken (a gap in the numbering, never a double). */
+  /** Reserves the next free run number. CREATE_NEW is exclusive on local disks, SMB and NFS, so two users saving at
+   *  the same time get different numbers. A number reserved by a failed save stays used and leaves a gap. */
   static int takeRun(Path study) throws IOException {
     Path dir = Fs.inDir(study, RUN_NUMBERS);
     Files.createDirectories(Fs.guard(dir));
@@ -697,35 +687,35 @@ public class SimKit extends StarMacro {
         Scan.clear(study);
         return n;
       } catch (FileAlreadyExistsException taken) {
-        Scan.clear(study);   // someone else took it: look again
+        Scan.clear(study);   // taken by another save, scan again
       }
     }
     throw new IOException("no free run number found in " + study + " (50 tries)");
   }
 
-  /** The folder of a run file: the R<nnn>_... folder above it that holds run.txt, or null (first studies: sims/). */
+  /** The R<nnn>_... folder with run.txt above a file, or null when the file is not in a run folder. */
   static Path runDirOf(Path file) {
     Path d = file.toAbsolutePath().normalize().getParent();
     for (int k = 0; d != null && k < SCAN_DEPTH; k++, d = d.getParent()) {
-      if (isStudy(d)) return null;   // reached the project folder: the file is not in a run folder
+      if (isStudy(d)) return null;
       if (Files.isRegularFile(d.resolve(RUN_TXT)) && RUN_DIR.matcher(d.getFileName().toString()).matches()) return d;
     }
     return null;
   }
 
-  /** The group (sub-folder of the study, "" = none) holding the run of a file. */
+  /** Group folder of the run of a file, relative to the project; "" when the run folder is directly in the project. */
   static String groupOf(Path study, Path file) {
     Path d = runDirOf(file);
     if (d == null || d.getParent() == null || Fs.same(d.getParent(), study)) return "";
     return study.relativize(d.getParent()).toString().replace('\\', '/');
   }
 
-  /** Run number of a tracker row of a study (the part after .v). */
+  /** Run number from a tracker ID (the part after .v), or -1. */
   static int runOf(String versionId) {
     try { return Integer.parseInt(verOf(versionId)); } catch (NumberFormatException e) { return -1; }
   }
 
-  /** The identity of a case, or for a study: the study's file plus each run's comment_v / status_v / hidden_v. */
+  /** Project file keys plus the run.txt keys of every run as <key>_v<nnn>. */
   static Map<String, String> identityOf(Path dir, String caseId) {
     Map<String, String> m = readIdentity(studyFile(dir));
     for (Map.Entry<Integer, Path> rf : runRecords(dir).entrySet()) {
@@ -735,8 +725,7 @@ public class SimKit extends StarMacro {
     return m;
   }
 
-  /** Every .sim of a project by run number (the saved run and the copies that came back, anywhere below the project),
-   *  oldest first. */
+  /** Every .sim of a project by run number, the run file and returned copies anywhere below the project, oldest first. */
   static Map<Integer, List<Path>> studyFiles(Path study) {
     Map<Integer, List<Path>> out = new TreeMap<>();
     for (Map.Entry<Integer, List<Path>> e : Scan.of(study).files.entrySet()) out.put(e.getKey(), new ArrayList<>(e.getValue()));
@@ -752,17 +741,17 @@ public class SimKit extends StarMacro {
     try { return it.isEmpty() ? -1 : Double.parseDouble(it); } catch (NumberFormatException e) { return -1; }
   }
 
-  /** Iteration (or time) in a file name written during or after a run: R007_x_iter_05000.sim, or STAR's @05000. */
+  /** Iteration or time in a file name written by a run (R007_x_iter_05000.sim or @05000), or "". */
   static String iterOf(String file) {
     Matcher m = Pattern.compile("(?:_iter_|@)([0-9.eE+-]+?)(?:-[0-9_]+)?\\.sim$").matcher(file);
     return m.find() ? m.group(1).replaceFirst("^0+(?=[0-9])", "") : "";
   }
 
   // =====================================================================================================
-  // Run records (run.txt, simkit_project.txt: key=value)
+  // Run records (key=value files)
   // =====================================================================================================
 
-  /** Reads a run.txt or simkit_project.txt (key=value lines). Missing file -> empty map. */
+  /** Reads a run.txt or simkit_project.txt. A missing file gives an empty map. */
   static Map<String, String> readIdentity(CaseInfo c) { return readIdentity(c.identityFile()); }
 
   static Map<String, String> readIdentity(Path file) {
@@ -773,13 +762,13 @@ public class SimKit extends StarMacro {
         if (i > 0 && !line.startsWith("#")) kv.put(line.substring(0, i).trim(), idDecode(line.substring(i + 1).trim()));
       }
     } catch (IOException e) {
-      // no identity file yet
+      // no file yet
     }
     return kv;
   }
 
-  /** A value for run.txt (one line per key). Text over several lines (comments, descriptions) is kept as
-   *  "ml:" + the lines joined by \n (a backslash is written \\); everything else as one line, as before. */
+  /** Encodes a value for one line of run.txt. Text with line breaks is stored as "ml:" plus the lines joined by \n,
+   *  with a backslash written as \\. */
   static String idEncode(String v) {
     if (v == null) return "";
     String s = v.replace("\r\n", "\n").replace('\r', '\n');
@@ -804,15 +793,15 @@ public class SimKit extends StarMacro {
     return sb.toString();
   }
 
-  /** The whole run.txt (or simkit_project.txt) for these keys and values. */
+  /** Text of a run.txt or simkit_project.txt for these keys and values. */
   static String identityText(Map<String, String> kv) {
     StringBuilder sb = new StringBuilder("# SimKit record -- written by " + VERSION + "\n");
     for (Map.Entry<String, String> e : kv.entrySet()) sb.append(e.getKey()).append('=').append(idEncode(e.getValue())).append('\n');
     return sb.toString();
   }
 
-  /** Sets one key of a run's run.txt ("comment_v007" -> comment of R007) or of the project file, read just before
-   *  writing so the other keys (a colleague's edits) are kept. */
+  /** Sets one key in a run.txt ("comment_v007" sets comment of R007) or in the project file. The file is read just
+   *  before writing so that edits by others to other keys are kept. */
   static void setIdentityKey(Path dir, String caseId, String key, String value) throws IOException {
     Matcher m = Pattern.compile("^([a-z]+)_v([0-9]+)$").matcher(key);
     Path f = m.matches() ? runRecord(dir, Integer.parseInt(m.group(2))) : studyFile(dir);
@@ -833,7 +822,7 @@ public class SimKit extends StarMacro {
     try { return sim.getSolution().getPhysicalTime(); } catch (Throwable t) { return 0; }
   }
 
-  /** Implicit unsteady solver, or null (steady / unknown). */
+  /** Implicit unsteady solver, or null for steady or unknown. */
   ImplicitUnsteadySolver unsteadySolver() {
     try {
       for (Object s : sim.getSolverManager().getObjects()) if (s instanceof ImplicitUnsteadySolver) return (ImplicitUnsteadySolver) s;
@@ -841,7 +830,7 @@ public class SimKit extends StarMacro {
     return null;
   }
 
-  /** Number of cells of all regions, through a temporary cell-count report (removed again); null if n/a. */
+  /** Cell count of all regions from a temporary element count report, which is removed again. null if n/a. */
   String cellCount() {
     ElementCountReport r = null;
     try {
@@ -856,8 +845,8 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** {fluid cells, solid cells} of all regions (solid: SolidRegion), through temporary cell-count reports; null if n/a
-   *  or no cells. If the split fails, all cells count as fluid. */
+  /** {fluid cells, solid cells} of all regions from a temporary element count report; null if n/a or no cells.
+   *  If the split fails, all cells count as fluid. */
   double[] cellSplit() {
     List<Region> fluid = new ArrayList<>(), solid = new ArrayList<>();
     for (Region r : sim.getRegionManager().getRegions()) (isSolid(r) ? solid : fluid).add(r);
@@ -887,7 +876,7 @@ public class SimKit extends StarMacro {
     try { return Double.parseDouble(cfg.getOrDefault(key, "").trim()); } catch (Throwable t) { return def; }
   }
 
-  /** Cells weighted for the CPU suggestion: fluid + solid_cell_weight x solid; NaN if not known. */
+  /** Weighted cell count for the CPU suggestion, fluid + solid_cell_weight * solid. NaN if unknown. */
   static double effectiveCells(Map<String, String> cfg, double[] cells) {
     if (cells == null) return Double.NaN;
     double w = cfgNum(cfg, "solid_cell_weight", 0.3);
@@ -895,8 +884,9 @@ public class SimKit extends StarMacro {
     return cells[0] + w * cells[1];
   }
 
-  /** {suggested CPUs, 1 if capped by cpus_max}, or null (no cells, or cells_per_cpu <= 0). Below 1.5 CPUs: 1; below 16:
-   *  the nearest whole number (2 or more); else the nearest multiple of cpu_step. Nodes are shared: no node rounding. */
+  /** {suggested CPUs, 1 if capped by cpus_max}, or null without cells or with cells_per_cpu <= 0. Below 1.5 CPUs the
+   *  result is 1, below 16 it is rounded to at least 2, above that to a multiple of cpu_step. Nodes are shared, so
+   *  there is no rounding to whole nodes. */
   static int[] suggestCpus(Map<String, String> cfg, double[] cells) {
     double eff = effectiveCells(cfg, cells), cpc = cfgNum(cfg, "cells_per_cpu", 50000);
     if (Double.isNaN(eff) || eff <= 0 || cpc <= 0) return null;
@@ -923,7 +913,7 @@ public class SimKit extends StarMacro {
   ScalarGlobalParameter findParam(String name) {
     GlobalParameterManager m = sim.get(GlobalParameterManager.class);
     ScalarGlobalParameter p = findParamIn(m.getObjects(), name, 0);
-    if (p == null) {   // inside a parameter folder (group), e.g. "SimKit run tracking"
+    if (p == null) {   // in a parameter group such as PARAM_FOLDER
       try { p = findParamIn(m.getGroupsManager().getObjects(), name, 0); } catch (Throwable t) { /* no folders */ }
     }
     return p;
@@ -942,8 +932,7 @@ public class SimKit extends StarMacro {
 
   static final String PARAM_FOLDER = "SimKit run tracking";
 
-  /** SimKit's own parameters (run number, based on, iteration) in one folder of the Parameters node, apart from the
-   *  simulation's own. */
+  /** Moves the SimKit parameters (run number, based on, iteration) into one group of the Parameters node. */
   void groupTracking() {
     List<Object> ps = new ArrayList<>();
     for (String n : new String[] {P_RUN, P_FROM, P_FROM_IT}) {
@@ -953,7 +942,7 @@ public class SimKit extends StarMacro {
     toFolder(sim.get(GlobalParameterManager.class), PARAM_FOLDER, ps);
   }
 
-  /** New scalar parameter: dimensionless (dim == null) or a length with the given units. [U10][U30][U31] */
+  /** New scalar parameter, dimensionless (dim == null) or a length in the given units. */
   ScalarGlobalParameter newParam(String name, String dim, double value, Object units) {
     ScalarGlobalParameter p = (ScalarGlobalParameter) sim.get(GlobalParameterManager.class)
         .createGlobalParameter(ScalarGlobalParameter.class, "Scalar");                                   // [U10]
@@ -974,8 +963,8 @@ public class SimKit extends StarMacro {
   // Save as new run
   // =====================================================================================================
 
-  /** Save as new run (one button): the next run of this study, based on this one at its current iteration; not in a study
-   *  yet: starts one (a folder you name) with this simulation as R001. The open file stays as it is on disk. */
+  /** Saves the open simulation as the next run of its project, based on it at the current iteration. Outside a project
+   *  it creates a project with this simulation as R001. The open file on disk is not changed. */
   void toolSave() throws IOException {
     final CaseInfo r = runOrNull();
     final String p = sessionPath();
@@ -992,7 +981,7 @@ public class SimKit extends StarMacro {
         : !p.isEmpty() && Paths.get(p).getParent() != null ? Paths.get(p).toAbsolutePath().getParent() : Paths.get(System.getProperty("user.home"));
     Object[] res = Ui.edt(() -> runWindow(r, study, it, parent0));
     if (res == null) throw new Cancel(null);
-    if ("newstudy".equals(res[0])) {   // ticked in Save as new run: this run becomes R001 of a new study, next to this one
+    if ("newstudy".equals(res[0])) {   // New project from this run: R001 of a new project next to this one
       final Path p1 = study.getParent() == null ? parent0 : study.getParent();
       res = Ui.edt(() -> runWindow(r, null, it, p1));
       if (res == null) throw new Cancel(null);
@@ -1003,7 +992,7 @@ public class SimKit extends StarMacro {
     else saveRun(study, (String) res[0], (String) res[1], r, null, (String) res[2]);
   }
 
-  /** True when the open simulation has changes not saved to its file (RootObject.isModified; false if n/a). */
+  /** True when the open simulation has unsaved changes (RootObject.isModified). False if n/a. */
   boolean unsavedChanges() {
     try {
       return sim.isModified();
@@ -1013,7 +1002,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Warning before Save as new run when the open file has unsaved changes. True: continue. */
+  /** Asks before Save as new run when the open file has unsaved changes. Returns true to continue. */
   boolean confirmUnsaved(String file) {
     String f = Html.esc(file);
     JLabel text = new JLabel("<html><div style='width:380px'><b>" + f + " has unsaved changes.</b><br><br>"
@@ -1029,7 +1018,8 @@ public class SimKit extends StarMacro {
     return go;
   }
 
-  /** The Save as new run window (Swing thread). In a study: {name, comment}; not yet: {name, description, study folder}. */
+  /** Save as new run window (Swing thread). Returns {name, comment, group} in a project, {name, description, project
+   *  folder} for a new project, {"newstudy"} for New project from this run, or null when cancelled. */
   Object[] runWindow(final CaseInfo r, final Path study, final int it, Path parent0) {
     final boolean first = study == null;
     final JTextField name = Ui.hintField("", first ? "e.g. baseline" : "e.g. finer_mesh", 22);
@@ -1048,7 +1038,7 @@ public class SimKit extends StarMacro {
     final int n = first ? 1 : nextRun(study);
     final JLabel file = new JLabel(" ");
     file.setFont(file.getFont().deriveFont(Font.BOLD, 13f));
-    // where the run's folder goes: next to the run it comes from; the folder icon picks another place in the study
+    // group folder of the new run, by default the one of the source run
     final String[] place = {first ? "" : groupOf(study, r.simFile)};
     final JLabel inLbl = Ui.muted(" ");
     final JButton pickDir = new JButton(actionIcon(1));
@@ -1074,7 +1064,7 @@ public class SimKit extends StarMacro {
             JOptionPane.WARNING_MESSAGE);
         return;
       }
-      if (Files.isRegularFile(d.resolve(RUN_TXT))) d = d.getParent();   // a run folder: next to it
+      if (Files.isRegularFile(d.resolve(RUN_TXT))) d = d.getParent();   // a run folder was picked: use its parent
       place[0] = Fs.same(d, study) ? "" : study.relativize(d).toString().replace('\\', '/');
       showPlace.run();
     });
@@ -1094,9 +1084,9 @@ public class SimKit extends StarMacro {
       }
       String sep = java.io.File.separator, w = where.getText().trim(), sn = sname.getText().trim();
       String st = first ? (w.isEmpty() ? "?" : w.replaceAll("[\\\\/]+$", "")) + sep + (sn.isEmpty() ? "\u2026" : sn) : study.toString();
-      file.setToolTipText(st + sep + "sims");   // text only: what is typed may not be a valid path yet
+      file.setToolTipText(st + sep + "sims");   // plain string, the typed path may not be valid yet
     };
-    // where the new run goes: the study's family tree with a dashed card under the open run
+    // family tree with the new run as a dashed card
     final RunTree tree = first ? null : new RunTree();
     JScrollPane treeView = null;
     if (tree != null) {
@@ -1163,11 +1153,11 @@ public class SimKit extends StarMacro {
       newRoot.setToolTipText("R001 of a new project, coming from " + r.caseId);
       newRoot.addActionListener(e -> {
         toNew[0] = true;
-        okB.doClick();   // closes this window; the New study window follows
+        okB.doClick();   // closes this window, the New project window follows
       });
     }
     parts.addAll(Arrays.asList(formRow, sep, file));
-    if (!first) {   // the folder line: "in study/sub-folder" and the folder icon
+    if (!first) {   // target folder and the folder button
       JPanel where2 = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
       where2.add(inLbl);
       where2.add(javax.swing.Box.createHorizontalStrut(4));
@@ -1199,7 +1189,7 @@ public class SimKit extends StarMacro {
     if (!go) return null;
     if (toNew[0]) return new Object[] {"newstudy"};
     String nm = runName(name.getText());
-    if (!first) return new Object[] {nm, Fmt.oneLine(note.getText()), place[0]};   // default: next to the run it comes from
+    if (!first) return new Object[] {nm, Fmt.oneLine(note.getText()), place[0]};
     return new Object[] {nm, Fmt.oneLine(note.getText()),
         Paths.get(where.getText().trim()).toAbsolutePath().normalize().resolve(sname.getText().trim())};
   }
@@ -1216,8 +1206,8 @@ public class SimKit extends StarMacro {
     return l;
   }
 
-  /** Saves the open simulation as the next run of a study: R<nnn>[_name].sim in sims/, numbers inside the sim, the
-   *  run record (record/R<nnn>.txt), the run label on the scenes. The open file stays as it is on disk. */
+  /** Saves the open simulation as the next run: <group>/R<nnn>_<name>/R<nnn>_<name>.sim with run.txt, the run
+   *  parameters and the run label on the scenes. The open file on disk is not changed. */
   CaseInfo saveRun(Path study, String name, String comment) throws IOException {
     CaseInfo from = runOrNull();
     return saveRun(study, name, comment, from, null, from == null ? "" : groupOf(study, from.simFile));
@@ -1235,7 +1225,7 @@ public class SimKit extends StarMacro {
     Path f = parent.resolve(base).resolve(base + ".sim");   // its own folder: R008_name/R008_name.sim
     Fs.mkdirs(parent);
     try {
-      Files.createDirectory(Fs.guard(f.getParent()));   // new: a folder of that name already there is not reused
+      Files.createDirectory(Fs.guard(f.getParent()));   // fails if the folder exists; an existing folder is never reused
     } catch (FileAlreadyExistsException e) {
       throw new Cancel(f.getParent().getFileName() + " already exists in " + parent + ": nothing saved");
     }
@@ -1250,7 +1240,7 @@ public class SimKit extends StarMacro {
     r.put("run", id);
     r.put("name", name);
     r.put("comment", comment);
-    boolean other = from != null && !Fs.same(from.caseDir, study);   // a run of another study: <study>/R004
+    boolean other = from != null && !Fs.same(from.caseDir, study);   // a run of another project is written as <project>/R004
     r.put("based_on", from != null ? (other ? from.caseDir.getFileName() + "/" + from.caseId : from.caseId)
         : source.isEmpty() ? "" : Paths.get(source).getFileName().toString());
     r.put("based_on_file", source);
@@ -1268,7 +1258,7 @@ public class SimKit extends StarMacro {
     return runOrNull();
   }
 
-  /** Starts a study: the folder, its sub-folders and simkit_study.txt; then saves the open simulation as R001. */
+  /** Creates a project folder with simkit_project.txt, then saves the open simulation as R001. */
   void startStudy(Path dir, String name, String desc) throws IOException {
     Fs.allow(dir);
     Fs.mkdirs(dir);
@@ -1283,7 +1273,7 @@ public class SimKit extends StarMacro {
     saveRun(dir, name, "", runOrNull(), null, "");
   }
 
-  /** Files written by STAR-CCM+ during and at the end of a run get "_iter_" instead of "@" (R007_base_iter_05000.sim). */
+  /** Sets the auto-save separator to "_iter_" instead of "@", e.g. R007_base_iter_05000.sim. */
   void iterSeparator() {
     try {
       star.common.AutoSave a = sim.getSimulationIterator().getAutoSave();
@@ -1293,8 +1283,8 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** A small label on every scene: "Run R007  baseline" (images in reports then name their run), next to the
-   *  iteration (or physical time) annotation of STAR-CCM+. Scenes made later get it at the next Save as new run or Export. */
+  /** Adds the label "Run R007  baseline" to every scene, so that exported images name their run, and the iteration
+   *  or physical time annotation. Scenes created later get it at the next Save as new run or Export. */
   void runLabels(String text) {
     try {
       star.vis.AnnotationManager am = sim.getAnnotationManager();
@@ -1317,7 +1307,7 @@ public class SimKit extends StarMacro {
           if (!(Boolean) Reflect.invoke(pm, "hasPropForAnnotation", lab)) {
             Object prop = Reflect.invoke(pm, "createPropForAnnotation", lab);
             try { Reflect.invoke(prop, "setPosition", new star.base.neo.DoubleVector(new double[] {0.02, 0.95, 0.0})); }
-            catch (Throwable t) { /* default place */ }
+            catch (Throwable t) { /* default position */ }
           }
           if (it != null && !(Boolean) Reflect.invoke(pm, "hasPropForAnnotation", it)) Reflect.invoke(pm, "createPropForAnnotation", it);
           n++;
@@ -1335,44 +1325,44 @@ public class SimKit extends StarMacro {
   // Run on cluster (Linux only)
   // =====================================================================================================
 
-  /** The team's cluster settings (config/cluster.csv: key, value). */
+  /** Cluster settings: defaults, overridden by config/cluster.csv (columns key, value). */
   Map<String, String> clusterConfig() {
     Map<String, String> m = new LinkedHashMap<>();
     m.put("command", "bsub.starccmp --input={file} --cpus={ncpus} --queue={queue} --version={version} --fairshare_group={fairshare} --project={project}");
     m.put("queue_serial", "mc_all_ser");
     m.put("queue_parallel", "mc_all_par");
-    m.put("version", "");                 // empty: the release of the STAR-CCM+ that runs SimKit (e.g. 2606)
+    m.put("version", "");                 // empty: release of the running STAR-CCM+, e.g. 2606
     m.put("fairshare", "ug_st_std");
     m.put("project", "OTHER_ESA");
-    m.put("mem", "1000");                 // MB per slot: the launcher's default
-    m.put("estimated_runtime", "360");    // hours: the launcher's default
+    m.put("mem", "1000");                 // [MB] per slot, launcher default
+    m.put("estimated_runtime", "360");    // [h], launcher default
     m.put("terminal", "konsole");
     m.put("cells_per_cpu", "50000");      // suggested CPUs = (fluid + solid_cell_weight x solid cells) / cells_per_cpu
     m.put("solid_cell_weight", "0.3");
-    m.put("cells_per_cpu_min", "20000");  // amber note below this
-    m.put("cpu_step", "8");               // suggestions of 16 or more: a multiple of this
-    m.put("cpus_max", "");                // largest CPU count per job; empty = no limit
+    m.put("cells_per_cpu_min", "20000");  // warning below this
+    m.put("cpu_step", "8");               // suggestions of 16 or more are a multiple of this
+    m.put("cpus_max", "");                // largest CPU count per job, empty for no limit
     for (String[] r : config("cluster.csv", new String[] {"key", "value"}, null)) {
       if (r[0] != null && !r[0].trim().isEmpty() && r[1] != null) m.put(r[0].trim(), r[1].trim());
     }
     return m;
   }
 
-  /** {command, queue} for a file and a number of CPUs (1 = the serial queue). */
+  /** {command, queue} for a file and CPU count. One CPU uses the serial queue. */
   String[] submitCommand(Path simFile, int ncpus) {
     return submitCommand(simFile, ncpus, new HashMap<>());
   }
 
-  /** The same with the less used options of the launcher: mem (MB per slot), jobname, result_dir, estimated_runtime
-   *  (hours), send_completed_notification ("1"). An option equal to the launcher's default (config) is left out.
-   *  Placeholders of the command: {sim} full path, {file} file name (the command runs in the file's folder), {ncpus},
-   *  {queue}, {version}, {fairshare}, {project}. */
+  /** As above with the launcher options mem [MB per slot], jobname, result_dir, estimated_runtime [h] and
+   *  send_completed_notification ("1"). Options equal to the launcher default are left out. Placeholders in the
+   *  command are {sim} full path, {file} file name (the command runs in the file's folder), {ncpus}, {queue},
+   *  {version}, {fairshare} and {project}. */
   String[] submitCommand(Path simFile, int ncpus, Map<String, String> opt) {
     Map<String, String> m = clusterConfig();
     return submitCommand(m, m.getOrDefault("version", "").isEmpty() ? starRelease() : m.get("version"), simFile, ncpus, opt);
   }
 
-  /** The command from the cluster settings and the release (no file read, no STAR-CCM+ call). */
+  /** Builds the command from the settings and the release, without file access or STAR-CCM+ calls. */
   static String[] submitCommand(Map<String, String> m, String ver, Path simFile, int ncpus, Map<String, String> opt) {
     String q = ncpus <= 1 ? m.get("queue_serial") : m.get("queue_parallel");
     String path = simFile.toString().replace('\\', '/');
@@ -1395,8 +1385,8 @@ public class SimKit extends StarMacro {
     return new String[] {cmd + more, q};
   }
 
-  /** The release of the STAR-CCM+ that runs SimKit in the cluster's form: 21.04.009 -> 2606, 18.06 -> 2310 (year = major + 5;
-   *  .02 -> 02, .04 -> 06, .06 -> 10). "" if not readable. */
+  /** Release of the running STAR-CCM+ in the cluster's form, e.g. 21.04.009 -> 2606 and 18.06 -> 2310. The year is
+   *  major + 5, and minor 02, 04, 06 maps to month 02, 06, 10. "" if not readable. */
   String starRelease() {
     try {
       String r = String.valueOf(Reflect.invoke(Reflect.invoke(sim, "getStarVersion"), "getString", "ReleaseNumber"));
@@ -1410,15 +1400,15 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** A component at its preferred size, left in a row (form layouts). */
+  /** Wraps a component in a left-aligned row so that it keeps its preferred size. */
   static JPanel wrapLeft(java.awt.Component c) {
     JPanel p = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
     p.add(c);
     return p;
   }
 
-  /** A small script in the run folder's submit/ (also for a returned copy in a job folder below it): goes to the
-   *  file's folder, runs the command, keeps what it printed (job number). Not in a run folder: .simkit/ next to it. */
+  /** Writes a submit script to submit/ of the run folder, or to .simkit/ next to a file outside a run folder. The
+   *  script changes to the file's folder, runs the command and tees its output to a .log for the job number. */
   Path writeSubmitScript(Path simFile, String cmd) throws IOException {
     Path dir = simFile.getParent();
     String stamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
@@ -1434,7 +1424,7 @@ public class SimKit extends StarMacro {
     return script;
   }
 
-  /** What the Run on cluster window returns. */
+  /** Result of the Run on cluster window. */
   static final class SubmitChoice {
     int cpus;
     final Map<String, String> opt = new HashMap<>();   // mem, estimated_runtime, jobname, result_dir, send_completed_notification
@@ -1442,14 +1432,13 @@ public class SimKit extends StarMacro {
     String command = "", queue = "";
   }
 
-  /** Run on cluster (Linux only: the cluster is reached from the Linux machines): saves the file in place (with the
-   *  _iter_ naming), runs the team's command in a terminal opened in the file's folder, then reads the job number from
-   *  the launcher's output. */
+  /** Run on cluster (Linux only). Saves the file in place with _iter_ naming, runs the submit command in a terminal
+   *  opened in the file's folder, then reads the job number from the launcher output. */
   void toolSubmit() throws IOException {
     if (Fs.WINDOWS) throw new Cancel("Run on cluster works on the Linux machines only (bsub is not reachable from Windows). Nothing done.");
     final CaseInfo c = requireCase();
     final Path f = Paths.get(sessionPath()).toAbsolutePath().normalize();
-    final List<String[]> checks = preSubmitChecks();   // read here (STAR calls), shown in the window
+    final List<String[]> checks = preSubmitChecks();   // STAR-CCM+ calls, so read here and not on the Swing thread
     checks.sort((p, q) -> Boolean.compare("ok".equals(p[0]), "ok".equals(q[0])));   // warnings first
     for (String[] k : checks) log.line("  pre-submit " + k[0] + "  " + k[1] + (k.length > 2 ? " (" + k[2] + ")" : ""));
     final Map<String, String> cfg = clusterConfig();
@@ -1501,7 +1490,7 @@ public class SimKit extends StarMacro {
         result("Submitted on " + plural(r.cpus, "CPU", "CPUs") + " to " + sc[1] + " (" + t[0] + "). Log: submit/" + logFile.getFileName());
         watchJob(logFile, c);
         return;
-      } catch (IOException e) { /* the next terminal */ }
+      } catch (IOException e) { /* try the next terminal */ }
     }
     copyText(sc[0]);
     result("No terminal found (konsole, gnome-terminal, xterm). Command copied: paste it in a terminal opened in " + f.getParent());
@@ -1522,7 +1511,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** "Last submitted <date> on <n> CPUs to <queue> (job <n>)" from the run's submissions.csv and record; null if none. */
+  /** "Last submitted <date> on <n> CPUs to <queue> (job <n>)." from submissions.csv and run.txt, or null. */
   String lastSubmission(CaseInfo c, Path f) {
     try {
       String[] last = lastSubmissionRow(c, f);
@@ -1537,8 +1526,8 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Reads the launcher's output (the tee'd log) for up to 90 s: "Job <n> is submitted to queue <q>" goes to the status
-   *  line and the run's record (last_job); a rejection goes to the status line in red. */
+  /** Polls the launcher log for up to 90 s. "Job <n> is submitted to queue <q>" goes to the status line and to
+   *  last_job in run.txt; a rejection shows in red on the status line. */
   void watchJob(final Path logFile, final CaseInfo c) {
     final java.util.regex.Pattern ok = java.util.regex.Pattern.compile("Job <([0-9]+)> is submitted to queue <([^>]+)>");
     Thread w = new Thread(() -> {
@@ -1555,7 +1544,7 @@ public class SimKit extends StarMacro {
             Map<String, String> id = readIdentity(rec);
             id.put("last_job", m.group(1));
             Fs.write(rec, identityText(id));
-          } catch (Throwable t) { /* the status line has it */ }
+          } catch (Throwable t) { /* the job number is still on the status line */ }
           return;
         }
         if (text.contains("Job not submitted") || text.contains("Request aborted") || text.contains("command not found")) {
@@ -1568,17 +1557,17 @@ public class SimKit extends StarMacro {
     w.start();
   }
 
-  /** Sets the status line of the SimKit window from a background thread (0 done, 1 amber, 2 red). */
+  /** Sets the status line from a background thread. level is 0 done, 1 amber, 2 red. */
   void postStatus(String text, int level) {
     lastStatus = text;
     lastLevel = level;
     javax.swing.SwingUtilities.invokeLater(this::showStatus);
   }
 
-  /** The Run on cluster window (Swing thread; no STAR-CCM+ call, so it can be shown offline). checks: {state, text[,
-   *  detail]}, warnings first. prefs: ncpus, clusterMem, clusterRuntime, clusterMail, clusterMore. last: the last
-   *  submission line or null. cells: {fluid, solid} or null (no mesh). lastCpus: CPUs of the run's last submission, 0 if
-   *  none. Returns the choice, or null when cancelled. */
+  /** Run on cluster window (Swing thread). It makes no STAR-CCM+ call, so it can be shown offline. checks are
+   *  {state, text[, detail]} with warnings first. prefs holds ncpus, clusterMem, clusterRuntime, clusterMail and
+   *  clusterMore. last is the last submission line or null, cells is {fluid, solid} or null without mesh, lastCpus is
+   *  0 for a run never submitted. Returns null when cancelled. */
   static SubmitChoice submitWindow(final Path file, String runId, final List<String[]> checks, final Map<String, String> cfg,
       final String release, Map<String, String> prefs, String last, final double[] cells, int lastCpus) {
     java.util.function.Function<String, JLabel> head = s -> {
@@ -1586,7 +1575,7 @@ public class SimKit extends StarMacro {
       l.setFont(l.getFont().deriveFont(Font.BOLD));
       return l;
     };
-    final int[] sug = suggestCpus(cfg, cells);   // the run's last value, else the suggestion, else the user's last value
+    final int[] sug = suggestCpus(cfg, cells);   // CPUs: last submission, else suggestion, else last value used
     final double eff = effectiveCells(cfg, cells);
     final double cpcMin = cfgNum(cfg, "cells_per_cpu_min", 20000);
     final int cpuMax = (int) cfgNum(cfg, "cpus_max", 0);
@@ -1662,7 +1651,7 @@ public class SimKit extends StarMacro {
       return p;
     };
 
-    // more options (folded)
+    // More options
     JPanel grid = new JPanel(new java.awt.GridBagLayout());
     java.awt.GridBagConstraints g = new java.awt.GridBagConstraints();
     g.anchor = java.awt.GridBagConstraints.WEST;
@@ -1674,12 +1663,12 @@ public class SimKit extends StarMacro {
       g.gridx = 0;
       grid.add(new JLabel((String) formRows[i][0]), g);
       g.gridx = 1;
-      JPanel cellp = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));   // the unit next to its field
+      JPanel cellp = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));   // unit next to the field
       cellp.add((java.awt.Component) formRows[i][1]);
       if (!((String) formRows[i][2]).isEmpty()) cellp.add(Ui.muted((String) formRows[i][2]));
       grid.add(cellp, g);
     }
-    g.gridx = 2;   // the spare width goes right of the fields: the grid stays at the left
+    g.gridx = 2;   // filler takes the spare width so the grid stays left-aligned
     g.gridy = 0;
     g.weightx = 1;
     grid.add(javax.swing.Box.createHorizontalGlue(), g);
@@ -1753,7 +1742,7 @@ public class SimKit extends StarMacro {
     n.addFocusListener(new java.awt.event.FocusAdapter() {
       @Override public void focusGained(java.awt.event.FocusEvent e) { javax.swing.SwingUtilities.invokeLater(n::selectAll); }
     });
-    for (final int d : new int[] {1, -1}) {   // Up / Down: +1 / -1 CPU
+    for (final int d : new int[] {1, -1}) {   // Up and Down keys change the CPU count by 1
       String key = d > 0 ? "UP" : "DOWN";
       n.getInputMap().put(javax.swing.KeyStroke.getKeyStroke(key), "simkit." + key);
       n.getActionMap().put("simkit." + key, new javax.swing.AbstractAction() {
@@ -1777,7 +1766,7 @@ public class SimKit extends StarMacro {
       t.start();
     });
 
-    // checks
+    // Checks
     int warn = 0;
     for (String[] k : checks) if (!"ok".equals(k[0])) warn++;
     final javax.swing.table.AbstractTableModel cm = new javax.swing.table.AbstractTableModel() {
@@ -1816,7 +1805,6 @@ public class SimKit extends StarMacro {
     ct.getColumnModel().getColumn(0).setMinWidth(90);
     ct.getColumnModel().getColumn(0).setMaxWidth(90);
 
-    // layout
     JPanel cpuRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
     JLabel cl = new JLabel("CPUs");
     cl.setDisplayedMnemonic('C');
@@ -1896,8 +1884,8 @@ public class SimKit extends StarMacro {
     } catch (Throwable x) { /* no clipboard (batch) */ }
   }
 
-  /** {state, text[, detail]} lines: mesh, stopping criteria, auto-save, standard reports, names, run number. state:
-   *  "ok", "!" (warning) or "na" (could not be read); detail (optional): the names, shown as a tooltip. */
+  /** Pre-submit checks as {state, text[, detail]}. state is "ok", "!" (warning) or "na" (not readable). detail
+   *  lists names and is shown as a tooltip. */
   List<String[]> preSubmitChecks() {
     List<String[]> out = new ArrayList<>();
     try {
@@ -1942,7 +1930,7 @@ public class SimKit extends StarMacro {
       if (nopre > 0) out.add(new String[] {"!", plural(nopre, "boundary", "boundaries") + " without a type prefix. Fix in Names."});
       if (def > 0) out.add(new String[] {"!", plural(def, "object", "objects") + " with a default name. Fix in Names."});
     } catch (Throwable t) { out.add(new String[] {"na", "Names", reason(t)}); }
-    try {   // reports and the surfaces they are computed on
+    try {   // report surfaces
       Map<String, Object> reps = new LinkedHashMap<>();
       for (Object r : sim.getReportManager().getObjects()) reps.put(nm(r), r);
       List<String> empty = new ArrayList<>(), miss = new ArrayList<>(), notNet = new ArrayList<>();
@@ -1994,16 +1982,16 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Tracker: one row per run of the project, read from the run folders; status and comments editable
+  // Tracker
   // =====================================================================================================
 
-  /** Tracker columns. ID = <project>.v<nnn> (one per run, shown as R<nnn>; "based on" refers to it). comment and
-   *  status are the user's (editable); everything else is read from the run folders. */
+  /** Tracker columns. ID is <project>.v<nnn>, shown as R<nnn>, and "based on" holds such an ID. comment and status
+   *  are edited in the tracker; the other columns are read from the run folders. */
   static final String[] TRACKER_COLS = {"ID", "comment", "status", "based on", "description", "saved", "file"};
 
   static final int COL_ID = 0, COL_COMMENT = 1, COL_STATUS = 2, COL_BASED = 3, COL_DESC = 4, COL_SAVED = 5, COL_FILE = 6;
 
-  /** One row per run of a study: its latest file (what you continue from), comment, status, based on. */
+  /** Tracker rows of a project, one per run. The file column holds the newest .sim of the run. */
   static List<String[]> studyRows(Path study) {
     List<String[]> rows = new ArrayList<>();
     String name = study.getFileName().toString();
@@ -2046,12 +2034,12 @@ public class SimKit extends StarMacro {
     return i < 0 ? "" : versionId.substring(i + 2);
   }
 
-  /** Hidden in the tracker (files untouched): hidden_v<nnn>=yes, or hidden=yes on the project (older SimKit). */
+  /** True when hidden_v<nnn>=yes, or hidden=yes in the project file (older projects). */
   static boolean isHidden(Map<String, String> id, String v) {
     return "yes".equals(id.get("hidden")) || "yes".equals(id.get("hidden_v" + v));
   }
 
-  /** File names (rows) currently hidden in a project. */
+  /** Files of the hidden rows. */
   static Set<String> hiddenFiles(Path casesDir, List<String[]> rows) {
     Set<String> out = new HashSet<>();
     Map<String, Map<String, String>> ids = new HashMap<>();
@@ -2063,12 +2051,11 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** The file of a tracker row (its path below the project folder). */
   static Path fileOf(Path dir, String[] r) {
     return dir.resolve(r[COL_FILE]);
   }
 
-  /** Hides or shows again one run (v = its number), or the whole project (v == null, older SimKit); only run.txt changes. */
+  /** Sets or removes hidden=yes in the run.txt of run v, or in the project file when v is null. */
   static void setHidden(Path dir, String caseId, String v, boolean hide) throws IOException {
     Path f = v == null ? studyFile(dir) : runRecord(dir, Integer.parseInt(v));
     Map<String, String> m = readIdentity(f);
@@ -2076,21 +2063,21 @@ public class SimKit extends StarMacro {
     Fs.write(f, identityText(m));
   }
 
-  static final String[] STATUSES = {"", "planned", "meshing", "running", "diverged", "done", "dropped"};   // "reported" (older cases): still shown
+  static final String[] STATUSES = {"", "planned", "meshing", "running", "diverged", "done", "dropped"};   // "reported" of older projects is still coloured
   static final String TRACKER_CSV = "case_tracker.csv";
 
-  /** One row per run of the project. Reads only files; never the simulation. */
+  /** Tracker rows from the files only, without the simulation. */
   static List<String[]> trackerRows(Path dir) {
     return studyRows(dir);
   }
 
-  /** Tracker: floating window of every run of the project; comment and status are saved as you edit. */
+  /** Opens the tracker window for the project of the open run, or of a chosen folder. In batch, writes the CSV only. */
   void toolTracker() throws IOException {
     CaseInfo c = caseOrNull();
     Path dir = c != null ? c.caseDir : projectDirToOpen();
     Fs.allow(dir);
     List<String[]> rows = trackerRows(dir);
-    if (!gui) {   // batch (test): write the CSV only
+    if (!gui) {
       writeTrackerCsv(dir, rows);
       log.line("tracker: " + rows.size() + " run(s) -> " + dir.resolve(TRACKER_CSV));
       return;
@@ -2102,12 +2089,12 @@ public class SimKit extends StarMacro {
       TrackerWindow t = new TrackerWindow(dir, openId);
       t.w.setLocationRelativeTo(Ui.owner());
       Env.track(t.w);
-      t.w.setVisible(true);   // non-modal: STAR-CCM+ stays usable
+      t.w.setVisible(true);
       return null;
     });
   }
 
-  /** The open sim is not a run: the user picks a project folder (one holding simkit_project.txt, or a folder in it). */
+  /** Asks for a project folder, or a folder inside one, when the open simulation is not a run. */
   Path projectDirToOpen() {
     if (!gui) throw new Cancel("the open simulation is not a run of a project");
     String last = Env.pref("trackerDir");
@@ -2121,7 +2108,7 @@ public class SimKit extends StarMacro {
     return st;
   }
 
-  /** case_tracker.csv: the tracker columns + hidden (yes / empty). */
+  /** Writes case_tracker.csv with the tracker columns and a hidden column (yes or empty). */
   static void writeTrackerCsv(Path dir, List<String[]> rows) throws IOException {
     Set<String> hid = hiddenFiles(dir, rows);
     String[] head = Arrays.copyOf(TRACKER_COLS, TRACKER_COLS.length + 1);
@@ -2135,8 +2122,8 @@ public class SimKit extends StarMacro {
     Csv.write(dir.resolve(TRACKER_CSV), head, out);
   }
 
-  /** Opens a .sim in this STAR-CCM+ session (another simulation, with its own tab in the window). Returns null when it
-   *  is already open here. Slow (starts a server and loads the file): never call it on the Swing thread. */
+  /** Opens a .sim in this session as another simulation with its own tab. Returns null when it is already open. Slow,
+   *  since it starts a server and loads the file, so never call it on the Swing thread. */
   static Simulation openSim(Path f) {
     if (isOpen(f)) return null;
     return new Simulation(f.toAbsolutePath().normalize().toString());
@@ -2154,7 +2141,7 @@ public class SimKit extends StarMacro {
     return false;
   }
 
-  /** The window object (star.coremodule.SimulationProcessObject) of this .sim when it is open with its own tab, else null. */
+  /** The star.coremodule.SimulationProcessObject of this .sim when it is open in its own tab, else null. */
   static Object simWindow(Path f) {
     try {
       Class<?> c = Class.forName("star.coremodule.SimulationProcessObject", true, StarSettings.class.getClassLoader());
@@ -2168,8 +2155,8 @@ public class SimKit extends StarMacro {
     return null;
   }
 
-  /** STAR-CCM+'s own Load Simulation dialog (what File > Load shows: star.coremodule.ui.OpenOptionsDialog) with this file
-   *  filled in. show = false only checks that the dialog and its calls exist (batch test). Swing thread only when shown. */
+  /** Shows the STAR-CCM+ Load Simulation dialog (star.coremodule.ui.OpenOptionsDialog) with this file filled in.
+   *  show = false only checks that the class and methods exist (batch test). Swing thread only when shown. */
   static void loadDialog(Path f, boolean show) throws Exception {
     Class<?> c = Class.forName("star.coremodule.ui.OpenOptionsDialog", true, StarSettings.class.getClassLoader());
     java.lang.reflect.Method set = c.getMethod("setSimFile", String.class), open = null;
@@ -2179,12 +2166,12 @@ public class SimKit extends StarMacro {
     if (open == null) throw new NoSuchMethodException("OpenOptionsDialog.show(RootProcessObject)");
     java.lang.reflect.Constructor<?> k = c.getConstructor(String.class, boolean.class, boolean.class);
     if (!show) return;
-    Object d = k.newInstance("Load Simulation", true, true);   // as File > Load: start a server, browse allowed
+    Object d = k.newInstance("Load Simulation", true, true);   // as File > Load: start a server, browsing allowed
     set.invoke(d, f.toAbsolutePath().normalize().toString());
     open.invoke(d, (Object) null);
   }
 
-  /** Status colours in the tracker: {background, text}. */
+  /** Tracker colours of a status as {background, text}, or null. */
   static java.awt.Color[] statusColors(String s) {
     switch (s == null ? "" : s) {
       case "planned": return new java.awt.Color[] {new java.awt.Color(0xEC, 0xEF, 0xF3), new java.awt.Color(0x4A, 0x55, 0x63)};
@@ -2209,11 +2196,11 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** The optional name in a version file: ISO-007_cold_v03.sim -> "cold". */
+  /** Display label of a run file: its name and, for a file written by a run, its iteration. "" for other files. */
   static String fileLabel(String file) {
     String f = file == null ? "" : file.substring(file.lastIndexOf('/') + 1);
     Matcher r = RUN_FILE.matcher(f);
-    if (r.matches()) {   // a run: its name, and the iteration of a file that came back from a run
+    if (r.matches()) {
       String it = iterOf(f);
       return (r.group(2) == null ? "" : r.group(2)) + (it.isEmpty() ? "" : (r.group(2) == null ? "" : "  \u00B7  ") + "it " + it);
     }
@@ -2224,8 +2211,8 @@ public class SimKit extends StarMacro {
     return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
   }
 
-  /** Small painted icons (no font glyphs: the same on Windows and RHEL). kind: 0 folded, 1 unfolded, 2 open in STAR, 3 blank. */
-  /** Small icons of the tracker's actions: 0 results (bars), 1 folder, 2 copy, 4 hide (eye crossed), 5 show again (eye). */
+  /** Painted icons for the tracker actions, so they look the same on Windows and RHEL. kind: 0 results, 1 folder,
+   *  2 copy, 4 hide, 5 show. */
   static javax.swing.Icon actionIcon(final int kind) {
     return new javax.swing.Icon() {
       @Override public int getIconWidth() { return 18; }
@@ -2259,22 +2246,21 @@ public class SimKit extends StarMacro {
     };
   }
 
-  /** Runs drawn as a family tree: generations left to right, each card to the right of the run it is based on, soft
-   *  curved links. Used by the tracker (Family tree) and by Save as new run, where a dashed blue card shows the run about to
-   *  be saved (ghost = {id, name, parent id}). */
+  /** Family tree of the runs: generations from left to right, each card right of the run it is based on. Used by the
+   *  tracker and by Save as new run, where ghost = {id, name, parent id} is drawn as a dashed card for the new run. */
   static final class RunTree extends javax.swing.JComponent {
     private static final long serialVersionUID = 1L;
     static final int CW = 172, CH = 54, HG = 50, VG = 16, M = 20;
     java.util.function.Supplier<List<String[]>> source = ArrayList::new;
     java.util.function.Function<String, String> shown = x -> x;
     java.util.function.BiConsumer<String, Integer> onClick;
-    /** Right click on a card: (id, event). */
+    /** Called on right click with (id, event). */
     java.util.function.BiConsumer<String, java.awt.event.MouseEvent> onMenu;
-    /** All runs, the hidden ones included: a run whose parent is hidden is linked to the nearest shown ancestor. */
+    /** All runs including hidden ones, used to link a run with a hidden parent to the nearest shown ancestor. */
     java.util.function.Supplier<List<String[]>> lineage;
-    /** Hidden runs (drawn faded when shown). */
+    /** Hidden runs, drawn faded. */
     java.util.function.Predicate<String> isHidden = x -> false;
-    final Set<String> bridged = new HashSet<>();   // links that pass over hidden runs (dashed)
+    final Set<String> bridged = new HashSet<>();   // runs linked past hidden runs, drawn dashed
     String openId, picked;
     String[] ghost;
     final Map<String, java.awt.Rectangle> box = new LinkedHashMap<>();
@@ -2313,8 +2299,8 @@ public class SimKit extends StarMacro {
           setCursor(java.awt.Cursor.getPredefinedCursor(hand ? java.awt.Cursor.HAND_CURSOR : java.awt.Cursor.DEFAULT_CURSOR));
         }
       });
-      // click and drag anywhere: moves the view (a click without moving still selects a box)
-      final java.awt.Point[] grab = new java.awt.Point[2];   // mouse on screen, view position at the press
+      // dragging pans the view; a click without movement still selects a card
+      final java.awt.Point[] grab = new java.awt.Point[2];   // mouse position on screen and view position at press
       addMouseListener(new java.awt.event.MouseAdapter() {
         @Override public void mousePressed(java.awt.event.MouseEvent e) {
           javax.swing.JViewport vp = (javax.swing.JViewport) javax.swing.SwingUtilities.getAncestorOfClass(javax.swing.JViewport.class, RunTree.this);
@@ -2375,7 +2361,7 @@ public class SimKit extends StarMacro {
       List<String> roots = new ArrayList<>();
       for (String id : ids) {
         String b = byId.get(id)[COL_BASED];
-        for (int k = 0; k < 50 && !b.isEmpty() && !all.contains(b) && basedAll.containsKey(b); k++) {   // over hidden runs
+        for (int k = 0; k < 50 && !b.isEmpty() && !all.contains(b) && basedAll.containsKey(b); k++) {   // skip hidden ancestors
           b = basedAll.get(b);
           if (all.contains(b)) bridged.add(id);
         }
@@ -2397,7 +2383,7 @@ public class SimKit extends StarMacro {
       int[] slot = {0};
       Set<String> seen = new HashSet<>();
       for (String r : roots) place(r, 0, kids, slot, seen);
-      for (String id : ids) if (!seen.contains(id)) place(id, 0, kids, slot, seen);   // a loop in the records: drawn as roots
+      for (String id : ids) if (!seen.contains(id)) place(id, 0, kids, slot, seen);   // runs in a based-on loop are drawn as roots
       int wMax = M, hMax = M;
       for (java.awt.Rectangle b : box.values()) { wMax = Math.max(wMax, b.x + b.width + M); hMax = Math.max(hMax, b.y + b.height + M); }
       setPreferredSize(new java.awt.Dimension(wMax, hMax));
@@ -2450,14 +2436,14 @@ public class SimKit extends StarMacro {
         boolean dropped = st.equals("dropped"), open = id.equals(openId), sel = id.equals(picked);
         java.awt.geom.RoundRectangle2D card = new java.awt.geom.RoundRectangle2D.Double(b.x, b.y, b.width, b.height, 12, 12);
         if (!gh) {
-          g.setColor(new java.awt.Color(0, 0, 0, 18));   // a soft shadow
+          g.setColor(new java.awt.Color(0, 0, 0, 18));
           g.fill(new java.awt.geom.RoundRectangle2D.Double(b.x + 1, b.y + 2, b.width, b.height, 12, 12));
         }
         g.setColor(gh ? Ui.PALE : dropped ? new java.awt.Color(0xF7, 0xF7, 0xF8) : java.awt.Color.WHITE);
         g.fill(card);
         if (!gh) {
           java.awt.Shape clip = g.getClip();
-          g.clip(card);   // the status colour as a band on the left
+          g.clip(card);   // status colour band on the left
           g.setColor(sc == null ? FRAME : sc[1]);
           g.fillRect(b.x, b.y, 5, b.height);
           g.setClip(clip);
@@ -2468,7 +2454,7 @@ public class SimKit extends StarMacro {
         int tx = b.x + 14, right = b.x + b.width - 10 - (open ? 14 : 0);
         String head = shown.apply(id), nm = gh ? ghost[1] : nameOf(r[COL_FILE]);
         String itx = gh ? "" : iterOf(r[COL_FILE]);
-        {   // the run number as a small tag, then its name
+        {   // run number tag, then the name
           g.setFont(small.deriveFont(Font.BOLD));
           int tw = g.getFontMetrics().stringWidth(head);
           g.setColor(gh ? new java.awt.Color(0xD6, 0xE4, 0xF7) : new java.awt.Color(0xEC, 0xEF, 0xF3));
@@ -2521,10 +2507,10 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** The standard template of a comment: four headings, each with an empty bullet. */
+  /** Default comment template with four headings, each with an empty bullet. */
   static final String COMMENT_TEMPLATE = "**Goal:**\n- \n**Changes:**\n- \n**Result:**\n- \n**Next:**\n- ";
 
-  /** Formatting bar: 0 bold, 1 italic, 2 underline, 3 colour (with a menu), 4 list (with a menu), 5 template. */
+  /** Formatting bar icon. kind 0 bold, 1 italic, 2 underline, 3 colour, 4 list, 5 template. Kinds 3 and 4 have a menu arrow. */
   static javax.swing.Icon fmtIcon(final int kind) {
     return new javax.swing.Icon() {
       @Override public int getIconWidth() { return kind >= 3 ? 26 : 18; }
@@ -2550,18 +2536,18 @@ public class SimKit extends StarMacro {
             g.setColor(on ? new java.awt.Color(0xC0, 0x39, 0x2B) : ink);
             g.fillRect(3, 14, 12, 3);
           }
-        } else if (kind == 4) {   // three items: dot and line
+        } else if (kind == 4) {   // three bullet lines
           for (int k = 0; k < 3; k++) {
             g.fillOval(2, 3 + 5 * k, 3, 3);
             g.drawLine(8, 4 + 5 * k, 16, 4 + 5 * k);
           }
-        } else {   // template: a page with lines
+        } else {   // template icon, a page with lines
           g.drawPolyline(new int[] {11, 4, 4, 14, 14, 11, 11, 14}, new int[] {2, 2, 16, 16, 5, 2, 5, 5}, 8);
           g.drawLine(7, 8, 11, 8);
           g.drawLine(7, 11, 11, 11);
           g.drawLine(7, 14, 9, 14);
         }
-        if (kind >= 3) {   // a small arrow: opens a menu
+        if (kind >= 3) {   // menu arrow
           g.setColor(ink);
           g.fillPolygon(new int[] {20, 25, 22}, new int[] {8, 8, 11}, 3);
         }
@@ -2570,10 +2556,10 @@ public class SimKit extends StarMacro {
     };
   }
 
-  /** A run of a study: the "open" dot (or nothing), then its pin star. */
+  /** Run icon with the "open" dot when open, followed by the pin star. */
   static javax.swing.Icon runIcon(boolean open, boolean pinned) { return starIcon(trackerIcon(open ? 2 : 3), pinned, true); }
 
-  /** An icon (arrow or dot) followed by the pin star, or the icon alone (withStar false). */
+  /** The icon followed by the pin star. With withStar false, the icon alone. */
   static javax.swing.Icon starIcon(final javax.swing.Icon first, final boolean pinned, final boolean withStar) {
     return new javax.swing.Icon() {
       @Override public int getIconWidth() { return withStar ? 28 : 12; }
@@ -2624,8 +2610,7 @@ public class SimKit extends StarMacro {
     };
   }
 
-  /** The Case tracker window: cases as fold-able header rows with their versions below; edits are saved at once;
-   *  details of the selected version underneath; refreshed from the case folders whenever the window gets focus. */
+  /** Case tracker window. Edits are saved at once. The rows are reread from the case folders when the window gets focus. */
   final class TrackerWindow {
     static final int T_ID = 0, T_STATUS = 1, T_COMMENT = 2, T_BASED = 3, T_SAVED = 4;
     final String[] cols = {"ID", "status", "comment", "based on", "saved"};
@@ -2656,18 +2641,18 @@ public class SimKit extends StarMacro {
     final JTextField filter;
     final JComboBox<String> statusFilter = new JComboBox<>(new String[] {"All statuses", "Active (planned, meshing, running)",
         "Done", "Dropped", "No status", "Diverged"});
-    /** "Hidden (n)": shows the hidden runs or versions, faded (only there when something is hidden). */
+    /** Shows hidden runs and versions, faded. Visible only when something is hidden. */
     final javax.swing.JToggleButton showHidden = new javax.swing.JToggleButton("Hidden");
     final JButton undoBtn = Ui.link("Undo");
     Runnable undoAction;
     final JLabel summary = new JLabel(), message = new JLabel(" "), folderName = new JLabel(), headline = new JLabel(" "),
         areaLabel = new JLabel("Comment");
-    /** The comment box: shows the formatting itself, no marks (the file keeps the marks: **bold** ...). */
+    /** Comment box. It shows formatted text, while the stored text uses marks such as **bold**. */
     final javax.swing.JTextPane live = new javax.swing.JTextPane() {
       private static final long serialVersionUID = 1L;
       @Override protected void paintComponent(java.awt.Graphics g) {
         super.paintComponent(g);
-        if (getDocument().getLength() == 0 && !isFocusOwner() && !hint.isEmpty()) {   // what the empty box is for
+        if (getDocument().getLength() == 0 && !isFocusOwner() && !hint.isEmpty()) {   // placeholder hint
           g.setColor(new java.awt.Color(0xB8, 0xBE, 0xC6));
           g.setFont(getFont().deriveFont(Font.ITALIC));
           g.drawString(hint, getInsets().left, getInsets().top + g.getFontMetrics().getAscent());
@@ -2675,8 +2660,8 @@ public class SimKit extends StarMacro {
       }
     };
     String hint = "";
-    static final String COLOUR = "simkitColour";   // the colour name of a piece of text in the box
-    String liveLoaded = "", liveNorm = "";   // the text put in the box, and the box read back just after
+    static final String COLOUR = "simkitColour";   // attribute key for the text colour name
+    String liveLoaded = "", liveNorm = "";   // text loaded into the box, and the box read back right after loading
     final javax.swing.undo.UndoManager undo = new javax.swing.undo.UndoManager();
     javax.swing.JSplitPane split;
     JPanel details;
@@ -2685,12 +2670,12 @@ public class SimKit extends StarMacro {
     final JPanel chips = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
     final java.awt.Color hoverBg = new java.awt.Color(0xF2, 0xF6, 0xFC);
     boolean editing = false;
-    final List<JButton> fmtButtons = new ArrayList<>();   // B, I, U, colour, lists: enabled when a single row is selected
+    final List<JButton> fmtButtons = new ArrayList<>();   // enabled only when a single row is selected
     JPanel fmtBar;
     final JButton folderBtn = new JButton(actionIcon(1)), hideBtn = new JButton(actionIcon(4)),
         simBtn = new JButton("Open in STAR-CCM+..."), copyBtn = new JButton(actionIcon(2));
     boolean opening = false;
-    final Set<String> pins = new LinkedHashSet<>();   // pinned case folders (this user only)
+    final Set<String> pins = new LinkedHashSet<>();   // pinned case folders, per user
 
     String pinKey(String caseId) { return dir.resolve(caseId).toAbsolutePath().normalize().toString(); }
 
@@ -2703,9 +2688,9 @@ public class SimKit extends StarMacro {
       rebuild();
       say(shown(caseId) + (on ? " starred" : " unstarred"), grey);
     }
-    String areaKey = null;   // what the details text area edits: version ID (comment) or "case:<id>" (description)
+    String areaKey = null;   // version ID for a comment, "case:<id>" for a case description
 
-    /** An ID as shown: R007 for a run, the project name for the project row. */
+    /** Display ID: R007 for a run, the project name for the project row. */
     String shown(String id) { return id.matches(".*\\.v[0-9]+$") ? runId(runOf(id)) : id; }
 
     TrackerWindow(Path dir0, String openId) {
@@ -2729,7 +2714,7 @@ public class SimKit extends StarMacro {
             default: return it.r[COL_SAVED];
           }
         }
-        @Override public boolean isCellEditable(int row, int col) {   // comments and descriptions: in the box below
+        @Override public boolean isCellEditable(int row, int col) {   // comments and descriptions are edited in the box below
           return !view.get(row).isCase() && col == T_STATUS;
         }
         @Override public void setValueAt(Object v, int row, int col) {
@@ -2745,7 +2730,7 @@ public class SimKit extends StarMacro {
       table = new JTable(model);
       table.setRowHeight(26);
       table.setShowVerticalLines(false);
-      table.setShowHorizontalLines(false);   // flat: stripes and case headers separate the rows
+      table.setShowHorizontalLines(false);   // stripes and case headers separate the rows
       table.setIntercellSpacing(new java.awt.Dimension(0, 0));
       table.setFillsViewportHeight(true);
       table.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
@@ -2760,7 +2745,7 @@ public class SimKit extends StarMacro {
         table.getColumnModel().getColumn(i).setMaxWidth(widths[i] + 120);
       }
       table.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
-      table.getActionMap().put("copy", new javax.swing.AbstractAction() {   // Ctrl+C: ID and path of the selected rows
+      table.getActionMap().put("copy", new javax.swing.AbstractAction() {   // Ctrl+C copies ID and path of the selected rows
         private static final long serialVersionUID = 1L;
         @Override public void actionPerformed(java.awt.event.ActionEvent e) { copyLinks(); }
       });
@@ -2777,7 +2762,7 @@ public class SimKit extends StarMacro {
           int row = table.rowAtPoint(e.getPoint()), col = table.columnAtPoint(e.getPoint());
           if (row < 0 || !javax.swing.SwingUtilities.isLeftMouseButton(e)) return;
           Item it = view.get(row);
-          if (col == T_COMMENT && e.getClickCount() == 2) startEdit();   // write in the box below
+          if (col == T_COMMENT && e.getClickCount() == 2) startEdit();
           else if (!it.isCase() && col == T_ID && onRunStar(row, e)) togglePin(it.r[COL_ID]);
           else if (!it.isCase() && col == T_ID && e.getClickCount() == 2) openSelected();
           else if (it.isCase() && (col == T_ID || e.getClickCount() == 2)) toggle(it.caseId);
@@ -2790,19 +2775,19 @@ public class SimKit extends StarMacro {
           boolean hand = row >= 0 && (view.get(row).isCase() && col == T_ID
               || !view.get(row).isCase() && col == T_BASED && byId(view.get(row).r[COL_BASED]) != null);
           table.setCursor(java.awt.Cursor.getPredefinedCursor(hand ? java.awt.Cursor.HAND_CURSOR : java.awt.Cursor.DEFAULT_CURSOR));
-          if (row != hoverRow) { hoverRow = row; table.repaint(); }   // light highlight under the mouse
+          if (row != hoverRow) { hoverRow = row; table.repaint(); }   // hover highlight
         }
       });
       table.addMouseListener(new java.awt.event.MouseAdapter() {
         @Override public void mouseExited(java.awt.event.MouseEvent e) { hoverRow = -1; table.repaint(); }
       });
-      // keyboard: arrows move, Enter opens, F2 writes, Space pins a case, Left / Right fold / unfold, Ctrl+F filters
+      // Keys: arrows move, Enter opens, F2 edits, Space pins, Left and Right fold and unfold, Ctrl+F filters.
       keyOn(table, "ENTER", this::openSelected);
       keyOn(table, "F2", this::startEdit);
       keyOn(table, "SPACE", () -> {
         Item it = current();
         if (it == null) return;
-        if (!it.isCase()) togglePin(it.r[COL_ID]);   // the runs are starred, not the project
+        if (!it.isCase()) togglePin(it.r[COL_ID]);   // only runs can be pinned, not the project
       });
       keyOn(table, "LEFT", () -> { Item it = current(); if (it != null && expanded.contains(it.caseId)) toggleKeep(it.caseId); });
       keyOn(table, "RIGHT", () -> { Item it = current(); if (it != null && !expanded.contains(it.caseId)) toggleKeep(it.caseId); });
@@ -2859,7 +2844,6 @@ public class SimKit extends StarMacro {
       bind(live, "SPACE", this::space);
       bind(live, "ctrl Z", () -> { if (undo.canUndo()) undo.undo(); });
       bind(live, "ctrl Y", () -> { if (undo.canRedo()) undo.redo(); });
-      // the formatting bar is always shown; used on the formatted text, it first opens the box for writing
       JPanel bar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));
       final javax.swing.JPopupMenu colours = new javax.swing.JPopupMenu();
       for (Map.Entry<String, String> c : Md.COLORS.entrySet()) {
@@ -2896,7 +2880,7 @@ public class SimKit extends StarMacro {
       templates.addSeparator();
       templates.add(tMine);
       templates.add(tBack);
-      // icon buttons in groups, as in a word processor: B I U A | list | template
+      // button groups: B I U A | list | template
       Object[][] tools = {{0, "Bold (Ctrl+B)", (Runnable) () -> fmt(() -> style(javax.swing.text.StyleConstants.Bold))},
           {1, "Italic (Ctrl+I)", (Runnable) () -> fmt(() -> style(javax.swing.text.StyleConstants.Italic))},
           {2, "Underline (Ctrl+U)", (Runnable) () -> fmt(() -> style(javax.swing.text.StyleConstants.Underline))},
@@ -2906,7 +2890,7 @@ public class SimKit extends StarMacro {
           {-1, null, null},
           {5, "Template: insert it, or make this comment your own template", templates}};
       for (Object[] t : tools) {
-        if ((Integer) t[0] < 0) {   // a thin line between groups
+        if ((Integer) t[0] < 0) {   // group separator
           javax.swing.JSeparator sep = new javax.swing.JSeparator(javax.swing.SwingConstants.VERTICAL);
           sep.setPreferredSize(new java.awt.Dimension(9, 18));
           bar.add(sep);
@@ -2971,7 +2955,7 @@ public class SimKit extends StarMacro {
       final JLabel casesIn = new JLabel("Project");
       casesIn.setForeground(grey);
       folderName.setFont(folderName.getFont().deriveFont(Font.BOLD));
-      // List | Tree: the table, or the runs drawn as a family tree, in the same place
+      // The List view shows the table, the Tree view shows the runs as a family tree.
       final javax.swing.JToggleButton listB = new javax.swing.JToggleButton("List"), treeB = new javax.swing.JToggleButton("Tree", treeIcon());
       javax.swing.ButtonGroup lt = new javax.swing.ButtonGroup();
       lt.add(listB);
@@ -3005,11 +2989,11 @@ public class SimKit extends StarMacro {
 
       details = new JPanel(new BorderLayout(10, 6));
       details.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 2));
-      JPanel acts = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));   // the main action, then small icons
+      JPanel acts = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 2, 0));
       acts.add(simBtn);
       acts.add(javax.swing.Box.createHorizontalStrut(6));
       for (JButton b : new JButton[] {folderBtn, copyBtn, hideBtn}) acts.add(b);
-      JPanel head = new JPanel();   // headline (2 lines), actions, status labels: each its own height
+      JPanel head = new JPanel();   // rows of different heights: headline, actions, status labels
       head.setLayout(new javax.swing.BoxLayout(head, javax.swing.BoxLayout.Y_AXIS));
       for (javax.swing.JComponent c : new javax.swing.JComponent[] {headline, acts, chips}) {
         c.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
@@ -3079,7 +3063,7 @@ public class SimKit extends StarMacro {
           if (!table.isEditing() && !editing) reload();
         }
       });
-      // Ctrl+F anywhere in the window: the filter; Esc in the filter: clear it
+      // Ctrl+F anywhere in the window focuses the filter, Esc in the filter clears it.
       w.getRootPane().getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke("ctrl F"), "simkitFilter");
       w.getRootPane().getActionMap().put("simkitFilter", new javax.swing.AbstractAction() {
         private static final long serialVersionUID = 1L;
@@ -3088,12 +3072,12 @@ public class SimKit extends StarMacro {
       keyOn(filter, "ESCAPE", () -> { filter.setText(""); table.requestFocusInWindow(); });
       reload();
       if (openId != null) jumpTo(openId);
-      showView("tree".equals(Env.pref("trackerView")) ? "tree" : "list");   // the view used last time
+      showView("tree".equals(Env.pref("trackerView")) ? "tree" : "list");
       w.pack();
       layoutDetails();
     }
 
-    /** Details on the right of the table (the comment box the full height). */
+    /** Details panel right of the table. The comment box takes the full height. */
     void layoutDetails() {
       if (split == null) return;
       split.setResizeWeight(0.6);
@@ -3103,13 +3087,13 @@ public class SimKit extends StarMacro {
       split.revalidate();
     }
 
-    /** The focused row of the table (null if none). */
+    /** Focused row of the table, or null. */
     Item current() {
       int r = table.getSelectionModel().getLeadSelectionIndex();
       return r >= 0 && r < view.size() ? view.get(r) : null;
     }
 
-    /** Fold or unfold a case from the keyboard, keeping the case row selected. */
+    /** Folds or unfolds a case from the keyboard and keeps the case row selected. */
     void toggleKeep(String caseId) {
       toggle(caseId);
       for (int i = 0; i < view.size(); i++) if (view.get(i).isCase() && view.get(i).caseId.equals(caseId)) table.setRowSelectionInterval(i, i);
@@ -3124,7 +3108,7 @@ public class SimKit extends StarMacro {
       });
     }
 
-    /** A flat button: no border until the mouse is over it. */
+    /** Flat button with a border only on mouse-over. */
     void flat(final JButton b) {
       b.setFocusable(false);
       b.setContentAreaFilled(false);
@@ -3176,7 +3160,7 @@ public class SimKit extends StarMacro {
       }
     }
 
-    /** Rebuilds the visible rows from the data, the filter and the folded cases; keeps the selection. */
+    /** Rebuilds the visible rows from the data, the filter and the folded cases. Keeps the selection. */
     void rebuild() {
       if (table.isEditing()) table.getCellEditor().cancelCellEditing();
       Set<String> sel = new HashSet<>();
@@ -3184,7 +3168,7 @@ public class SimKit extends StarMacro {
       String t = filter.getText().trim().toLowerCase(Locale.ROOT);
       view.clear();
       int nVers = 0, nRunning = 0, nHidden = 0;
-      for (Map.Entry<String, List<String[]>> e : byCase.entrySet()) {   // one entry: the project
+      for (Map.Entry<String, List<String[]>> e : byCase.entrySet()) {   // one entry per case
         String cid = e.getKey();
         List<String[]> vis = new ArrayList<>();
         for (String[] r : e.getValue()) {
@@ -3198,7 +3182,7 @@ public class SimKit extends StarMacro {
           vis.add(r);
         }
         if (vis.isEmpty()) continue;
-        {   // starred runs first, each part in run order
+        {   // pinned runs first, both groups in run order
           List<String[]> top = new ArrayList<>(), rest = new ArrayList<>();
           for (String[] r : vis) (pinned(r[COL_ID]) ? top : rest).add(r);
           vis = top;
@@ -3225,9 +3209,9 @@ public class SimKit extends StarMacro {
       rebuild();
     }
 
-    // ----- family tree: each run (or version) under the one it is based on -----
+    // ----- Family tree (each run under the run it is based on) -----
 
-    /** A small icon: three linked boxes. */
+    /** Tree view icon, three linked boxes. */
     javax.swing.Icon treeIcon() {
       return new javax.swing.Icon() {
         @Override public int getIconWidth() { return 18; }
@@ -3255,7 +3239,7 @@ public class SimKit extends StarMacro {
     String leftView = "list";
     javax.swing.JToggleButton[] viewButtons;
 
-    /** List or Tree on the left (remembered for this user). */
+    /** Shows the List or Tree view. The choice is stored per user. */
     void showView(String v) {
       leftView = v;
       if (runTree != null && v.equals("tree")) {
@@ -3269,7 +3253,7 @@ public class SimKit extends StarMacro {
       Env.setPref("trackerView", v);
     }
 
-    /** Selects a row (the details on the right follow) without changing the filter when it is visible. */
+    /** Selects the row of id. The filter changes only when the row is not visible. */
     void selectQuiet(String id) {
       for (int i = 0; i < view.size(); i++) {
         if (id.equals(view.get(i).key())) {
@@ -3315,7 +3299,7 @@ public class SimKit extends StarMacro {
       root.add(hint, BorderLayout.SOUTH);
       treeWin.setContentPane(root);
       treeWin.addWindowFocusListener(new java.awt.event.WindowAdapter() {
-        @Override public void windowGainedFocus(java.awt.event.WindowEvent e) { ft.relayout(); }   // after edits in the tracker
+        @Override public void windowGainedFocus(java.awt.event.WindowEvent e) { ft.relayout(); }   // picks up edits made in the tracker
       });
       ft.relayout();
       java.awt.Dimension d = ft.getPreferredSize();
@@ -3342,14 +3326,14 @@ public class SimKit extends StarMacro {
       }
     }
 
-    // ----- saving (at once, one key at a time) -----
+    // ----- Saving (each edit is written at once, one key at a time) -----
 
     void saveVersion(String[] r, int col, String key, String value) {
       if (value.equals(r[col])) return;
       try {
         setIdentityKey(dir, caseOf(r[COL_ID]), key + "_v" + verOf(r[COL_ID]), value);
         r[col] = value;
-        if (col == COL_COMMENT && r[COL_ID].equals(areaKey) && !value.equals(liveMd())) setLive(value);   // else the box would put the old text back
+        if (col == COL_COMMENT && r[COL_ID].equals(areaKey) && !value.equals(liveMd())) setLive(value);   // otherwise the box would restore the old text
         afterSave("Saved: " + key + " of " + shown(r[COL_ID]));
       } catch (Throwable t) {
         say("NOT saved (" + key + " of " + shown(r[COL_ID]) + "): " + reason(t), red);
@@ -3370,7 +3354,7 @@ public class SimKit extends StarMacro {
 
     void afterSave(String what) {
       log.line("case tracker: " + Character.toLowerCase(what.charAt(0)) + what.substring(1));
-      try { writeTrackerCsv(dir, rows); } catch (Throwable t) { /* the CSV is a copy; Export CSV reports errors */ }
+      try { writeTrackerCsv(dir, rows); } catch (Throwable t) { /* The CSV is only a copy. Export CSV reports errors. */ }
       say(what, green);
     }
 
@@ -3381,7 +3365,7 @@ public class SimKit extends StarMacro {
       undoBtn.setVisible(false);
     }
 
-    // ----- details of the selection -----
+    // ----- Selection details -----
 
     List<Item> selected() {
       List<Item> out = new ArrayList<>();
@@ -3454,7 +3438,7 @@ public class SimKit extends StarMacro {
       for (JButton b : fmtButtons) b.setEnabled(key != null);
     }
 
-    /** Status labels under the headline: click one to give it to the selection (a case row: all its versions). */
+    /** Status labels under the headline. A click sets that status on the selection, for a case row on all its versions. */
     void showChips(List<Item> sel) {
       chips.removeAll();
       if (!sel.isEmpty()) {
@@ -3495,10 +3479,10 @@ public class SimKit extends StarMacro {
       Font f = table.getFont();
       return "body{font-family:'" + f.getFamily() + "';font-size:" + f.getSize() + "pt;margin:2px}p{margin-top:0;margin-bottom:5px}"
           + "ul,ol{margin-top:0;margin-bottom:5px;margin-left:20px;margin-left-ltr:22px}li{margin-bottom:1px}"
-          + ".empty{color:#B8BEC6;font-style:italic}";   // margin-left-ltr: Swing's own name for the list indent
+          + ".empty{color:#B8BEC6;font-style:italic}";   // margin-left-ltr is the Swing CSS property for the list indent
     }
 
-    // ----- writing in the box: formatted as in a word processor; leaving the box (or Esc) saves -----
+    // ----- Comment box editing (leaving the box or Esc saves) -----
 
     void startEdit() {
       if (areaKey == null || selected().size() != 1) return;
@@ -3516,7 +3500,7 @@ public class SimKit extends StarMacro {
       table.requestFocusInWindow();
     }
 
-    /** Formatting of one piece of text in the box (all keys set, so nothing is taken from the text around it). */
+    /** Character attributes for a text run. All keys are set so that nothing is inherited from the surrounding text. */
     javax.swing.text.SimpleAttributeSet attrs(boolean b, boolean i, boolean u, String colour) {
       javax.swing.text.SimpleAttributeSet a = new javax.swing.text.SimpleAttributeSet();
       javax.swing.text.StyleConstants.setBold(a, b);
@@ -3527,7 +3511,7 @@ public class SimKit extends StarMacro {
       return a;
     }
 
-    /** Puts text with marks (**bold** ...) in the box at a place, formatted, without the marks. Returns its length. */
+    /** Inserts marked-up text (**bold** ...) at offset at, formatted and without the marks. Returns the inserted length. */
     int insertMd(int at, String md) throws javax.swing.text.BadLocationException {
       javax.swing.text.StyledDocument d = live.getStyledDocument();
       javax.swing.text.SimpleAttributeSet none = attrs(false, false, false, null);
@@ -3550,7 +3534,7 @@ public class SimKit extends StarMacro {
       return p - at;
     }
 
-    /** Shows a comment (text with marks) in the box. */
+    /** Shows a marked-up comment in the box. */
     void setLive(String md) {
       try {
         live.getDocument().remove(0, live.getDocument().getLength());
@@ -3588,13 +3572,13 @@ public class SimKit extends StarMacro {
       return String.join("\n", out);
     }
 
-    /** The box as text with marks; unchanged since it was shown: exactly the text it was shown from. */
+    /** Box content as marked-up text. Returns the original text when the box is unchanged since loading. */
     String liveMd() {
       String now = readLive();
       return now.equals(liveNorm) ? liveLoaded : now;
     }
 
-    /** Bold, italic or underline: on the selection (off if it is all so already); without one, for what is typed next. */
+    /** Toggles bold, italic or underline on the selection, or for the next typed text when nothing is selected. */
     void style(Object key) {
       int a = live.getSelectionStart(), b = live.getSelectionEnd();
       javax.swing.text.StyledDocument d = live.getStyledDocument();
@@ -3614,7 +3598,7 @@ public class SimKit extends StarMacro {
       live.requestFocusInWindow();
     }
 
-    /** A text colour (null: none) on the selection, or for what is typed next. */
+    /** Sets a text colour (null removes it) on the selection, or for the next typed text. */
     void colour(String name) {
       javax.swing.text.SimpleAttributeSet s = new javax.swing.text.SimpleAttributeSet();
       javax.swing.text.StyleConstants.setForeground(s, name == null ? java.awt.Color.BLACK : java.awt.Color.decode(Md.COLORS.get(name)));
@@ -3638,8 +3622,8 @@ public class SimKit extends StarMacro {
       live.replaceSelection(" ");
     }
 
-    /** The template: this user's own (Template > Use this comment as my template), else the team's
-     *  (config/comment_template.txt, same marks as a comment), else the standard one. */
+    /** Comment template: the per-user template, else config/comment_template.txt (same marks as a comment),
+     *  else COMMENT_TEMPLATE. */
     String templateText() {
       String mine = Env.pref("trackerTemplate");
       if (mine != null && !mine.trim().isEmpty()) return mine;
@@ -3649,11 +3633,11 @@ public class SimKit extends StarMacro {
           String t = new String(Files.readAllBytes(f), StandardCharsets.UTF_8).replace("\r", "").replaceAll("\\s+$", "");
           if (!t.trim().isEmpty()) return t;
         }
-      } catch (Throwable x) { /* the standard one */ }
+      } catch (Throwable x) { /* use COMMENT_TEMPLATE */ }
       return COMMENT_TEMPLATE;
     }
 
-    /** Inserts the template; the caret goes to the first empty bullet (or the end of its first line). */
+    /** Inserts the template and puts the caret on the first empty bullet, else at the end of its first line. */
     void template() {
       String t = templateText();
       String cur = txt(live);
@@ -3676,7 +3660,7 @@ public class SimKit extends StarMacro {
       live.requestFocusInWindow();
     }
 
-    /** Keeps the text of the box as this user's template (with its formatting). */
+    /** Stores the box content, with formatting, as the per-user template. */
     void saveTemplate() {
       String t = readLive().replaceAll("\\s+$", "");
       if (t.trim().isEmpty()) {
@@ -3711,7 +3695,7 @@ public class SimKit extends StarMacro {
       e.getDocument().insertString(a, text, null);
     }
 
-    /** A formatting button: on the formatted text it first opens the box for writing (caret at the end). */
+    /** Formatting button. When the box is not in edit mode, a click first opens it for editing with the caret at the end. */
     void fmt(Runnable r) {
       if (!editing) startEdit();
       if (editing) r.run();
@@ -3725,7 +3709,7 @@ public class SimKit extends StarMacro {
       });
     }
 
-    /** Makes the selected lines (or the current one) a bullet or numbered list; again on a list: back to plain lines. */
+    /** Turns the selected lines, or the current line, into a bullet or numbered list. On a list it reverts to plain lines. */
     void list(Boolean numbered) {
       javax.swing.text.JTextComponent area = live;
       try {
@@ -3740,14 +3724,14 @@ public class SimKit extends StarMacro {
         for (int i = 0, p = start; i < ls.length; p += ls[i].length() + 1, i++) at[i] = p;
         int n = 0;
         for (String l : ls) if (!l.trim().isEmpty() || ls.length == 1) n++;
-        for (int i = ls.length - 1; i >= 0; i--) {   // from the last line up: the places above stay right
+        for (int i = ls.length - 1; i >= 0; i--) {   // bottom-up so that earlier offsets stay valid
           String l = ls[i];
           if (l.trim().isEmpty() && ls.length > 1) continue;
           Matcher b = Md.BULLET.matcher(l), k = Md.NUMBER.matcher(l);
           String body = b.matches() ? b.group(1) : k.matches() ? k.group(2) : l.replaceAll("^\\s+", "");
           area.getDocument().remove(at[i], l.length() - body.length());
           String pre = all ? "" : numbered ? (n--) + ". " : "\u2022 ";
-          if (!all && !numbered) n--;   // (a menu choice of the same list again takes it off)
+          if (!all && !numbered) n--;
           area.getDocument().insertString(at[i], pre, attrs(false, false, false, null));
         }
         area.setCaretPosition(lineEnd(area, Math.min(area.getDocument().getLength(), start)) - (lineEnd(area, start) < area.getDocument().getLength() ? 1 : 0));
@@ -3775,12 +3759,12 @@ public class SimKit extends StarMacro {
       area.replaceSelection("\n");
     }
 
-    /** Saves the box (comment or description) if it differs from what is stored; line breaks are kept. */
+    /** Saves the box content (comment or description) if it differs from the stored text. Line breaks are kept. */
     void flushArea() {
       if (areaKey == null || !live.isEditable()) return;
       String now = readLive();
       String s = now.equals(liveNorm) ? liveLoaded : now.replace("\r", "").replaceAll("[ \\t]+\n", "\n").replaceAll("^\n+|\\s+$", "");
-      liveLoaded = s;   // the box now stands for what is saved: no reload under the caret
+      liveLoaded = s;   // prevents a reload under the caret
       liveNorm = now;
       if (areaKey.startsWith("case:")) {
         String cid = areaKey.substring(5);
@@ -3797,13 +3781,13 @@ public class SimKit extends StarMacro {
 
     // ----- actions -----
 
-    /** The click is on the star of a run row (cell border 24 px, dot 12 px, star from 16 to 28 px of the icon). */
+    /** True when the click is on the pin star of a run row. The star is at 16 to 28 px in the icon, after a 24 px cell inset. */
     boolean onRunStar(int row, java.awt.event.MouseEvent e) {
       int x = e.getX() - table.getCellRect(row, T_ID, false).x;
       return x >= 38 && x <= 54;
     }
 
-    /** Copies "ID  path" of each selected row (a run: its latest .sim; the project: its folder), to paste in a mail or a document. */
+    /** Copies "ID  path" per selected row to the clipboard. The path is the latest .sim of a run, or the project folder. */
     void copyLinks() {
       List<String> lines = new ArrayList<>();
       for (Item it : selected()) {
@@ -3821,7 +3805,7 @@ public class SimKit extends StarMacro {
       }
     }
 
-    /** The folder of a run of a study (its run folder, else the folder of its latest file). */
+    /** Run folder of a study run, else the folder of its latest file. */
     Path studyRunFolder(String[] r) {
       Path rec = runRecords(dir).get(runOf(r[COL_ID]));
       if (rec != null && rec.getFileName().toString().equals(RUN_TXT)) return rec.getParent();
@@ -3829,7 +3813,7 @@ public class SimKit extends StarMacro {
       return f.getParent() == null ? dir : f.getParent();
     }
 
-    /** Sets one status on every selected version (case rows: all their versions). */
+    /** Sets a status on every selected version. A case row applies it to all its versions. */
     void setStatusAll(String status) {
       List<String[]> vs = new ArrayList<>();
       for (Item it : selected()) {
@@ -3848,7 +3832,7 @@ public class SimKit extends StarMacro {
           bad.add(r[COL_ID]);
         }
       }
-      try { writeTrackerCsv(dir, rows); } catch (Throwable t) { /* a copy only */ }
+      try { writeTrackerCsv(dir, rows); } catch (Throwable t) { /* the CSV is only a copy */ }
       if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);
       log.line("tracker: status '" + status + "' on " + n + " run(s)");
       say(bad.isEmpty() ? "Saved: status " + (status.isEmpty() ? "(none)" : "'" + status + "'") + " on " + n + " run(s)"
@@ -3856,7 +3840,7 @@ public class SimKit extends StarMacro {
       showDetails();
     }
 
-    /** The .sim of the selected version (a case row: its latest version). */
+    /** .sim file of the selected version, or of the latest version for a case row. */
     Path selectedSim() {
       List<Item> sel = selected();
       if (sel.size() != 1) return null;
@@ -3869,10 +3853,9 @@ public class SimKit extends StarMacro {
       return fileOf(dir, r);
     }
 
-    /** Opens the selected version in a STAR-CCM+ tab. Already open with its tab: that tab comes to the front. Else
-     *  STAR-CCM+'s own Load Simulation dialog with the file filled in (processes, serial or parallel, power session,
-     *  remote host: as in File > Load, which remembers your choices). A copy loaded without a tab by an earlier SimKit
-     *  is closed first. Without that dialog, the path is copied for File > Load. */
+    /** Opens the selected version in a STAR-CCM+ tab. If it is already open with a tab, that tab comes to the front.
+     *  Otherwise the STAR-CCM+ Load Simulation dialog opens with the file filled in, with the process and host settings
+     *  of File > Load. A copy loaded without a tab is closed first. Without the dialog, the path is copied for File > Load. */
     void openSelected() {
       final Path f = selectedSim();
       if (f == null || opening) return;
@@ -3887,7 +3870,7 @@ public class SimKit extends StarMacro {
         }
         return;
       }
-      if (isOpen(f)) {   // loaded without a tab (the first Open of SimKit did that): close that copy, then load properly
+      if (isOpen(f)) {   // loaded without a tab: close that copy, then load with a tab
         opening = true;
         simBtn.setEnabled(false);
         say("Closing a copy of " + f.getFileName() + " that was loaded without a tab ...", grey);
@@ -3936,21 +3919,21 @@ public class SimKit extends StarMacro {
       try { Ui.browse(fd.toUri().toString()); } catch (Throwable t) { say("Cannot open: " + reason(t), red); }
     }
 
-    /** What Hide acts on: runs (never the project itself). */
+    /** Items Hide acts on. The project row is excluded. */
     List<Item> hideable(List<Item> sel) {
       List<Item> out = new ArrayList<>();
       for (Item it : sel) if (!it.isCase()) out.add(it);
       return out;
     }
 
-    /** True when every item is hidden: the button unhides. */
+    /** True when every item is hidden, so the button unhides. */
     boolean unhideMode(List<Item> items) {
       if (items.isEmpty()) return false;
       for (Item it : items) if (!(!it.isCase() && hidden(it.r))) return false;
       return true;
     }
 
-    /** Hide or unhide the selection at once; the message line offers Undo. */
+    /** Hides or unhides the selection. The message line offers Undo. */
     void hideOrShow() {
       final List<Item> items = hideable(selected());
       if (items.isEmpty()) return;
@@ -3982,7 +3965,7 @@ public class SimKit extends StarMacro {
           names.add(shown(it.r[COL_ID]));
         }
       }
-      if (!hide) {   // a project hidden by an earlier SimKit: shown again with its runs
+      if (!hide) {   // a hidden project row is unhidden together with its runs
         Map<String, String> m = readIdentity(studyFile(dir));
         if (m.remove("hidden") != null) Fs.write(studyFile(dir), identityText(m));
       }
@@ -4083,8 +4066,8 @@ public class SimKit extends StarMacro {
       return k % 2 == 0 ? java.awt.Color.WHITE : stripe;
     }
 
-    /** A comment or description in a cell: its first line formatted, "+n lines" in grey; the whole text, formatted, as
-     *  the tooltip when there is more than the cell shows. */
+    /** Comment or description cell. Shows the first line formatted and "+n lines" in grey. The tooltip shows the
+     *  whole text when the cell shows only part of it. */
     String tipHtml(String s) {
       return Md.lines(s).size() > 1 || s.length() > 60 ? "<html><head><style>" + viewerCss() + "</style></head><body style='width:440px'>"
           + Md.toHtml(s) + "</body></html>" : null;
@@ -4097,7 +4080,7 @@ public class SimKit extends StarMacro {
           + (more > 0 ? "&nbsp;&nbsp;<font color='#8A94A0'>+" + more + (more == 1 ? " line" : " lines") + "</font>" : "") + "</html>";
     }
 
-    /** Case rows a little taller than versions: more air between cases. */
+    /** Case rows are slightly taller than version rows. */
     void rowHeights() {
       for (int i = 0; i < view.size(); i++) table.setRowHeight(i, view.get(i).isCase() ? 32 : 26);
     }
@@ -4219,11 +4202,11 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Names (trial): type prefixes, default names, prefix vs boundary type; renames only ticked rows, on Apply
+  // Names: type prefixes, default names, prefix vs boundary type
   // =====================================================================================================
 
-  /** Type prefixes: prefix, boundary classes that fit it ("*Interface*" = any interface boundary), meaning.
-   *  config/naming.csv replaces this list (same columns); Standard reports and Names use it. */
+  /** Type prefixes. Columns: prefix, matching boundary classes ("*Interface*" matches any interface boundary), meaning.
+   *  config/naming.csv replaces this list with the same columns. */
   static final String[][] DEFAULT_PREFIXES = {
       {"IN", "InletBoundary MassFlowBoundary StagnationBoundary FreeStreamBoundary", "inlet (velocity, mass flow, stagnation or free stream)"},
       {"OUT", "PressureBoundary OutletBoundary FreeStreamBoundary MassFlowBoundary", "outlet (pressure, flow-split, free stream or mass flow)"},
@@ -4284,15 +4267,14 @@ public class SimKit extends StarMacro {
     return null;
   }
 
-  /** Boundaries of all regions grouped by prefix token. */
-  /** True for a solid region (conjugate heat transfer: the solid side of the walls). */
+  /** True for a solid region. */
   static boolean isSolid(Region r) {
     try { return r.getRegionType() instanceof SolidRegion; } catch (Throwable t) { return false; }
   }
 
-  /** True for a boundary that STAR-CCM+ makes for an interface ("IF_face5 [IF_test 1]"): not the user's. */
+  /** True for a boundary that STAR-CCM+ creates for an interface, e.g. "IF_face5 [IF_test 1]". */
   static boolean isInterfaceBoundary(Boundary b) {
-    return b instanceof DirectBoundaryInterfaceBoundary || cls(b).endsWith("InterfaceBoundary");   // a Boundary subclass
+    return b instanceof DirectBoundaryInterfaceBoundary || cls(b).endsWith("InterfaceBoundary");   // the name check covers other interface boundary subclasses
   }
 
   /** True when the boundary belongs to an interface. */
@@ -4300,7 +4282,7 @@ public class SimKit extends StarMacro {
     try { return !b.getDependentInterfaces().isEmpty(); } catch (Throwable t) { return false; }
   }
 
-  /** Boundary type classes and their names in STAR-CCM+ (Set type in Names). */
+  /** Boundary type classes and their STAR-CCM+ names, for Set type in Names. */
   static final String[][] BOUNDARY_TYPES = {{"InletBoundary", "Velocity Inlet"}, {"MassFlowBoundary", "Mass Flow Inlet"},
       {"StagnationBoundary", "Stagnation Inlet"}, {"FreeStreamBoundary", "Free Stream"}, {"PressureBoundary", "Pressure Outlet"},
       {"OutletBoundary", "Flow-split Outlet"}, {"WallBoundary", "Wall"}, {"SymmetryBoundary", "Symmetry Plane"}};
@@ -4310,9 +4292,8 @@ public class SimKit extends StarMacro {
     return cls;
   }
 
-  /** Boundaries by prefix token, for the default surfaces of Standard reports: the boundaries of solid regions are left
-   *  out when the simulation has a fluid region (in conjugate heat transfer the fluid side of a coupled wall is the one
-   *  reported). */
+  /** Boundaries by prefix token, for the default surfaces of Standard reports. With a fluid region present, solid
+   *  region boundaries are left out, because the fluid side of a coupled wall is the one reported. */
   Map<String, List<Boundary>> boundariesByToken() {
     Map<String, List<Boundary>> out = new LinkedHashMap<>();
     boolean anyFluid = false;
@@ -4335,12 +4316,12 @@ public class SimKit extends StarMacro {
 
   static boolean isDefaultName(String n) { return DEFAULT_NAME.matcher(n).find(); }
 
-  /** One row of the Names table. kind: boundary, part surface, or the object type (default names only). */
+  /** One row of the Names table. kind is boundary, part surface, or the object type for default names. */
   static final class NameRow {
     Object o;
     String kind, path, name, state, proposed = "", typeClass = "";
-    String group = "", issue = "";   // region / part / object type; short issue ("" = ok)
-    String token = "";               // a boundary whose prefix does not match its type: the prefix (Set type)
+    String group = "", issue = "";   // region, part or object type, and a short issue ("" when ok)
+    String token = "";               // prefix of a boundary whose prefix does not match its type, for Set type
     int cat;                         // 0 boundaries, 1 part surfaces, 2 default names
     boolean pick, problem;
   }
@@ -4363,14 +4344,14 @@ public class SimKit extends StarMacro {
     return head + p + "_" + last.trim().replaceAll("\\s+", "_");
   }
 
-  /** Boundaries, part surfaces, and every other object with a default name. Reads only. */
+  /** Collects the Names rows: boundaries, part surfaces and other objects with default names. Read-only. */
   List<NameRow> nameRows() {
     loadPrefixes();
     List<NameRow> out = new ArrayList<>();
     try {
       for (Region r : sim.getRegionManager().getRegions()) {
         for (Boundary b : r.getBoundaryManager().getBoundaries()) {
-          if (isInterfaceBoundary(b)) continue;   // made by STAR-CCM+ for an interface
+          if (isInterfaceBoundary(b)) continue;
           NameRow x = new NameRow();
           x.o = b;
           x.kind = "boundary";
@@ -4388,11 +4369,11 @@ public class SimKit extends StarMacro {
             x.issue = "no prefix (" + (inIf ? "interface" : bt) + ")";
             x.problem = true;
             if (sug != null) x.proposed = withPrefix(x.name, sug);
-          } else if ((rule = prefixRule(t)) != null && rule[1].startsWith("*")) {   // IF_: checked against the interfaces
+          } else if ((rule = prefixRule(t)) != null && rule[1].startsWith("*")) {   // interface prefix, checked against the interfaces
             x.state = inIf ? "ok" : t + "_ boundary in no interface";
             x.issue = inIf ? "" : "not in an interface";
             x.problem = !inIf;
-          } else if (!inIf && !typeFits(rule, x.typeClass)) {   // the name is kept: the type is what to change
+          } else if (!inIf && !typeFits(rule, x.typeClass)) {   // keep the name and flag the type
             x.state = t + "_ on a " + nm(b.getBoundaryType()) + " boundary";
             x.issue = t + "_ on " + bt;
             x.token = t;
@@ -4458,7 +4439,7 @@ public class SimKit extends StarMacro {
     return x;
   }
 
-  /** Batch test: the Names table in the log. */
+  /** Prints the Names table to the log for batch tests. */
   void logNames() {
     List<NameRow> rows = nameRows();
     int bad = 0;
@@ -4470,7 +4451,7 @@ public class SimKit extends StarMacro {
     log.line("names: " + rows.size() + " row(s), " + bad + " issue(s); prefixes " + prefixRx.pattern());
   }
 
-  /** Names: the table; Apply renames the ticked rows that have a new name. */
+  /** Names tool. Apply renames the ticked rows that have a new name. */
   void toolNames() {
     final List<NameRow> rows = nameRows();
     namesCad = cadModels().isEmpty() ? null : this::openCad;
@@ -4511,10 +4492,8 @@ public class SimKit extends StarMacro {
     result((total[0] == 0 ? "no objects renamed" : total[0] + " object(s) renamed") + (types0[0] > 0 ? ", " + types0[0] + " boundary type(s) set" : ""));
   }
 
-  /** The Names window (Swing thread): one category at a time (left, with its issue count), its rows grouped by
-   *  region / part / object type, foldable; only the rows with issues unless asked. Rename runs 'rename' on the ticked
-   *  rows with a new name in a worker thread (STAR-CCM+ calls), then 'reload' reads the rows again; the window stays
-   *  open until Close. */
+  /** Names window, built on the Swing thread. Rename calls 'rename' for the ticked rows with a new name in a
+   *  worker thread, then 'reload' reads the rows again. */
   Boolean namesWindow(final List<NameRow> all, final java.util.function.Function<List<NameRow>, String> rename,
       final java.util.function.BiFunction<List<NameRow>, Map<String, String>, String> setType,
       final java.util.function.Supplier<List<NameRow>> reload) {
@@ -4527,7 +4506,7 @@ public class SimKit extends StarMacro {
     recount.run();
     final int[] cat = {0};
     for (int c = 0; c < NAME_CATS.length; c++) if (issues[c] > 0) { cat[0] = c; break; }
-    final List<Object> view = new ArrayList<>();   // a String = a group heading, else a NameRow
+    final List<Object> view = new ArrayList<>();   // String for a group heading, else NameRow
     final Set<String> folded = new HashSet<>();
     final JTextField search = Ui.hintField("", "Filter by name", 20);
     final javax.swing.JCheckBox onlyIssues = new javax.swing.JCheckBox("Issues only", true);
@@ -4538,7 +4517,7 @@ public class SimKit extends StarMacro {
     final JButton typeBtn = new JButton("Set type");
     typeBtn.setToolTipText("Sets the boundary type from the name prefix on the ticked boundaries (the name is kept)");
     apply.putClientProperty("simkit.stay", Boolean.TRUE);
-    final String[] lastMsg = {null};   // the outcome of the last Rename, shown until the next tick
+    final String[] lastMsg = {null};   // result of the last Rename, shown until the next tick change
     final JButton useAll = Ui.link("Tick all proposed");
     useAll.setToolTipText("Ticks the rows shown that have a proposed name");
     final java.awt.Color amber = new java.awt.Color(0x8A, 0x5A, 0x00), amberBg = new java.awt.Color(0xFF, 0xF1, 0xD6),
@@ -4555,7 +4534,7 @@ public class SimKit extends StarMacro {
       @Override public boolean isCellEditable(int r, int c) { return c == 0 || c == 3 && view.get(r) instanceof NameRow; }
       @Override public Object getValueAt(int r, int c) {
         Object o = view.get(r);
-        if (o instanceof String) {   // a heading: ticked when every row of the group is ticked
+        if (o instanceof String) {   // a heading is ticked when every row of its group is ticked
           if (c != 0) return c == 1 ? o : "";
           List<NameRow> g = groupRows((String) o);
           for (NameRow x : g) if (!x.pick) return false;
@@ -4567,7 +4546,7 @@ public class SimKit extends StarMacro {
       @Override public void setValueAt(Object v, int r, int c) {
         Object o = view.get(r);
         boolean on = Boolean.TRUE.equals(v);
-        if (o instanceof String) {   // a heading ticks / unticks every row of its group
+        if (o instanceof String) {   // a heading ticks or unticks every row of its group
           for (NameRow x : groupRows((String) o)) x.pick = on;
           fireTableRowsUpdated(0, view.size() - 1);   // keeps the selection
           return;
@@ -4575,7 +4554,7 @@ public class SimKit extends StarMacro {
         NameRow x = (NameRow) o;
         if (c == 0) x.pick = on;
         if (c == 3) { x.proposed = String.valueOf(v).trim(); if (hasNew(x)) x.pick = true; }
-        fireTableRowsUpdated(0, view.size() - 1);   // the heading's tick follows; the selection stays
+        fireTableRowsUpdated(0, view.size() - 1);   // updates the heading tick and keeps the selection
       }
 
       boolean hasNew(NameRow x) { return !x.proposed.isEmpty() && !x.proposed.equals(x.name); }
@@ -4596,7 +4575,7 @@ public class SimKit extends StarMacro {
         else if (!x.token.isEmpty()) k++;
         else m++;
       }
-      if (n + m + k > 0) lastMsg[0] = null;   // the message of the last action until the next tick
+      if (n + m + k > 0) lastMsg[0] = null;
       apply.setText(n == 0 ? "Rename" : n == 1 ? "Rename 1 object" : "Rename " + n + " objects");
       apply.setEnabled(n > 0);
       typeBtn.setVisible(anyType > 0);
@@ -4629,7 +4608,7 @@ public class SimKit extends StarMacro {
       useAll.setEnabled(view.stream().anyMatch(o -> o instanceof NameRow && !((NameRow) o).proposed.isEmpty()));
     };
 
-    // ----- table look: group headings, the issue as a tag, the new name in blue -----
+    // ----- Table rendering -----
     t.setRowHeight(26);
     t.setShowVerticalLines(false);
     t.setGridColor(new java.awt.Color(0xEC, 0xEE, 0xF1));
@@ -4712,7 +4691,7 @@ public class SimKit extends StarMacro {
       return k;
     });
     t.addMouseListener(new java.awt.event.MouseAdapter() {
-      @Override public void mouseClicked(java.awt.event.MouseEvent e) {   // a heading folds / unfolds its group
+      @Override public void mouseClicked(java.awt.event.MouseEvent e) {   // a click on a heading folds or unfolds its group
         int r = t.rowAtPoint(e.getPoint());
         if (r < 0 || !(view.get(r) instanceof String) || t.columnAtPoint(e.getPoint()) == 0) return;
         String g = (String) view.get(r);
@@ -4721,7 +4700,7 @@ public class SimKit extends StarMacro {
       }
     });
 
-    // ----- left: the categories -----
+    // ----- Category list -----
     final JPanel cats = new JPanel();
     cats.setLayout(new javax.swing.BoxLayout(cats, javax.swing.BoxLayout.Y_AXIS));
     cats.setBackground(java.awt.Color.WHITE);
@@ -4771,7 +4750,7 @@ public class SimKit extends StarMacro {
     cats.setPreferredSize(new java.awt.Dimension(210, 10));
     paintCats.run();
 
-    // ----- right: what the category is, search and filter, the prefix buttons, the table -----
+    // ----- Category panel and table -----
     JPanel tools = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
     tools.add(search);
     tools.add(javax.swing.Box.createHorizontalStrut(8));
@@ -4924,7 +4903,7 @@ public class SimKit extends StarMacro {
     return Ui.sheet("Names", "Only ticked rows are renamed.", body, apply, null);
   }
 
-  // ----- 3D-CAD faces: names from the body names, a name for the unnamed faces, the check -----
+  // ----- 3D-CAD face names -----
 
   /** One 3D-CAD body in the 3D-CAD faces window. */
   static final class CadRow {
@@ -4935,7 +4914,6 @@ public class SimKit extends StarMacro {
     boolean pick, problem;
   }
 
-  /** The 3D-CAD models of the simulation (none: empty). */
   List<star.cadmodeler.CadModel> cadModels() {
     List<star.cadmodeler.CadModel> out = new ArrayList<>();
     try {
@@ -4946,14 +4924,13 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** Face name for a body: TYPE_assembly_body (no assembly: TYPE_body); blanks, dots and slashes become '-'. */
+  /** Face name TYPE_assembly_body, or TYPE_body without an assembly. Blanks, dots and slashes become '-'. */
   static String cadName(String type, String assembly, String body) {
     String a = assembly.trim().replaceAll("[\\s./\\\\]+", "-"), b = body.trim().replaceAll("[\\s./\\\\]+", "-");
     return type + "_" + (a.isEmpty() ? "" : a + "_") + b;
   }
 
-  /** The bodies of every 3D-CAD model: faces, unnamed faces, the name of the unnamed faces, the face names and the
-   *  check (unnamed faces without a rest name, names without a type prefix). */
+  /** One row per body of every 3D-CAD model, with face counts, face names and the naming check. */
   List<CadRow> cadRows() {
     List<CadRow> out = new ArrayList<>();
     for (star.cadmodeler.CadModel m : cadModels()) {
@@ -4991,7 +4968,7 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** Unite features that do not keep the face names (Transfer face names off). */
+  /** Warnings for Unite features with Transfer face names off, which lose the face names. */
   List<String> cadWarnings() {
     List<String> out = new ArrayList<>();
     for (star.cadmodeler.CadModel m : cadModels()) {
@@ -5023,7 +5000,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Names the faces of the bodies TYPE_assembly_body: the unnamed faces, or all faces if 'all'. */
+  /** Names the faces of the bodies TYPE_assembly_body. Only unnamed faces are named unless 'all' is set. */
   String cadNameFromBody(List<CadRow> rows, String type, String assembly, boolean all) {
     int n = 0, faces = 0, bad = 0;
     for (CadRow x : rows) {
@@ -5051,7 +5028,7 @@ public class SimKit extends StarMacro {
         + (bad > 0 ? " " + bad + " failed: see the Output window." : "") + " Parts take the names at the next part update.";
   }
 
-  /** Unnamed faces of the bodies, now and after later CAD changes, take TYPE_assembly_body_rest. */
+  /** Sets the unnamed-faces name TYPE_assembly_body_rest. It also applies to faces from later CAD changes. */
   String cadSetRest(List<CadRow> rows, String type, String assembly) {
     int n = 0, bad = 0;
     for (CadRow x : rows) {
@@ -5071,7 +5048,7 @@ public class SimKit extends StarMacro {
         + " Parts take the names at the next part update.";
   }
 
-  /** a = {action "body" or "rest", type, assembly, "1" = also faces that have a name}. */
+  /** Runs a window action. a = {"body" or "rest", type, assembly, "1" to include named faces}. */
   String cadAct(List<CadRow> rows, String[] a) {
     return "rest".equals(a[0]) ? cadSetRest(rows, a[1], a[2]) : cadNameFromBody(rows, a[1], a[2], "1".equals(a[3]));
   }
@@ -5087,7 +5064,7 @@ public class SimKit extends StarMacro {
     for (String w : cadWarnings()) log.line("3D-CAD warning: " + w);
   }
 
-  /** Opens the 3D-CAD faces window (Swing thread; the bodies are read in a worker thread). */
+  /** Opens the 3D-CAD faces window. The bodies are read in a worker thread. */
   void openCad() {
     Thread w = new Thread(() -> {
       final List<CadRow> rows = new ArrayList<>();
@@ -5104,8 +5081,7 @@ public class SimKit extends StarMacro {
     w.start();
   }
 
-  /** The 3D-CAD faces window (Swing thread): one row per body; Name from body and Set rest name act on the ticked
-   *  bodies in a worker thread, then the rows are read again; the window stays open until Close. */
+  /** The 3D-CAD faces window, one row per body. Runs on the Swing thread, the actions run in a worker thread. */
   Boolean cadWindow(final List<CadRow> all, final List<String> warn, final java.util.function.BiFunction<List<CadRow>, String[], String> act,
       final java.util.function.Supplier<List<CadRow>> reload, final java.util.function.Supplier<List<String>> rewarn) {
     List<String> types = new ArrayList<>();
@@ -5285,15 +5261,16 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Standard reports (built from the surface prefixes)
+  // Standard reports
   // =====================================================================================================
 
-  /** The team's standard reports (config/standard_reports.csv, else these): name, group (one plot each), type,
-   *  field (or the expression of an expression report), surfaces (prefixes joined by +, or REGIONS), condition
-   *  ("", energy, unsteady, "needs <report> <report>"), meaning, and two optional columns: criterion (a stopping
-   *  criterion on the report's monitor: "asymptotic <width> <samples>", "below <limit>" or "above <limit>"; created
-   *  off, "... on" creates it on) and mean ("last <n>": a report <name>_mean = mean of the monitor over the last n
-   *  samples). */
+  /** Defaults for config/standard_reports.csv, columns as in STD_COLS. Each group gets one plot.
+   *  field is a field function, or the formula of an expression report.
+   *  surfaces are surface prefixes joined by '+', or REGIONS.
+   *  condition is empty, energy, unsteady or "needs <report> ...".
+   *  criterion (optional) is a stopping criterion on the monitor: "asymptotic <width> <samples>",
+   *  "below <limit>" or "above <limit>". It is created off unless the text ends with " on".
+   *  mean (optional) "last <n>" adds a report <name>_mean, the mean of the monitor over the last n samples. */
   static final String[] STD_COLS = {"name", "group", "type", "field", "surfaces", "condition", "meaning", "criterion", "mean"};
 
   static final String[][] STANDARD_REPORTS = {
@@ -5340,16 +5317,16 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** One proposed report: its definition, the objects it is computed on, and why not (null: it can be made). */
+  /** A standard report with its definition and target objects. why is the reason it cannot be made, or null. */
   static final class StdReport {
     String[] def;
     List<Object> target = new ArrayList<>();
-    List<Object> deflt;   // the surfaces found from the names (Default)
+    List<Object> deflt;   // surfaces found from the surface names
     String why;
     boolean on;
-    boolean present;      // already in the simulation (nothing to do)
-    boolean putBack;      // turned off because its surface list was emptied: on again when a surface is selected
-    Object existing;      // the report already in the simulation: on Create, the new surfaces are added to it
+    boolean present;      // already in the simulation
+    boolean putBack;      // turned off by an empty surface list, on again when a surface is selected
+    Object existing;      // the report in the simulation; Create adds the new surfaces to it
     int added;            // surfaces it does not have yet
   }
 
@@ -5363,9 +5340,8 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** The team's standard reports for this simulation: each with the surfaces it is computed on, and why it cannot be
-   *  made here (null: it can). A report already in the simulation is "present", or "update" when surfaces with its
-   *  prefixes were added since. */
+  /** The standard reports for this simulation, with their surfaces and the reason when one cannot be made.
+   *  A report that exists is present, or an update when surfaces with its prefixes were added since. */
   List<StdReport> stdPlan() {
     loadPrefixes();
     Map<String, List<Boundary>> bc = boundariesByToken();
@@ -5385,7 +5361,7 @@ public class SimKit extends StarMacro {
       boolean expr = r[2].equalsIgnoreCase("expression");
       if (r[4].equals("REGIONS")) x.target.addAll(regions);
       else if (!r[4].isEmpty()) for (String t : r[4].split("\\+")) x.target.addAll(bc.getOrDefault(t, Collections.emptyList()));
-      if (existing.contains(r[0])) {   // a standard report already there: new surfaces of its prefixes are added on request
+      if (existing.contains(r[0])) {   // exists; new surfaces with its prefixes can be added
         x.why = "already in the simulation";
         x.present = true;
         if (!expr && !r[4].equals("REGIONS") && !r[4].isEmpty()) {
@@ -5420,8 +5396,8 @@ public class SimKit extends StarMacro {
     return all;
   }
 
-  /** Creates the ticked standard reports (a monitor each, one plot per group, folders by purpose) and adds the new
-   *  surfaces to the ones marked update. Existing objects are never replaced. Returns the one-line outcome. */
+  /** Creates the ticked standard reports with a monitor each and one plot per group, and adds the new surfaces
+   *  to the reports marked update. Existing objects are not replaced. Returns a one-line outcome. */
   String stdApply(List<StdReport> all) {
     Set<String> existing = new HashSet<>();
     for (Object r : sim.getReportManager().getObjects()) existing.add(nm(r));
@@ -5481,7 +5457,7 @@ public class SimKit extends StarMacro {
         }
       }
       g.getValue().addAll(extra);
-      // in the tree: reports and monitors in one folder per purpose, the plots together in one folder
+      // reports and monitors in one folder per group, all plots in one folder
       String folder = groupTitle(g.getKey());
       toFolder(sim.getReportManager(), folder, g.getValue());
       toFolder(sim.getMonitorManager(), folder, (List<?>) mp[0]);
@@ -5496,8 +5472,7 @@ public class SimKit extends StarMacro {
     return (out.isEmpty() ? "Nothing created" : Ui.cap(out)) + ".";
   }
 
-  /** Standard reports. In the STAR-CCM+ window: the Reports window. In batch: creates the standard reports that can be
-   *  made (test action reports). */
+  /** Opens the Reports window. In batch, creates the standard reports that can be made. */
   void toolStandardReports() {
     if (gui) { toolReports(); return; }
     List<StdReport> all = stdPlan();
@@ -5511,8 +5486,7 @@ public class SimKit extends StarMacro {
     result(stdApply(all));
   }
 
-  /** The Reports window: In this simulation (all reports, rename to the rule), Standard (the team's list), Per object
-   *  (quantities x statistics x objects). Every action runs in a worker thread; the window stays open. */
+  /** The Reports window. Each action runs in a worker thread and the window stays open. */
   void toolReports() {
     loadPrefixes();
     final ObjNames n = objNames();
@@ -5530,8 +5504,7 @@ public class SimKit extends StarMacro {
     result(done.isEmpty() ? "Reports: nothing changed" : "Reports: " + String.join(" ", done));
   }
 
-  /** A stopping criterion on a report monitor: "asymptotic <width> <samples>", "below <limit>", "above <limit>";
-   *  created off unless the text ends with " on". Returns true when made. */
+  /** Adds a stopping criterion to a report monitor, off unless spec ends with " on". Returns true when made. */
   boolean stoppingCriterion(Object monitor, String report, String spec) {
     String[] w = spec.toLowerCase(Locale.ROOT).split("\\s+");
     boolean on = w[w.length - 1].equals("on");
@@ -5561,7 +5534,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** <report>_mean: mean of the monitor over the last n samples ("last <n>"); null if not made. */
+  /** Creates <report>_mean, the mean of the monitor over the last n samples. Returns null if not made. */
   Object meanReport(Object monitor, String report, String spec) {
     String[] w = spec.toLowerCase(Locale.ROOT).split("\\s+");
     if (w.length < 2 || !w[0].equals("last") || !w[1].matches("[0-9]+")) {
@@ -5583,11 +5556,9 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** The Standard page of the Reports window (Swing thread): the reports by group on the left with their status
-   *  (Present, Create, Update, or why not); on the right the surfaces of the selected report (defaults selected from
-   *  the surface names; change them freely), or a short text. 'changed' runs when a selection changes. */
+  /** The Standard page of the Reports window, built on the Swing thread. 'changed' runs when a selection changes. */
   JPanel stdPage(final List<StdReport> all, final List<Object> every, final Runnable changed) {
-    final List<Object> rows = new ArrayList<>();   // a String = a group title, else a StdReport
+    final List<Object> rows = new ArrayList<>();   // group title (String) or StdReport
     String last = null;
     for (StdReport x : all) {
       if (x.deflt == null) x.deflt = new ArrayList<>(x.target);
@@ -5682,7 +5653,7 @@ public class SimKit extends StarMacro {
     table.getColumnModel().getColumn(2).setPreferredWidth(240);
     table.getColumnModel().getColumn(3).setPreferredWidth(190);
 
-    // ----- the right pane: the surfaces of the selected report, or a short text -----
+    // ----- Right pane: surfaces of the selected report -----
     final JLabel title = new JLabel(" "), meaning = Ui.muted(" "), countLbl = Ui.muted(" "), textLbl = Ui.muted(" ");
     title.setFont(title.getFont().deriveFont(Font.BOLD, title.getFont().getSize2D() + 2f));
     final JTextField search = Ui.hintField("", "Search surfaces", 18);
@@ -5697,11 +5668,11 @@ public class SimKit extends StarMacro {
     final Runnable[] fill = {null};
     final java.awt.CardLayout cards = new java.awt.CardLayout();
     final JPanel body2 = new JPanel(cards);
-    final Runnable refreshRow = () -> {   // only the row of the report: the selection (and the right pane) stays
+    final Runnable refreshRow = () -> {   // updates only this row, so the selection and the right pane stay
       int i = cur[0] == null ? -1 : rows.indexOf(cur[0]);
       if (i >= 0) model.fireTableRowsUpdated(i, i);
     };
-    final Runnable targetChanged = () -> {   // an empty surface list turns the report off; a surface again turns it back on
+    final Runnable targetChanged = () -> {
       StdReport x = cur[0];
       if (x == null) return;
       if (x.target.isEmpty() && x.on) { x.on = false; x.putBack = true; }
@@ -5738,7 +5709,7 @@ public class SimKit extends StarMacro {
         } else {
           cards.show(body2, "surf");
           String q = search.getText().trim().toLowerCase(Locale.ROOT);
-          // surfaces grouped by type prefix (IN_, OUT_, OPEN_, WALL_, SYM_, IF_, then the others)
+          // group by type prefix, surfaces without a prefix last
           Map<String, List<Object>> groups = new LinkedHashMap<>();
           for (String t : new String[] {"IN", "OUT", "OPEN", "WALL", "SYM", "IF", ""}) groups.put(t, new ArrayList<>());
           Set<String> regions = new HashSet<>();
@@ -5844,7 +5815,7 @@ public class SimKit extends StarMacro {
     table.getSelectionModel().addListSelectionListener(e -> {
       if (e.getValueIsAdjusting()) return;
       int r = table.getSelectedRow();
-      if (r >= 0 && rows.get(r) instanceof String) {   // a group row: the next report (or the one before at the end)
+      if (r >= 0 && rows.get(r) instanceof String) {   // group rows are not selectable; move to the next report, or the previous one at the end
         int to = r + 1 < rows.size() ? r + 1 : r - 1;
         if (to >= 0) table.setRowSelectionInterval(to, to);
         return;
@@ -5910,7 +5881,7 @@ public class SimKit extends StarMacro {
     body.add(center, BorderLayout.CENTER);
     body.add(Ui.muted("<html>Each report gets a monitor; each group gets one plot. Reports and monitors are stored in one folder per group."
         + "<br>List: config/standard_reports.csv.</html>"), BorderLayout.SOUTH);
-    for (int i = 0; i < rows.size(); i++) {   // the first report that can be created, selected
+    for (int i = 0; i < rows.size(); i++) {   // select the first report that can be created
       if (rows.get(i) instanceof StdReport && ((StdReport) rows.get(i)).why == null) { table.setRowSelectionInterval(i, i); break; }
     }
     if (table.getSelectedRow() < 0) for (int i = 0; i < rows.size(); i++) {
@@ -5921,12 +5892,12 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Reports per object (quantity x statistic x object), names from a rule (config/report_names.csv)
+  // Reports per object
   // =====================================================================================================
 
-  /** config/report_names.csv: kind (pattern | quantity | statistic), key, code. pattern: the report name with {q}
-   *  (quantity code), {s} (statistic code), {o} (object name). quantity key: a field function name, or
-   *  "<name>:magnitude" for the magnitude of a vector. */
+  /** Defaults for config/report_names.csv. kind is pattern, quantity or statistic.
+   *  The pattern holds {q} for the quantity code, {s} for the statistic code and {o} for the object name.
+   *  A quantity key is a field function name, or "<name>:magnitude" for the magnitude of a vector. */
   static final String[] OBJ_COLS = {"kind", "key", "code"};
 
   static final String[][] OBJ_NAMES = {
@@ -5950,7 +5921,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** maximum and minimum: boundaries and regions; volume average: regions; the others: boundaries. */
+  /** Maximum and minimum fit boundaries and regions, volume average fits regions, the others fit boundaries. */
   static boolean statFits(String stat, boolean region) {
     if (stat.equals("maximum") || stat.equals("minimum")) return true;
     return stat.equals("volume average") == region;
@@ -5983,19 +5954,19 @@ public class SimKit extends StarMacro {
     return n;
   }
 
-  /** An object name as a part of a report name: blanks, dots, slashes and colons become '-'. */
+  /** An object name as part of a report name. Blanks, dots, slashes and colons become '-'. */
   static String objToken(String s) {
     return s.trim().replaceAll("[\\s./\\\\:]+", "-").replaceAll("^-+|-+$", "");
   }
 
-  /** A quantity of the window: config key, code, label, field function (null offline) and its function name. */
+  /** A quantity on the Per object page. ff is null offline. */
   static final class ObjQty {
     String key, code, label, ffName;
     Object ff;
     boolean pick;
   }
 
-  /** A boundary or a region the reports can be computed on. name: the part of the report name. */
+  /** A boundary or region that reports can be computed on. name is its part of the report name. */
   static final class ObjTarget {
     Object o;
     String name, region = "", kind = "";   // kind: prefix (WALL ...), "region", or ""
@@ -6011,7 +5982,7 @@ public class SimKit extends StarMacro {
     boolean pick;
   }
 
-  /** The reports of the simulation: their names, the definitions (class | field | objects), the renames proposed. */
+  /** The reports of the simulation: names, definition signatures (class|field|objects) and proposed renames. */
   static final class ObjState {
     final Set<String> names = new HashSet<>();
     final Map<String, String> sigs = new HashMap<>();
@@ -6056,7 +6027,7 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** The other scalar field functions (Add a field...), code = function name. */
+  /** The other scalar field functions, for More fields. The code is made from the function name. */
   List<ObjQty> objOtherFields(List<ObjQty> have) {
     Set<String> skip = new HashSet<>();
     for (ObjQty q : have) skip.add(q.ffName);
@@ -6078,8 +6049,8 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** Boundaries (no interface boundaries made by STAR-CCM+) and regions. A boundary name found in several regions
-   *  gets _<region>. */
+  /** Boundaries and regions. Interface boundaries made by STAR-CCM+ are skipped. A boundary name found in
+   *  several regions gets the suffix _<region>. */
   List<ObjTarget> objTargets() {
     List<ObjTarget> out = new ArrayList<>();
     Map<String, Integer> seen = new HashMap<>();
@@ -6109,8 +6080,8 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** The reports of the simulation (names, definitions) and the renames to the rule: reports of the six statistics on
-   *  one object whose name differs from the rule; standard reports, and names the rule would give twice, are left. */
+  /** The reports of the simulation and the renames to the rule. A rename is proposed for a report of one of the
+   *  six statistics on one object whose name differs from the rule. Standard reports and duplicate names are left. */
   ObjState objState(ObjNames n, List<ObjQty> qs, List<ObjTarget> objs) {
     ObjState st = new ObjState();
     Map<Object, String> tn = new HashMap<>();
@@ -6151,7 +6122,7 @@ public class SimKit extends StarMacro {
     return st;
   }
 
-  /** The reports of the ticked quantities x statistics x objects (one per object, or one over all of them). */
+  /** The reports for the ticked quantities, statistics and objects, one per object or one over all of them. */
   static List<ObjRow> objPlan(ObjNames n, List<ObjQty> qs, List<String> stats, List<ObjTarget> objs, boolean combine, String label,
       String plotMode, ObjState st) {
     List<ObjRow> out = new ArrayList<>();
@@ -6191,7 +6162,7 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** Expressions that use ${old}: expression reports and field functions; the monitor "<old> Monitor". */
+  /** Replaces ${old} by ${nn} in expression reports and field functions, and renames the monitor "<old> Monitor". */
   void objRenameRefs(String old, String nn) {
     String a = "${" + old + "}", b = "${" + nn + "}";
     List<Object> withDef = new ArrayList<>(sim.getReportManager().getObjects());
@@ -6210,7 +6181,8 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Creates and renames the ticked rows; one monitor per new report, plots by plot key; all in folders "Per object". */
+  /** Creates and renames the ticked rows. Each new report gets a monitor, plots follow the plot key, and the new
+   *  objects go to the folders "Per object". */
   String objApply(List<ObjRow> rows, String plotMode) {
     int made = 0, ren = 0, bad = 0;
     Map<String, List<Object>> groups = new LinkedHashMap<>();
@@ -6260,16 +6232,16 @@ public class SimKit extends StarMacro {
     return s + "." + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
   }
 
-  // ----- the Reports window -----
+  // ----- Reports window -----
 
-  /** One report of the simulation (In this simulation). rename: the rule name it can take, or null. */
+  /** One report on the In this simulation page. rename is its rename to the rule, or null. */
   static final class InvRow {
     Object report;
     String name = "", type = "", field = "", on = "", onTip = "", folder = "";
     ObjRow rename;
   }
 
-  /** What the Reports window shows; read again after each action. */
+  /** The data shown in the Reports window, read again after each action. */
   static final class ReportsData {
     List<StdReport> std = new ArrayList<>();
     List<Object> every = new ArrayList<>();
@@ -6278,7 +6250,7 @@ public class SimKit extends StarMacro {
     int reports, monitors, plots;
   }
 
-  /** Action of the Reports window: what = std (rows: StdReport) or obj (rows: ObjRow, create and rename). */
+  /** Action of the Reports window. what is "std" with StdReport rows, or "obj" with ObjRow rows to create or rename. */
   interface ReportsAct {
     String run(String what, List<?> rows, String plotMode);
   }
@@ -6314,7 +6286,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** All reports of the simulation: type, field (or definition), objects, folder, and the rename to the rule. */
+  /** All reports of the simulation with type, field or definition, objects, folder and rename to the rule. */
   List<InvRow> inventory(ObjState st) {
     Map<Object, ObjRow> ren = new IdentityHashMap<>();
     for (ObjRow r : st.renames) ren.put(r.report, r);
@@ -6355,8 +6327,8 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** A page of the Reports window: its panel, the text of the main button (null: nothing to do), the work to run in
-   *  a worker thread (made on the Swing thread from the selection), and a refresh after the data were read again. */
+  /** A page of the Reports window. label is the main button text, or null when there is nothing to do. job runs
+   *  on the Swing thread and returns the work for the worker thread. reload runs after the data are read again. */
   static final class Page {
     final JPanel panel = new JPanel(new BorderLayout());
     java.util.function.Supplier<String> label = () -> null;
@@ -6365,8 +6337,7 @@ public class SimKit extends StarMacro {
     java.awt.Component focus;
   }
 
-  /** The tables of the Reports window: flat left-aligned header, row lines, no vertical lines, a pale blue selected row,
-   *  rows sized from the font, and the text of the client property "simkit.empty" in the middle when there is no row. */
+  /** A table for the Reports window. The client property "simkit.empty" holds the text shown when there is no row. */
   static JTable plainTable(javax.swing.table.TableModel m) {
     final JTable t = new JTable(m) {
       private static final long serialVersionUID = 1L;
@@ -6417,7 +6388,7 @@ public class SimKit extends StarMacro {
     return s;
   }
 
-  /** A text cell of the Reports tables: padding 0/8, the row background (pale blue when selected). */
+  /** A text cell renderer for the Reports tables, with the background of the row selection. */
   static javax.swing.table.DefaultTableCellRenderer textCell(final java.util.function.BiFunction<Integer, Integer, java.awt.Color> fg) {
     return new javax.swing.table.DefaultTableCellRenderer() {
       private static final long serialVersionUID = 1L;
@@ -6455,11 +6426,10 @@ public class SimKit extends StarMacro {
 
   static String plural(int n, String one, String many) { return n + " " + (n == 1 ? one : many); }
 
-  /** Set by reportsMain so the pages can reach the action (one window at a time). */
+  /** Set by reportsMain so the pages can reach the action. Assumes one Reports window at a time. */
   ReportsAct reportsAct;
 
-  /** The Reports window (Swing thread): tabs Standard and Per object; one main button acting on the open tab; the
-   *  outcome next to the buttons. Reports that do not follow the naming rule: one line under the tabs, Rename... */
+  /** The Reports window, built on the Swing thread. The main button acts on the open tab. */
   Boolean reportsMain(final ReportsData[] data, final ObjNames names, final List<ObjQty> qs, final List<ObjQty> others,
       final List<ObjTarget> objs, final ReportsAct act, final java.util.function.Supplier<ReportsData> reload, String simTitle) {
     final JButton go = Ui.primary("Create reports");
@@ -6574,8 +6544,8 @@ public class SimKit extends StarMacro {
     return Ui.sheet("Reports", simTitle, body, go, null);
   }
 
-  /** Rename to the naming rule (from the Reports window): the reports with their current and new names, all selected;
-   *  true on Rename with at least one selected (ObjRow.pick says which). */
+  /** Dialog with the reports to rename to the naming rule, all selected at first. Returns true on Rename with at
+   *  least one selected; ObjRow.pick marks them. */
   boolean renameDialog(final List<ObjRow> rows) {
     for (ObjRow r : rows) r.pick = true;
     final JButton ok = Ui.primary("Rename " + plural(rows.size(), "report", "reports"));
@@ -6617,7 +6587,7 @@ public class SimKit extends StarMacro {
     });
   }
 
-  /** Standard: the team's list (Present, Create, Update, or why not), the surfaces of the selected report on the right. */
+  /** The Standard page of the Reports window. */
   Page stdPageOf(final ReportsData[] data, final Runnable changed) {
     final Page p = new Page();
     final Runnable build = () -> {
@@ -6647,7 +6617,7 @@ public class SimKit extends StarMacro {
     return p;
   }
 
-  /** The first JTable inside a container (focus on open). */
+  /** Finds the first JTable inside a container, for the focus on open. */
   static final class TableFinder {
     static JTable table(java.awt.Container c) {
       for (java.awt.Component k : c.getComponents()) {
@@ -6661,7 +6631,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Per object: 1 quantities, 2 statistics, 3 objects (one report per object or one for all), 4 the reports to create. */
+  /** The Per object page of the Reports window: quantities, statistics, objects and the reports to create. */
   Page objPage(final ReportsData[] data, final ObjNames names, final List<ObjQty> qs, final List<ObjQty> others,
       final List<ObjTarget> objs, final Runnable changed) {
     final Page p = new Page();
@@ -6685,8 +6655,7 @@ public class SimKit extends StarMacro {
       qChips.add(b);
     };
     for (ObjQty q : qs) addQ.accept(q);
-    // one extra chip for another scalar field: picked from the list, it works like the other chips; a new pick
-    // replaces it (the row grows by one chip at most)
+    // one extra chip for a scalar field picked from the list; a new pick replaces it
     final javax.swing.JToggleButton extraChip = Ui.chip(" ");
     extraChip.setVisible(false);
     qChips.add(extraChip);
@@ -6776,7 +6745,7 @@ public class SimKit extends StarMacro {
       @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { filter.run(); }
       @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { filter.run(); }
     });
-    // group chips: a click selects the whole group, or clears it when all are selected
+    // group chips select the whole group, or clear it when all are selected
     final JPanel gChips = Ui.flow(500);
     final Map<String, javax.swing.JToggleButton> groupChip = new LinkedHashMap<>();
     final java.util.function.Function<ObjTarget, String> kindOf = x -> x.region() ? "regions" : x.kind.isEmpty() ? "other" : x.kind;
@@ -6915,7 +6884,6 @@ public class SimKit extends StarMacro {
       @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { refresh[0].run(); }
     });
 
-    // layout
     JPanel left = new JPanel();
     left.setLayout(new javax.swing.BoxLayout(left, javax.swing.BoxLayout.Y_AXIS));
     left.add(step("1", "Quantities"));
@@ -6998,7 +6966,7 @@ public class SimKit extends StarMacro {
     return p;
   }
 
-  /** Colours of a surface type tag: IN green, OUT / OPEN amber, WALL grey, SYM / IF blue. */
+  /** Colours of a surface type tag as {background, foreground}. */
   static java.awt.Color[] tagColors(String tok) {
     if (tok == null) return new java.awt.Color[] {java.awt.Color.WHITE, java.awt.Color.GRAY};
     switch (tok) {
@@ -7009,8 +6977,8 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Field function by its function name (e.g. WallYplus, CourantNumber), or null if this sim does not have it.
-   *  (FieldFunctionManager.has() looks at display names, so it is not used.) */
+  /** Field function by its function name, e.g. WallYplus, or null if the simulation does not have it.
+   *  FieldFunctionManager.has() matches display names, so it is not used. */
   Object fieldFunction(String name) {
     try {
       for (FieldFunction f : sim.getFieldFunctionManager().getObjects()) {
@@ -7020,10 +6988,8 @@ public class SimKit extends StarMacro {
     return null;
   }
 
-  /** One monitor per report (Report.createMonitor) and ONE plot named 'plot' showing them all; plot == null:
-   *  monitors only. [U24] */
-  /** Puts objects in a folder (group) of their node in the tree; objects already in a folder stay where they are.
-   *  Three ways are tried (the API differs between nodes and releases); the log says what was done. */
+  /** Puts the objects in a folder of their node in the tree. Objects already in a folder stay there.
+   *  The log reports the outcome. */
   void toFolder(Object manager, String folder, List<?> objs) {
     try {
       final star.base.neo.ClientServerObjectGroupManager gm = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(manager, "getGroupsManager");
@@ -7037,7 +7003,7 @@ public class SimKit extends StarMacro {
       star.base.neo.ClientServerObjectGroup have = null;
       for (Object g0 : gm.getObjects()) if (folder.equals(nm(g0)) && g0 instanceof star.base.neo.ClientServerObjectGroup) have = (star.base.neo.ClientServerObjectGroup) g0;
       String how;
-      if (have != null) {   // the folder is there already: add to it (no "Standard reports 2")
+      if (have != null) {   // reuse the folder; a new group of the same name would become "Standard reports 2"
         have.addObjects(loose);
         how = "added";
       } else {
@@ -7052,7 +7018,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** One monitor per report and one plot showing them all; returns {monitors, plot or null}. */
+  /** Creates one monitor per report and one plot of all of them. Returns {monitors, plot or null}. */
   Object[] monitorsAndPlot(List<Object> reports, String plot) {
     List<Monitor> monitors = new ArrayList<>();
     for (Object r : reports) {
@@ -7075,24 +7041,24 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Mesh study (mesh sensitivity with one factor: parametrize, then one run per level)
+  // Mesh study
   // =====================================================================================================
 
   static final String MESH_SCALE = "p_meshScale";
 
   /** One mesh length setting found in an automated mesh operation. */
   static final class MeshSetting {
-    String op, control = "", what, kind;   // kind: size | prism
+    String op, control = "", what, kind;   // kind is "size" or "prism"
     Object q;                              // ScalarPhysicalQuantity holding the absolute length
     String pName, def = "", note = "";
     double raw;
     Object units;
-    String state = "link";                 // link (can be linked) | linked (follows p_meshScale) | relative | expr (other expression)
-    boolean pick;                          // ticked in the window: linked to the factor
+    String state = "link";                 // "link", "linked" (follows p_meshScale), "relative" or "expr" (set by another expression)
+    boolean pick;                          // ticked in the window, to be linked to p_meshScale
   }
 
-  /** Size settings: class, label, kind. BaseSize / PrismWallThickness are quantities; the others are
-   *  relative-or-absolute sizes (only the ABSOLUTE ones are parametrized; RELATIVE ones follow the base size). */
+  /** Size settings as {class, label, kind}. BaseSize and PrismWallThickness are plain quantities. The others are
+   *  relative-or-absolute sizes, and only their absolute values are parametrized. */
   static final String[][] MESH_SIZES = {
       {"star.meshing.BaseSize", "baseSize", "size"},
       {"star.meshing.PartsTargetSurfaceSize", "targetSize", "size"},
@@ -7101,8 +7067,8 @@ public class SimKit extends StarMacro {
       {"star.prismmesher.PrismThickness", "prismThick", "prism"},
       {"star.prismmesher.PrismWallThickness", "prismFirst", "prism"}};
 
-  /** Parametrize mesh: absolute mesh lengths -> p_mesh_<op>[_<control>]_<setting> (current value) and definition
-   *  ${p_mesh_...} * ${p_meshScale}; p_meshScale = 1 keeps today's mesh. Asks before changing anything. */
+  /** Gives each absolute mesh size a parameter p_mesh_<op>[_<control>]_<setting> with its current value and the
+   *  definition ${p_mesh_...} * ${p_meshScale}. p_meshScale = 1 keeps the current mesh. */
   void toolParametrizeMesh() {
     List<MeshSetting> found = new ArrayList<>();
     List<String> relative = new ArrayList<>(), already = new ArrayList<>();
@@ -7113,7 +7079,7 @@ public class SimKit extends StarMacro {
     if (!already.isEmpty()) info.append("Already driven by a parameter or expression (left as they are):\n  ")
         .append(String.join("\n  ", already)).append('\n');
     List<MeshSetting> todo = new ArrayList<>();
-    for (MeshSetting m : found) if (m.kind.equals("size")) todo.add(m);   // batch: prism layers keep their thickness
+    for (MeshSetting m : found) if (m.kind.equals("size")) todo.add(m);   // prism layer thicknesses are not scaled
     if (todo.isEmpty()) {
       log.line("no absolute mesh size to parametrize.\n" + info);
       return;
@@ -7123,8 +7089,8 @@ public class SimKit extends StarMacro {
     log.line(done + " mesh size(s) now follow " + MESH_SCALE + ".\n" + info);
   }
 
-  /** Every absolute mesh length of the automated mesh operations (default values, custom controls, custom prism
-   *  values); relative ones and those already set by a parameter or expression go to the two lists. */
+  /** Collects the absolute mesh lengths of the automated mesh operations (default values, custom controls, custom
+   *  prism values). Relative sizes go to 'relative', sizes set by a parameter or expression to 'already'. */
   void scanMesh(List<MeshSetting> found, List<String> relative, List<String> already, List<MeshSetting> info) {
     for (Object op : sim.get(MeshOperationManager.class).getObjects()) {
       if (!(op instanceof AutoMeshOperation)) continue;
@@ -7145,8 +7111,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Each setting gets its own parameter p_mesh_... (today's value) and the definition ${p_mesh_...} * ${p_meshScale};
-   *  p_meshScale = 1 keeps today's mesh. Returns how many were linked. */
+  /** Links each size to its parameter p_mesh_... and to p_meshScale, created if missing. Returns the number linked. */
   int linkSizes(List<MeshSetting> todo) {
     ScalarGlobalParameter scale = findParam(MESH_SCALE);
     if (scale == null) {
@@ -7170,8 +7135,8 @@ public class SimKit extends StarMacro {
     return done;
   }
 
-  /** Parameters > Mesh study: p_meshScale on its own (the factor to change), the sizes p_mesh_* in Mesh study > Mesh
-   *  sizes. Parameters already in another folder stay there. */
+  /** Moves p_meshScale to Parameters > Mesh study and the p_mesh_* sizes to Mesh study > Mesh sizes.
+   *  Parameters already in another folder stay there. */
   void meshFolders() {
     try {
       GlobalParameterManager gpm = sim.get(GlobalParameterManager.class);
@@ -7186,7 +7151,7 @@ public class SimKit extends StarMacro {
       Object group = null;
       for (Object g : gm.getObjects()) if ("Mesh study".equals(nm(g))) group = g;
       if (group != null && !sizes.isEmpty()) toFolder(group, "Mesh sizes", sizes);
-      if (group != null) {   // what the folder holds, for the log
+      if (group != null) {
         List<String> top = new ArrayList<>(), sub = new ArrayList<>();
         for (Object o : (Collection<?>) Reflect.invoke(group, "getObjects")) top.add(nm(o));
         star.base.neo.ClientServerObjectGroupManager sg = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(group, "getGroupsManager");
@@ -7202,7 +7167,7 @@ public class SimKit extends StarMacro {
   static final class MeshLevel {
     String name;
     double scale;
-    boolean current;   // the open run: a level of the study, not saved again
+    boolean current;   // the open run, listed as a level but not saved again
 
     MeshLevel(String name, double scale) {
       this(name, scale, false);
@@ -7229,7 +7194,6 @@ public class SimKit extends StarMacro {
     return t.contains("e") || !t.contains(".") ? t : t.replaceAll("0+$", "").replaceAll("\\.$", "");
   }
 
-  /** Readable name of a size setting. */
   static String meshLabel(String what) {
     switch (what) {
       case "baseSize": return "Base size";
@@ -7250,21 +7214,21 @@ public class SimKit extends StarMacro {
     return Math.abs(v) >= 1e-4 && Math.abs(v) < 1e7 ? b.toPlainString() : b.toString();
   }
 
-  /** A cell count, short ("2.4 M", "850 k"). */
+  /** Cell count in short form ("2.4 M", "850 k"). */
   static String cellsShort(double n) {
     return n >= 1e6 ? String.format(Locale.ROOT, "%.1f M", n / 1e6) : n >= 1e3 ? String.format(Locale.ROOT, "%.0f k", n / 1e3)
         : String.format(Locale.ROOT, "%.0f", n);
   }
 
-  /** Mesh study (one window): the levels (coarse, medium, fine ...) as a table of size factors, the mesh sizes and
-   *  whether they follow the factor, then one run per level next to this one, meshed and saved. */
+  /** Mesh study tool. Shows the levels as size factors and the mesh sizes that follow the factor, then creates one
+   *  run per level next to the open run, meshed and saved. */
   void toolMeshStudy() throws IOException {
     CaseInfo c = caseOrNull();
     if (!gui) {
       if (c == null) throw new Cancel("mesh levels are saved as runs of a project: start a project first");
       if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) toolParametrizeMesh();
       if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) throw new Cancel("no mesh size follows " + MESH_SCALE + ": nothing to vary");
-      // batch (test): two levels of the GUI defaults, to keep the test short
+      // batch test: two levels only, to keep the run short
       double s0 = findParam(MESH_SCALE).getQuantity().getValue();
       createMeshRuns(c, meshParams(), new ArrayList<>(Arrays.asList(new MeshLevel("coarse", 1.41 * s0), new MeshLevel("medium", s0, true))), true);
       return;
@@ -7300,16 +7264,16 @@ public class SimKit extends StarMacro {
       result("mesh sizes follow " + MESH_SCALE + " (" + meshParams().size() + "); no level created");
       return;
     }
-    levels.sort((a, b) -> Double.compare(b.scale, a.scale));   // coarse to fine: run numbers in that order
+    levels.sort((a, b) -> Double.compare(b.scale, a.scale));   // coarse to fine, so the run numbers follow that order
     createMeshRuns(c, meshParams(), levels, (Boolean) r[2]);
   }
 
-  /** The mesh study window (Swing thread). info: sizes already linked to the factor, relative to the base size, or set
-   *  by another expression (shown, not changed). cells0 / scale0: cell count and p_meshScale of the open run (NaN: no
-   *  mesh). Returns {sizes to link, levels, mesh now, sizes only} or null. */
+  /** Mesh study window, on the Swing thread. info holds sizes that are shown but not changed (linked, relative or set
+   *  by another expression). cells0 and scale0 are the cell count and p_meshScale of the open run, cells0 is NaN
+   *  without a mesh. Returns {sizes to link, levels, mesh now, sizes only} or null. */
   Object[] meshWindow(final CaseInfo c, final List<MeshSetting> found, final Map<String, ScalarGlobalParameter> linked,
       final List<MeshSetting> info, final double cells0, final double scale0) {
-    // the base size at factor 1: a linked parameter, else a found size
+    // base size at factor 1, from a linked parameter or else from a found size
     double b0 = Double.NaN;
     String bu = "";
     for (Map.Entry<String, ScalarGlobalParameter> e : linked.entrySet()) {
@@ -7323,7 +7287,7 @@ public class SimKit extends StarMacro {
     final String unit = bu;
     final int next = nextRun(c.caseDir);
 
-    // ----- levels: a ladder, coarse at the top; the open run is the reference (factor 1), the others are copies of it -----
+    // ----- levels, coarse at the top, relative to the open run (factor 1) -----
     final double cur0 = scale0 > 0 ? scale0 : 1;   // p_meshScale of the open run
     final List<LevelRow> lrows = new ArrayList<>();
     lrows.add(new LevelRow("coarse", 1.41, false));
@@ -7365,7 +7329,7 @@ public class SimKit extends StarMacro {
     };
     final JTable table = plainTable(lm);
     tref[0] = table;
-    table.setShowHorizontalLines(false);   // the rail stays continuous; the cells draw their own bottom line
+    table.setShowHorizontalLines(false);   // keeps the rail continuous, the cells draw their own bottom line
     table.setIntercellSpacing(new java.awt.Dimension(0, 0));
     table.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
     final javax.swing.border.Border line = BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Ui.RULE),
@@ -7429,7 +7393,7 @@ public class SimKit extends StarMacro {
     cRail.setMaxWidth(40);
     int[] w = {40, 120, 90, 110, 100, 180, 90};
     for (int i = 1; i < w.length; i++) cm.getColumn(i).setPreferredWidth(w[i]);
-    if (Math.abs(scale0 - 1) > 1e-9) {   // p_meshScale of each level, next to its factor: the open run is not at 1
+    if (Math.abs(scale0 - 1) > 1e-9) {   // open run not at factor 1: show p_meshScale of each level next to its factor
       cScale.setHeaderValue(MESH_SCALE);
       cm.moveColumn(6, 3);
       cRun.setPreferredWidth(140);
@@ -7458,7 +7422,7 @@ public class SimKit extends StarMacro {
         for (int i = 0; i < lrows.size(); i++) if (lrows.get(i).current) i0 = i;
         for (int i = 0; i < lrows.size(); i++) lrows.get(i).f = Math.pow(x, i0 - i);
       }
-      resortLevels(lrows, table, lm);   // also when the ratio is wrong: the note says why nothing changed
+      resortLevels(lrows, table, lm);   // also for an invalid ratio, so the note explains why nothing changed
     };
     ratio.addActionListener(e -> applyRatio.run());
     final JButton addC = Ui.link("+ Add coarser level"), addF = Ui.link("+ Add finer level"), del = Ui.link("Remove level");
@@ -7572,7 +7536,7 @@ public class SimKit extends StarMacro {
     for (MeshSetting m : rows) if (m.state.equals("expr")) nExpr++;
     final int exprCount = nExpr;
 
-    // ----- notes, button -----
+    // ----- note and button -----
     final JLabel note = new JLabel(" ");
     note.setForeground(Ui.AMBER);
     final JButton ok = Ui.primary("Create 2 runs");
@@ -7689,7 +7653,7 @@ public class SimKit extends StarMacro {
     return new Object[] {link, out, meshNow.isSelected(), only[0]};
   }
 
-  /** A row of the levels ladder: name (typed or by position), factor relative to the open run, the open run itself. */
+  /** A row of the levels table: name (typed or by position), factor relative to the open run, open run or not. */
   static final class LevelRow {
     String name;
     boolean named, current;
@@ -7751,9 +7715,9 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Mesh levels in a study: one run per level (R008_coarse, R009_medium ...), each based on the run you started from,
-   *  with mesh_study, mesh_level, mesh_scale and mesh_cells in its record, and the table mesh_study.csv (fine level
-   *  first, as the GCI calculator takes them). The open file stays as it is on disk. */
+  /** Saves one run per level (R008_coarse, R009_medium ...), based on the open run, with mesh_study, mesh_level,
+   *  mesh_scale and mesh_cells in its record. Writes mesh_study.csv with the fine level first, the order the GCI
+   *  calculator expects. The open file stays unchanged on disk. */
   void createMeshRuns(CaseInfo c, Map<String, ScalarGlobalParameter> params, List<MeshLevel> levels, boolean mesh) throws IOException {
     ScalarGlobalParameter scale = findParam(MESH_SCALE);
     double scale0 = scale.getQuantity().getValue();
@@ -7766,13 +7730,13 @@ public class SimKit extends StarMacro {
     List<String> made = new ArrayList<>();
     List<String[]> table = new ArrayList<>();
     CaseInfo last = null;
-    String cellsNow = "";   // the open run, before any change
+    String cellsNow = "";   // cell count of the open run before any change
     try { String n = cellCount(); if (n != null && Fmt.parse(n) > 0) cellsNow = shortNum(Fmt.parse(n)); } catch (Throwable t) { /* no mesh */ }
     int nNew = 0;
     for (MeshLevel L : levels) if (!L.current) nNew++;
     log.line("mesh study from " + c.caseId + ": " + levels.size() + " level(s), " + nNew + " new run(s)" + (mesh ? ", meshed now" : ", saved without a mesh"));
     for (MeshLevel L : levels) {
-      if (L.current) {   // the open run is a level of the study: listed, its record marked, not saved again
+      if (L.current) {   // the open run: listed and marked in its record, not saved again
         made.add(c.caseId + " " + L.name + (cellsNow.isEmpty() ? "" : " " + cellsNow + " cells") + " (current)");
         table.add(0, new String[] {L.name, c.caseId, num4(scale0), Double.isNaN(base) ? "" : num4(base * scale0), cellsNow, ""});
         try {
@@ -7809,11 +7773,11 @@ public class SimKit extends StarMacro {
       last = n;
     }
     String csvNote = "";
-    try {   // fine first: N1..N3 and phi1..phi3 of the GCI calculator
+    try {
       Path csv = c.caseDir.resolve("mesh_study_" + c.caseId).resolve("mesh_study.csv");
       String[] headRow = {"level", "run", "size_factor", "base_size", "cells", "phi"};
       List<String[]> all = new ArrayList<>();
-      if (Files.isRegularFile(csv)) {   // a second study from the same run: its rows below the first ones
+      if (Files.isRegularFile(csv)) {   // a later study from the same run appends its rows
         List<String[]> old = Csv.parse(Fs.read(csv));
         for (int i = 1; i < old.size(); i++) all.add(old.get(i));
       }
@@ -7828,15 +7792,15 @@ public class SimKit extends StarMacro {
         + (last == null ? "" : ". Now in " + last.simFile.getFileName()) + csvNote);
   }
 
-  /** Looks for the known size objects in a values manager (default, custom or custom-prism values). info (may be null):
-   *  also the sizes that are relative, already linked to p_meshScale, or set by another expression. */
+  /** Looks for the known size objects in a values manager (default, custom or custom prism values). If info is not
+   *  null, it also receives the sizes that are relative, linked to p_meshScale or set by another expression. */
   void scanMeshValues(Object values, String op, String control, List<MeshSetting> found, List<String> relative,
       List<String> already, List<MeshSetting> info) {
     for (String[] s : MESH_SIZES) {
       Class<?> k = Reflect.cls(s[0]);
       if (k == null) continue;
       Object v;
-      try { v = Reflect.invoke(values, "get", k); } catch (Throwable t) { continue; }   // not present / not activated
+      try { v = Reflect.invoke(values, "get", k); } catch (Throwable t) { continue; }   // not present or not activated
       if (v == null) continue;
       String where = op + (control.isEmpty() ? "" : "/" + control) + " " + s[1];
       MeshSetting m = new MeshSetting();
@@ -7862,7 +7826,7 @@ public class SimKit extends StarMacro {
       if (def != null && String.valueOf(def).contains("$")) {
         m.def = String.valueOf(def);
         boolean own = m.def.contains("${" + MESH_SCALE + "}");
-        if (!own) already.add(where + " = " + def);   // own links are not foreign expressions
+        if (!own) already.add(where + " = " + def);   // links to p_meshScale are not listed as other expressions
         if (info != null) { m.state = own ? "linked" : "expr"; info.add(m); }
         continue;
       }
@@ -7875,10 +7839,10 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Calculators (lib/generic/SimKitCalc.java)
+  // Calculators
   // =====================================================================================================
 
-  /** Calculators = lib/generic/SimKitCalc.java (separate macro, played in this session). */
+  /** Plays the calculator macro lib/generic/SimKitCalc.java in this session. */
   void toolCalc() {
     Path p = Fs.inKit(CALC_MACRO);
     String fallback = "Run " + p + " with File > Macro > Play Macro";
@@ -7899,11 +7863,11 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Configuration (small CSV files in _SIMKIT/config, built-in defaults when missing)
+  // Configuration
   // =====================================================================================================
 
-  /** Reads config\<file> and returns its rows with the requested columns (by header name, in 'cols' order).
-   *  Missing file -> 'defaults' (or an empty list). Lines whose first cell starts with '#' are comments. */
+  /** Rows of config/<file> with the requested columns, read with readTable. Returns 'defaults', or an empty list,
+   *  when the file is missing or unreadable. */
   List<String[]> config(String file, String[] cols, String[][] defaults) {
     Path p = Fs.config(file);
     List<String[]> out = new ArrayList<>();
@@ -7922,8 +7886,8 @@ public class SimKit extends StarMacro {
     return out;
   }
 
-  /** Rows of a CSV file with the requested columns (by header name, case-insensitive, in 'cols' order; missing
-   *  column -> ""). Lines whose first cell starts with '#' are comments. */
+  /** Rows of a CSV file with the requested columns, by header name (case-insensitive) in 'cols' order. A missing
+   *  column gives "". Lines whose first cell starts with '#' are comments. */
   static List<String[]> readTable(Path p, String[] cols) throws IOException {
     List<String[]> out = new ArrayList<>();
     List<String[]> rows = Csv.parse(Fs.read(p));
@@ -7945,10 +7909,10 @@ public class SimKit extends StarMacro {
   }
 
   // =====================================================================================================
-  // Batch tests (SIMKIT_ACTION studytest, opensim)
+  // Batch tests
   // =====================================================================================================
 
-  /** Batch test: a study next to the case of the test sim, R001 and R002 saved, a submission prepared (no bsub). */
+  /** Batch test of a study next to the test sim. Saves R001 and R002 and prepares a submission without running bsub. */
   void testStudy() throws IOException {
     if (sessionPath().isEmpty()) throw new Cancel("the simulation has not been saved yet");
     CaseInfo c = runOrNull();
@@ -7975,12 +7939,12 @@ public class SimKit extends StarMacro {
     String[] cmd = submitCommand(r2.simFile, 4);
     log.line("submit command (not run): " + cmd[0]);
     log.line("submit script: " + writeSubmitScript(r2.simFile, cmd[0]));
-    // a copy as the cluster sends it back: a job folder, the file renamed with _iter_
+    // copy as returned by the cluster, in a job folder and renamed with _iter_
     Path back = r2.simFile.getParent().resolve("job_12345_host_07").resolve(r2.simFile.getFileName().toString().replace(".sim", ITER_SEP + "00050.sim"));
     Fs.mkdirs(back.getParent());
     Files.copy(r2.simFile, back, StandardCopyOption.REPLACE_EXISTING);
     setIdentityKey(dir, dir.getFileName().toString(), "comment_v002", "**finer** mesh near the liner");
-    // mesh study inside the study: runs coarse and medium, based on R002
+    // mesh study with coarse and medium levels, based on R002
     if (meshParams().isEmpty() || findParam(MESH_SCALE) == null) toolParametrizeMesh();
     if (!meshParams().isEmpty() && findParam(MESH_SCALE) != null) {
       double s0 = findParam(MESH_SCALE).getQuantity().getValue();
@@ -7993,14 +7957,14 @@ public class SimKit extends StarMacro {
     log.line("study row label of the returned file: " + fileLabel(back.getFileName().toString()));
     writeTrackerCsv(dir, trackerRows(dir));
     log.line("study tracker csv: " + dir.resolve(TRACKER_CSV));
-    // Save as new run > "Root of a new study instead": the open run becomes R001 of a new study
+    // Save as new run > "Root of a new study instead" makes the open run R001 of a new study
     CaseInfo before = requireCase();
     Path dir2 = dir.resolveSibling(dir.getFileName() + "_branch");
     startStudy(dir2, "branch", "test: new study from " + before.caseId);
     log.line("new study from a run: " + requireCase().caseId + " based on " + readIdentity(requireCase()).get("based_on"));
   }
 
-  /** Batch test of the tracker's Open in STAR-CCM+: the open file is reported as already open; another run of the
+  /** Batch test of Open in STAR-CCM+ in the tracker. The open file is reported as already open. Another run of the
    *  project is loaded, reported and closed again. */
   void testOpenSim() {
     CaseInfo c = requireCase();
@@ -8024,9 +7988,9 @@ public class SimKit extends StarMacro {
     log.line("open sim: no other run in " + c.caseDir + " to open");
   }
 
-  /** Batch test of the naming items on a conjugate heat transfer layout, in memory (the sim is not saved): a solid
-   *  region with a boundary IF_plate, an interface with the fluid boundary renamed IF_face5, a fluid wall renamed
-   *  IN_face2 (prefix / type mismatch). Logs the Names rows, Set type, the default report surfaces, the pre-submit. */
+  /** Batch test of the naming tools on a conjugate heat transfer layout, in memory (the sim is not saved). The layout
+   *  has a solid region with boundary IF_plate, an interface whose fluid boundary is renamed IF_face5, and a fluid wall
+   *  renamed IN_face2 to give prefix and type mismatches. */
   void testCht() {
     Region fluid = null;
     for (Region r : sim.getRegionManager().getRegions()) if (fluid == null) fluid = r;
@@ -8039,7 +8003,7 @@ public class SimKit extends StarMacro {
     f2.setPresentationName("IN_face2");
     Region solid = sim.getRegionManager().createEmptyRegion();
     solid.setPresentationName("S_plate");
-    try {   // a solid continuum: the region type follows the continuum
+    try {   // the region type follows the solid continuum
       PhysicsContinuum sc = sim.getContinuumManager().createContinuum(PhysicsContinuum.class);
       sc.setPresentationName("PH_SOLID");
       for (String m : new String[] {"star.metrics.ThreeDimensionalModel", "star.common.ImplicitUnsteadyModel", "star.material.SolidModel",
@@ -8082,9 +8046,9 @@ public class SimKit extends StarMacro {
     log.line("cht: done (the simulation is not saved)");
   }
 
-  /** Batch test of 3D-CAD faces, in memory (the sim is not saved): a 3D-CAD model with three blocks named like burner
-   *  parts, two faces named by hand (IN_fuel, swirl), Name from body on two bodies, Set rest name on the third, Unite
-   *  with Transfer face names, a geometry part from the united body; logs the rows, the check and the part surfaces. */
+  /** Batch test of 3D-CAD face naming, in memory (the sim is not saved). Builds three blocks named like burner parts,
+   *  names two faces by hand, runs Name from body, Set rest name and Unite with Transfer face names, then makes a
+   *  geometry part from the united body. */
   void testCad() {
     star.cadmodeler.SolidModelManager smm = sim.get(star.cadmodeler.SolidModelManager.class);
     final star.cadmodeler.CadModel m = smm.createSolidModel();
@@ -8146,10 +8110,10 @@ public class SimKit extends StarMacro {
     log.line("cad: done (the simulation is not saved)");
   }
 
-  /** Batch test of Reports per object, in memory (the sim is not saved): plan and create T / p x maximum, area average,
-   *  volume average x the WALL_ boundaries and the first region (plots per quantity), the same plan again (must create
-   *  nothing), one report over all walls, then a report made by hand with a default name and an expression that uses
-   *  it: the rename to the rule and the expression after it; a name with '-' in ${...}. */
+  /** Batch test of Reports per object, in memory (the sim is not saved). Plans and creates T and p reports (maximum,
+   *  area average, volume average) on the WALL_ boundaries and the first region and checks that a second run creates
+   *  nothing. Also covers a report over all walls, the rename of a hand-made report used in an expression, and a name
+   *  with '-' in ${...}. */
   void testObjReports() {
     loadPrefixes();
     ObjNames n = objNames();
@@ -8298,9 +8262,9 @@ public class SimKit extends StarMacro {
       return a == null ? "" : a.trim().toLowerCase(Locale.ROOT);
     }
 
-    /** Batch if an action is given, if Java is headless, if the process was started with "-batch", or if no
-     *  window of this JVM is visible (the STAR-CCM+ GUI client is a Swing application, so a played macro sees
-     *  its main window; a batch run has none). Env SIMKIT_GUI=1 forces the menu if a heuristic is wrong. */
+    /** Reason for batch mode, or null for the GUI. Batch if an action is given, Java is headless, the process was started
+     *  with "-batch", or no window of this JVM is visible (a macro played in the GUI client sees its main window).
+     *  Env SIMKIT_GUI=1 forces the menu. */
     static String headlessReason() {
       if (!action().isEmpty()) return "simkit.action / SIMKIT_ACTION is set";
       if ("1".equals(System.getenv("SIMKIT_GUI"))) return null;
@@ -8319,7 +8283,7 @@ public class SimKit extends StarMacro {
 
     static String user() { return System.getProperty("user.name", "unknown"); }
 
-    /** Tool number requested by a toolbar button macro (system property simkit.tool, cleared once read); 0 = menu. */
+    /** Tool requested by a toolbar button macro through the system property simkit.tool, cleared once read. Null: menu. */
     static Tool directTool() {
       String t = System.getProperty("simkit.tool");
       if (t == null || t.trim().isEmpty()) return null;
@@ -8330,7 +8294,7 @@ public class SimKit extends StarMacro {
     /** Marks a window as a SimKit window and applies the preference to it. */
     static void track(java.awt.Window w) {
       if (w instanceof javax.swing.RootPaneContainer) ((javax.swing.RootPaneContainer) w).getRootPane().putClientProperty("simkit.window", Boolean.TRUE);
-      try { w.setAlwaysOnTop(false); } catch (Throwable t) { /* not supported by this window system */ }   // above STAR-CCM+ only (owner)
+      try { w.setAlwaysOnTop(false); } catch (Throwable t) { /* not supported by this window system */ }   // stays above STAR-CCM+ through its owner only
     }
 
     /** Per-user remembered value (last cases folder); null if not available. */
@@ -8345,11 +8309,10 @@ public class SimKit extends StarMacro {
 
   /** File system: kit location, write guard, small read/write helpers. */
   static final class Fs {
-    /** True on Windows (10/11), false on Linux (RHEL 7/9). */
     static final boolean WINDOWS = java.io.File.separatorChar == '\\';
 
-    /** The SimKit root = the folder of SimKit.java (set in execute() from resolvePath). Every kit file is reached
-     *  from it with inKit("<relative/path>"); nothing of the kit is addressed in any other way. */
+    /** SimKit root, the folder of SimKit.java, set in execute() from resolvePath. All kit files are reached through
+     *  inKit("<relative/path>"). */
     static Path ROOT;
 
     static Path kit() { return ROOT; }
@@ -8391,10 +8354,9 @@ public class SimKit extends StarMacro {
       return key(p).startsWith(r.endsWith(sep) ? r : r + sep);
     }
 
-    /** Writes a whole file in one step: the text goes to a temporary file in the same folder, which then replaces the
-     *  file (atomic rename where the file system has it). A reader sees the old or the new file, never a part of it;
-     *  a crash leaves the old file. Windows refuses the replace while someone else is reading the file: retried for
-     *  up to 2 s, then the file is written directly (as before). */
+    /** Writes the text to a temporary file in the same folder and moves it over the file (atomic where supported), so a
+     *  reader sees the old or the new file and a crash leaves the old one. Windows refuses the move while the file is
+     *  open for reading. The move is retried for up to 2 s, then the file is written directly. */
     static void write(Path p, String text) throws IOException {
       Path g = guard(p);
       Files.createDirectories(g.getParent());
@@ -8419,7 +8381,7 @@ public class SimKit extends StarMacro {
           }
         }
       } finally {
-        Files.deleteIfExists(tmp);   // only SimKit's own temporary file, when the move did not happen
+        Files.deleteIfExists(tmp);   // left only when the move failed
       }
       Scan.clear(g);
     }
@@ -8546,9 +8508,8 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Light formatting of comments and descriptions, typed as plain marks so the text stays readable in
-   *  case_identity.txt, the CSV files and Google Sheets: **bold**, *italic*, a line "- text" = bullet,
-   *  a line "1. text" = numbered item. Shown formatted in the tracker and the case report. */
+  /** Light formatting marks in comments and descriptions. The text stays readable as plain text in case_identity.txt,
+   *  the CSV files and Google Sheets, and is shown formatted in the tracker and the case report. */
   static final class Md {
     static final Pattern BULLET = Pattern.compile("^\\s*[-*•]\\s+(.*)$");
     static final Pattern NUMBER = Pattern.compile("^\\s*(\\d+)[.)]\\s+(.*)$");
@@ -8603,9 +8564,9 @@ public class SimKit extends StarMacro {
       return false;
     }
 
-    /** One line read into formatted pieces. The marks switch on and off: ** bold, * italic (*** both), __ underline,
-     *  [red] ... [/] a colour. A mark counts only where it can open (text right after it and a closing mark later) or
-     *  close (text right before it); anywhere else it is ordinary text (2*3, a ** b, [m/s]). */
+    /** Splits one line into formatted pieces. Marks: ** bold, * italic, *** both, __ underline, [red] ... [/] colour.
+     *  A mark counts only where it can open (text right after it and a closing mark later) or close (text right before
+     *  it). Elsewhere it is ordinary text, as in 2*3, a ** b or [m/s]. */
     static List<Run> runs(String s) {
       Set<Integer> plainAt = new HashSet<>();   // opening marks that were never closed: ordinary text
       for (int pass = 0; ; pass++) {
@@ -8662,7 +8623,7 @@ public class SimKit extends StarMacro {
         }
         flush(out, t, b, it, u, col);
         if (!b && !it && !u && col == null) return out;
-        if (b) plainAt.add(bAt);   // an opening mark that is still open at the end: read it as text, then again
+        if (b) plainAt.add(bAt);   // unclosed opening mark: treat it as text and parse again
         if (it) plainAt.add(iAt);
         if (u) plainAt.add(uAt);
         if (col != null) plainAt.add(cAt);
@@ -8802,8 +8763,8 @@ public class SimKit extends StarMacro {
 
   /** Swing dialogs (interactive mode only). Cancel/close throws Cancel. */
   static final class Ui {
-    /** Opens a URL in the default browser: java.awt.Desktop (Windows, GNOME), else xdg-open (RHEL without
-     *  Desktop support, e.g. some X11 / VNC sessions), else the OS "start" on Windows. */
+    /** Opens a URL in the default browser with java.awt.Desktop, else xdg-open (RHEL sessions without Desktop support,
+     *  e.g. some X11 or VNC sessions), else "start" on Windows. */
     static void browse(String url) throws Exception {
       URI u = new URI(url);
       try {
@@ -8973,8 +8934,8 @@ public class SimKit extends StarMacro {
       return b;
     }
 
-    /** A table cell drawn as a small rounded label (a status), then a detail text; pill null: detail only. The cell
-     *  background is the row background (selection shows). */
+    /** Table cell with a small rounded status label followed by a detail text, or the detail only when pill is null.
+     *  The cell background is the row background, so the selection shows. */
     static class PillCell extends JLabel {
       private static final long serialVersionUID = 1L;
       String pill, detail;
@@ -9136,7 +9097,7 @@ public class SimKit extends StarMacro {
       if (c instanceof java.awt.Container) for (java.awt.Component k : ((java.awt.Container) c).getComponents()) white(k);
     }
 
-    /** A clean window: title, grey line, the body, a red line for problems, Cancel and one blue button (Enter).
+    /** Modal window with title, grey line, body, a red line for problems, Cancel and one blue button (Enter).
      *  'check' runs on the button: a message keeps the window open (nothing typed is lost), null closes it. */
     static boolean sheet(String title, String sub, javax.swing.JComponent body, final JButton ok, final java.util.function.Supplier<String> check) {
       return sheet(title, sub, body, ok, check, null);
@@ -9164,7 +9125,7 @@ public class SimKit extends StarMacro {
         root.add(body, BorderLayout.CENTER);
         final JLabel msg = new JLabel(" ");
         msg.setForeground(RED);
-        final boolean stay = Boolean.TRUE.equals(ok.getClientProperty("simkit.stay"));   // acts, the window stays open
+        final boolean stay = Boolean.TRUE.equals(ok.getClientProperty("simkit.stay"));   // the button acts and the window stays open
         JButton cancel = secondary(stay ? "Close" : "Cancel");
         cancel.addActionListener(e -> d.dispose());
         if (!stay) {
@@ -9184,7 +9145,7 @@ public class SimKit extends StarMacro {
         JPanel bottom = new JPanel(new BorderLayout(10, 0));
         if (extra != null) {
           bottom.add(extra, BorderLayout.WEST);
-          JPanel col = new JPanel(new BorderLayout(0, 6));   // the message above the buttons
+          JPanel col = new JPanel(new BorderLayout(0, 6));
           col.add(msg, BorderLayout.NORTH);
           col.add(bottom, BorderLayout.CENTER);
           bottom.add(btns, BorderLayout.EAST);
@@ -9199,7 +9160,7 @@ public class SimKit extends StarMacro {
         root.setBackground(java.awt.Color.WHITE);
         d.setContentPane(root);
         if (!stay) d.getRootPane().setDefaultButton(ok);
-        d.getRootPane().registerKeyboardAction(e -> {   // Esc: clears a search field first, else closes
+        d.getRootPane().registerKeyboardAction(e -> {   // Esc clears a search field first, else closes the window
           java.awt.Component f = d.getFocusOwner();
           if (f instanceof JTextField && !((JTextField) f).getText().isEmpty() && ((JTextField) f).getClientProperty("simkit.esc.close") == null) {
             ((JTextField) f).setText("");
@@ -9313,7 +9274,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Reflection for read-only getters whose 2402 name is not certain (the recorder never records getters). */
+  /** Reflection for getters whose name in STAR-CCM+ 2402 is not certain, since the macro recorder never records getters. */
   static final class Reflect {
     /** Calls a public method by name with matching argument types; null on any failure or if not found. */
     static Object tryCall(Object target, String method, Object... args) {

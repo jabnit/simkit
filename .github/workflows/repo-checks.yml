@@ -64,5 +64,5 @@ jobs:
           print("YAML, CFF and CSV files are valid.")
           PY
 
-      # The macros compile only against the STAR-CCM+ libraries, which are licensed and not
-      # available here: the batch validation (_SIMKIT/TESTING.txt, section A) is run locally.
+      # The macros compile only against the licensed STAR-CCM+ libraries, which are not available here. The batch
+      # validation (_SIMKIT/TESTING.txt, section A) is run locally.

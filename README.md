@@ -63,5 +63,4 @@ The GUI test and the expected results are in `_SIMKIT/TESTING.txt`.
 
 ## Licence
 
-**Not yet selected.** No `LICENSE` file is included, because choosing a licence is the owner's decision and
-must not be made silently. Until a licence is added, all rights are reserved by default.
+Not yet selected. Until a `LICENSE` file is added, all rights are reserved.

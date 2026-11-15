@@ -1,16 +1,16 @@
-// SimKit: install (or remove) the SimKit buttons on your STAR-CCM+ Macro toolbar -- play once per user
+// SimKit: installs or removes the SimKit buttons on the STAR-CCM+ toolbar. Play once per user.
 //
-// STAR-CCM+ has 10 favourite-macro buttons per user (Macro toolbar). This macro puts the SimKit buttons there,
-// pointing at the macros in this buttons/ folder on the team share (so a kit update never needs the buttons redone),
-// each with its own icon from buttons/icons/. In the STAR-CCM+ window it sets the toolbar's own favourite buttons
-// (as their favourite-macro dialog does: they update at once and STAR-CCM+ saves them); in batch it writes the same
-// setting directly. STAR-CCM+ keeps it in the user's STAR-CCM+ folder for this STAR-CCM+ version:
+// STAR-CCM+ has 10 favourite-macro slots per user. This macro puts the SimKit buttons in free slots or in slots
+// that already hold a SimKit button and shows them on a toolbar named SimKit. The buttons point at the macros in
+// this buttons/ folder on the team share, so a kit update needs no reinstall. Icons are read from buttons/icons/.
+// In the STAR-CCM+ window the slots are set through the toolbar actions and take effect at once. In batch the
+// setting is written directly to settings.props of this STAR-CCM+ version:
 //   Windows  %LOCALAPPDATA%\Siemens\STAR-CCM+ <version>\config\settings.props
 //   Linux    ~/.star-<version>/config/settings.props
-// Only free slots and slots that already hold a SimKit button are used: your own favourites are kept unless you
-// tick "Replace my own favourites". Play it again after installing a new STAR-CCM+ version, or to remove them.
-// Batch (test): -Dsimkit.buttons=install (default) or remove, or SIMKIT_ACTION=installbuttons / removebuttons;
-// never replaces your own favourites.
+// Slots with other favourites are replaced only when "Replace my own favourites too" is ticked. Play it again
+// after installing a new STAR-CCM+ version.
+// Batch: -Dsimkit.buttons=install|remove or SIMKIT_ACTION=installbuttons|removebuttons. Batch never replaces
+// other favourites.
 package macro;
 
 import java.awt.BorderLayout;
@@ -31,7 +31,7 @@ import star.common.*;
 
 public class SimKit_InstallButtons extends StarMacro {
 
-  /** Toolbar order: file in buttons/ (without .java), tooltip. Icons: buttons/icons/<file>.png. */
+  /** Toolbar order. Each entry is {file in buttons/ without .java, tooltip}, icon buttons/icons/<file>.png. */
   static final String[][] BUTTONS = {
       {"SimKit_Menu", "SimKit (all tools)"},
       {"SimKit_SaveNewVersion", "SimKit: Save as new run"},
@@ -42,7 +42,7 @@ public class SimKit_InstallButtons extends StarMacro {
       {"SimKit_MeshStudy", "SimKit: Mesh study"},
   };
   static final int SLOTS = 10;
-  /** + 0..9; value "macro file ; icon file ; tooltip" (the order STAR-CCM+ reads and writes, MacroPlayFavoriteAction). */
+  /** Setting key plus slot 0..9. Value "macro file ; icon file ; tooltip", in the order STAR-CCM+ reads. */
   static final String KEY = "MacroPlayFavoriteAction";
 
   Simulation sim;
@@ -51,7 +51,7 @@ public class SimKit_InstallButtons extends StarMacro {
     if (sim != null) sim.println("[SimKit] " + s); else System.out.println("[SimKit] " + s);
   }
 
-  /** The macro file of a slot value ("" if empty). */
+  /** Macro file of a slot value, "" if the slot is empty. */
   static String macroOf(String value) {
     if (value == null) return "";
     return value.split(";", -1)[0].trim();
@@ -62,16 +62,16 @@ public class SimKit_InstallButtons extends StarMacro {
     return parts.length >= 2 && parts[parts.length - 1].matches("SimKit_[A-Za-z]+\\.java") && parts[parts.length - 2].equals("buttons");
   }
 
-  /** A SimKit button: SimKit_<Name>.java in a folder named buttons (any share, any older location). Also the slots
-   *  written by the first installer (wrong order "tooltip ; macro ; icon"), so playing it again repairs them. */
+  /** A SimKit button is SimKit_<Name>.java in a folder named buttons, at any location. Also matches slots with the
+   *  fields in the order "tooltip ; macro ; icon", so that playing the installer again repairs them. */
   static boolean isSimKit(String value) {
     if (value == null) return false;
     String[] p = value.split(";", -1);
     return isSimKitFile(p[0]) || p.length >= 2 && isSimKitFile(p[1]);
   }
 
-  /** Sets slot i through STAR-CCM+'s own toolbar button, as its favourite-macro dialog does: the button changes at once
-   *  and STAR-CCM+ saves the setting. false where there is no such button (batch) or the call fails. */
+  /** Sets slot i through the toolbar action of STAR-CCM+, as the favourite-macro dialog does, so the button changes
+   *  at once and STAR-CCM+ saves the setting. Returns false in batch (no toolbar action) or when a call fails. */
   static boolean setLive(int i, String macro, String icon, String tip) {
     try {
       Class<?> fav;
@@ -85,7 +85,7 @@ public class SimKit_InstallButtons extends StarMacro {
       final Throwable[] err = new Throwable[1];
       Runnable r = () -> {
         try {
-          // the button is made on first use and then reloads the stored setting: make it first, so it cannot undo ours
+          // The button is created on first use and then reloads the stored setting, so create it before setting values.
           for (Class<?> c = a.getClass(); c != null; c = c.getSuperclass()) {
             try {
               java.lang.reflect.Method gb = c.getDeclaredMethod("getButton");
@@ -108,8 +108,8 @@ public class SimKit_InstallButtons extends StarMacro {
     }
   }
 
-  // ----- the SimKit toolbar: STAR-CCM+ (NetBeans) shows a toolbar per folder of <config>/Toolbars; each button is a
-  // link file <action>.shadow whose content is the action's address (what Customize > drag and drop writes).
+  // ----- SimKit toolbar. STAR-CCM+ (NetBeans) shows one toolbar per folder of <config>/Toolbars. Each button is a
+  // link file <action>.shadow that holds the address of the action, as Customize > drag and drop writes it.
 
   static final String TOOLBAR = "SimKit";
   static final String FAV = "star-coremodule-actions-MacroPlayFavoriteAction";
@@ -118,8 +118,8 @@ public class SimKit_InstallButtons extends StarMacro {
     return "nbfs://nbhost/SystemFileSystem/Actions/File/Macro/" + FAV + i + ".instance";
   }
 
-  /** Puts these favourite slots, in this order, on the SimKit toolbar (none: the toolbar goes). In the window through
-   *  its own file system (the toolbar changes at once), else as files in the user's STAR-CCM+ config folder. */
+  /** Puts these favourite slots on the SimKit toolbar in the given order. An empty list removes the toolbar. In the
+   *  window this uses its file system and takes effect at once, otherwise files are written to the config folder. */
   String setToolbar(List<Integer> slots, boolean gui) {
     if (gui) {
       try {
@@ -144,7 +144,7 @@ public class SimKit_InstallButtons extends StarMacro {
     final Object root = fu.getMethod("getConfigFile", String.class).invoke(null, "Toolbars");
     if (root == null) throw new IllegalStateException("no Toolbars folder");
     final Exception[] err = new Exception[1];
-    Runnable r = () -> {   // one atomic change: the toolbar is rebuilt once, never with a half-written link
+    Runnable r = () -> {   // one atomic action, so the toolbar is rebuilt once and never shows a half-written link
       try {
         Object dir = fo.getMethod("getFileObject", String.class).invoke(root, TOOLBAR);
         if (dir != null) {
@@ -172,7 +172,7 @@ public class SimKit_InstallButtons extends StarMacro {
     if (err[0] != null) throw err[0];
   }
 
-  /** The same toolbar as files (batch, or when the window's file system cannot be reached). Returns the folder. */
+  /** Writes the toolbar as files, for batch or when the file system of the window is not available. Returns the folder. */
   static Path setToolbarFiles(List<Integer> slots) throws Exception {
     java.lang.reflect.Method m = star.base.neo.BaseSettings.class.getDeclaredMethod("getConfigDir");
     m.setAccessible(true);
@@ -208,7 +208,7 @@ public class SimKit_InstallButtons extends StarMacro {
     }
   }
 
-  /** Sets slot i (live in the window, else the setting itself) and checks what STAR-CCM+ now holds. */
+  /** Sets slot i, live in the window or else in the settings. Returns true if the live change took effect. */
   boolean setSlot(StarSettings st, boolean gui, int i, String macro, String icon, String tip) {
     if (gui && setLive(i, macro, icon, tip) && macroOf(st.getFavoriteMacro(KEY + i)).equals(macro)) return true;
     st.setFavoriteMacro(KEY + i, macro.isEmpty() ? "" : macro + " ; " + icon + " ; " + tip);
@@ -231,7 +231,7 @@ public class SimKit_InstallButtons extends StarMacro {
     boolean gui = !java.awt.GraphicsEnvironment.isHeadless() && System.getProperty("simkit.buttons") == null
         && System.getenv("SIMKIT_ACTION") == null;
 
-    List<Integer> own = new ArrayList<>();   // slots holding the user's own favourites
+    List<Integer> own = new ArrayList<>();   // slots with favourites that are not SimKit buttons
     int simkitNow = 0;
     for (int i = 0; i < SLOTS; i++) {
       if (isSimKit(slot[i])) simkitNow++;
@@ -247,10 +247,10 @@ public class SimKit_InstallButtons extends StarMacro {
       if (r == null) { say("toolbar buttons: nothing changed"); return; }
       remove = (Boolean) r[0];
       want = (boolean[]) r[1];
-      replaceOwn = (Boolean) r[2] && !remove;   // Remove only ever takes SimKit buttons away
+      replaceOwn = (Boolean) r[2] && !remove;   // remove never clears other favourites
     }
 
-    // missing button files are skipped (an older kit); icons are optional
+    // Missing button files are skipped. Icons are optional.
     List<String[]> chosen = new ArrayList<>();
     for (int b = 0; b < BUTTONS.length; b++) {
       if (remove || !want[b]) continue;
@@ -260,7 +260,7 @@ public class SimKit_InstallButtons extends StarMacro {
       chosen.add(new String[] {BUTTONS[b][1].replace(";", ","), f.toString(), Files.isRegularFile(icon) ? icon.toString() : ""});
     }
 
-    // free = empty or SimKit slots (+ the user's own if they asked to replace them)
+    // Free slots are empty or hold a SimKit button, plus all other slots when replaceOwn is set.
     List<Integer> free = new ArrayList<>();
     for (int i = 0; i < SLOTS; i++) if (!own.contains(i) || replaceOwn) free.add(i);
     if (chosen.size() > free.size()) {
@@ -282,7 +282,7 @@ public class SimKit_InstallButtons extends StarMacro {
     }
     if (gui) say("favourite macros set " + (live == chosen.size() ? "in the window" : live + " in the window, the rest in the settings"));
 
-    // a favourite macro shows only where a toolbar holds a link to it: the SimKit toolbar holds the SimKit ones
+    // A favourite macro is shown only on a toolbar that holds a link to it.
     List<Integer> onBar = new ArrayList<>(free.subList(0, chosen.size()));
     String how = setToolbar(onBar, gui);
     say("SimKit toolbar: " + onBar.size() + " button(s), " + how);
@@ -300,7 +300,7 @@ public class SimKit_InstallButtons extends StarMacro {
     }
   }
 
-  /** The dialog: buttons to put on the toolbar (all ticked), replace own favourites, or remove. null = cancel. */
+  /** Shows the install dialog. Returns {remove, buttons ticked, replace own favourites}, or null on cancel. */
   Object[] ask(String[] slot, List<Integer> own, int simkitNow, Path dir) {
     final Object[][] out = new Object[1][];
     Runnable r = () -> {

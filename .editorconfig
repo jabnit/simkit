@@ -12,7 +12,7 @@ indent_size = 4
 indent_size = 2
 end_of_line = lf
 
-# The kit is stored byte-for-byte; do not let an editor rewrite it.
+# The kit is stored byte for byte. Editors must not change trailing whitespace or final newlines.
 [_SIMKIT/**]
 trim_trailing_whitespace = false
 insert_final_newline = false

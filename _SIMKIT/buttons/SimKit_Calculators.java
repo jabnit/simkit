@@ -1,8 +1,7 @@
-// SimKit: Calculators (y+, Reynolds, time step, properties...)
+// SimKit toolbar button: calculators for y+, Reynolds number, time step and fluid properties.
 //
-// SimKit 0.3 toolbar button. Play it from the buttons/ folder of the SimKit root on the team share (do not copy
-// it elsewhere): it finds the root from its own location (STAR-CCM+ resolvePath("..")) and plays lib/generic/SimKitCalc.java
-// from there. No environment variable or path to set.
+// Play it from <root>/buttons/ on the team share, not from a copy. It finds the SimKit root with
+// resolvePath("..") and plays lib/generic/SimKitCalc.java from there.
 package macro;
 
 import java.nio.file.Files;
@@ -14,7 +13,7 @@ import star.common.*;
 public class SimKit_Calculators extends StarMacro {
 
   static final String TOOL = "";
-  /** Macro to play, relative to the SimKit root ('/' on every OS). */
+  /** Macro to play, relative to the SimKit root, with '/' as separator on every OS. */
   static final String MACRO = "lib/generic/SimKitCalc.java";
 
   @Override

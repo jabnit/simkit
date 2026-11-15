@@ -62,7 +62,7 @@ A. BATCH VALIDATION (no GUI; about 15 min)
     10b save as new run (batch: next run, same name) | 11 tracker (writes case_tracker.csv)
     11b open sim (the tracker's Open in STAR-CCM+) | 11c project test (new project, runs, returned copy, submit
         script without bsub, new project from a run)
-  Then paste <TestRoot>/results/PASTE_THIS.txt (the licence location is masked) to whoever maintains SimKit.
+  Then paste <TestRoot>/results/PASTE_THIS.txt (the licence location is masked) to the SimKit maintainer.
   Expected: every exit code 0 and no "Exception" in results/*.log.
 
 B. GUI TEST (on the release and OS the team uses; about 15 min)
@@ -83,21 +83,21 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       a scene. Drag the SimKit window aside; it stays above the STAR window and minimises with it. While a tool
       runs (e.g. Export results) its buttons are greyed and STAR stays usable; the result opens in its own window
       that can stay open. Playing SimKit again replaces the window (one per session). Same for Calculators: the
-      window stays open while you work; From parameter / To parameter act on the open sim.
+      window stays open; From parameter / To parameter act on the open sim.
       Keep in front of other apps: tick it -> the SimKit, result, tracker and calculator windows stay above other applications
       (e.g. a browser); untick -> they stay above STAR-CCM+ only. Close and replay SimKit: the choice is kept.
       Watch for: a STAR "macro is running" lock, a freeze while a tool runs, or an error when you edit the model
       while Save as new or Export runs -> note it (the fallback is to wait for the tool to finish).
    2. Save as new (sim not a case yet): choose a folder (Browse...), pick ISO (or type a new code, e.g. TEST1), type a description and a
-      configuration in your own words (optional), leave the label empty
+      configuration (optional), leave the label empty
       -> <folder>/ISO-00n/sim/ISO-00n_v01.sim; record/setup_*_v01.csv and case_card_*.html written;
       <folder>/case_list.csv lists the case. Choosing a folder inside the kit must be refused. The next case created
-      proposes the same folder.
+      offers the same folder.
    3. Change something (e.g. the base size), click Save as new: "Next version of ISO-00n (v02)" is selected, the name pre-filled; Enter ->
       ISO-00n_v02.sim (same name); type mesh2 -> ISO-00n_mesh2_v0x.sim; "v3" or "my name" is refused;
       the tracker shows ISO-00n.v02 "based on ISO-00n.v01".
       Open v01 again and click Save as new, Enter -> ISO-00n.v03 "based on ISO-00n.v01". Ctrl+S keeps saving the open file.
-   4b. Standard reports: the list proposes only what fits (IN_/OUT_/OPEN_/WALL_ surfaces present, energy on,
+   4b. Standard reports: the list shows only what fits (IN_/OUT_/OPEN_/WALL_ surfaces present, energy on,
       unsteady); untick one, OK -> reports r_..., one monitor each, plots pl_massBalance, pl_pressure, ...
       Click it again -> "nothing to add ... already exists" (nothing duplicated or changed).
    4c. Mesh study > Parametrize only: on a sim whose base size (or a custom control size) is absolute: the list shows each
@@ -111,7 +111,7 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       (status line: cases, cells, "Now in ..."); the original file is unchanged on disk; the tracker shows the levels
       with "mesh study: <level>" in the description. Save without a mesh -> the level files hold no volume mesh.
       After running and exporting the levels: GCI > From cases pre-selects the levels of the study.
-   4d. Standard scenes: choose the axis; the list proposes the scenes that fit; OK -> dp_plane_mid<axis> and the
+   4d. Standard scenes: choose the axis; the list shows the scenes that fit; OK -> dp_plane_mid<axis> and the
       sc_... scenes; open them, adjust a camera; Export results saves them as images. Click again: nothing added.
    4e. Case report: opens an HTML page in the browser (identity, what changed, Check, key results, averages,
       changes, images); sections not produced yet say "not available".
@@ -131,10 +131,10 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       kept; case_identity.txt holds comment_vNN=ml:...\n...; Case report shows it formatted. A case description:
       select the case row, click the box: same; case_list.csv follows.
       Open in STAR-CCM+...: select another version, click the blue button (or Enter, or double-click its ID): STAR-CCM+'s
-      own Load Simulation dialog appears with that file filled in. Choose parallel, 4 processes (and Power Session if your
+      own Load Simulation dialog appears with that file filled in. Choose parallel, 4 processes (and Power Session if the
       licence has it), OK: the file opens in a new simulation tab with those options. Next time the dialog shows
-      the same choices. Again on the same row: its tab comes to the front (note whether it really does). On a case row: its latest version. Status list:
-      no "reported" any more (an older "reported" version still shows its label).
+      the same choices. Again on the same row: its tab comes to the front (note whether it does). On a case row: its latest version. Status list:
+      no "reported" (an older "reported" version still shows its label).
       Pin: click the pale star of a case: it turns amber and the case moves to the top; close and reopen the
       tracker: still on top; a colleague's tracker is unchanged; click again: unpinned. Open results folder: the
       case's results folder opens (a case without results: "No results yet"). Select two versions, Ctrl+C, paste
@@ -165,8 +165,8 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       "10 button(s) on the SimKit toolbar". A toolbar named SimKit appears at once with the 10 icons and tooltips
       (else close and reopen STAR-CCM+: note which). Each runs its tool directly (no menu window). No Compile tab
       opens when a button is used. View > Toolbars lists SimKit.
-      Set one favourite of your own (Macro > Edit favourite macros), play the installer again:
-      your favourite is listed and kept; untick two buttons, Install: they disappear. Play again > Remove SimKit
+      Set one other favourite (Macro > Edit favourite macros), play the installer again:
+      that favourite is listed and kept; untick two buttons, Install: they disappear. Play again > Remove SimKit
       buttons: only the SimKit ones go. Restart STAR-CCM+: the state is kept.
   A failing STAR call shows "n/a (<reason>)" in the text and the tool continues. Note the [Unn] tag of the line
   and the reason: the fix is to record the one GUI action with the macro recorder and paste the generated line.
@@ -191,11 +191,11 @@ C. RESULTS SO FAR
   Boundary-type check + Standard reports (same day): Check "boundary types: 6 boundaries match their names";
   Standard reports created 12 reports (mass flow in/out/net, p in/out, T in/out, wall heat, y+ max/avg, Courant,
   cells), one monitor each and 6 plots (pl_massBalance, pl_pressure, pl_temperature, pl_heat, pl_yplus,
-  pl_courant); second run: "nothing to add". Fixed on the way: field functions are found by function name
+  pl_courant); second run: "nothing to add". Fixed: field functions are found by function name
   (WallYplus, CourantNumber); monitors via Report.createMonitor and plots via PlotManager.createMonitorPlot
   (createMonitorAndPlot made no plot in batch).
   Ready to report? / averaged results / key results (same day, -RunSolver: 10 time steps x 5 iterations):
-  before the run Ready = NOT READY ("no iterations found"); after the run (batch run,SimKit.java): solution 50
+  before the run Ready = NOT READY ("no iterations found"); after the run (batch run of SimKit.java): solution 50
   iterations PASS, residual drop 2.0 orders (Tke) WARN, mass balance net/in 0.14 % PASS, y+ max 4.0 / avg 0.9 with
   All y+ PASS; averages CSV (13 monitors, window from t = 0.0055 s), record/key_results.csv and the result
   columns of case_list.csv written. Changed after this run: a window with < 10 samples now gives WARN "window too
@@ -206,7 +206,7 @@ C. RESULTS SO FAR
   Probe: p_meshScale 1 -> 2 -> 1 gives base size 0.025 -> 0.05 -> 0.025 m and 14655 -> 3981 -> 14655 cells
   (the untouched test sim also gives 14655 when remeshed: the 18090 cells it was saved with predate later builder
   steps). Also seen: Ready now reports "window too short to judge" for the 5-sample test run (WARN), as intended.
-  Round 5 (same day, -RunSolver, all exit codes 0): Check "boundary values" WARN on the test case (inlet still at
+  Batch run with -RunSolver (same day, all exit codes 0): Check "boundary values" WARN on the test case (inlet still at
   300 K; gravity off with energy + ideal gas), as intended; Standard scenes created dp_plane_midZ (through the
   domain centre) and 6 scenes (y+ and T on walls; U, p, T, mesh on the mid-plane), Export saved them as 7 PNG;
   key_results.csv now holds cells (18090) and p_meshScale (1) for the GCI helper; Case report written with its 6
@@ -218,7 +218,7 @@ C. RESULTS SO FAR
   end time, Ready verdict, key results (per-version key_results_<sim>.csv now written by Export). Offline test of
   the file logic: a status and a comment saved into case_identity.txt and read back; saving unchanged rows writes
   nothing.
-  GUI bug found by the user (New case -> ClassNotFoundException macro.SimKit$Fmt): STAR-CCM+ deletes a macro's
+  GUI bug (New case -> ClassNotFoundException macro.SimKit$Fmt): STAR-CCM+ deletes a macro's
   compiled classes when execute() returns, but the non-blocking windows use classes later. Reproduced in batch
   (a thread loading a nested class 3 s after execute(): NoClassDefFoundError) and fixed: SimKit and SimKitCalc
   load all their own classes at start (log: "classes preloaded: 19" / "21"); same reproduction then passes.
@@ -227,7 +227,7 @@ C. RESULTS SO FAR
   ISO-001_v02.sim "forked from ISO-001_v01" with its set-up record and the list of changes (+17: the parameters and
   reports added by the earlier steps); tracker columns case, version, label, comment, status, forked from,
   configuration, description, saved, ready, key results, models, file; all exit codes 0. Offline: a comment and a
-  status on v02 saved and read back, only that row written (a row-key bug found and fixed on the way).
+  status on v02 saved and read back, only that row written (a row-key bug fixed).
   Calculator look + MatML (same day): results shown as an HTML table (value bold, warnings boxed, notes small),
   aligned forms, grouped buttons (checked on rendered images). MatML reader tested offline on tests/matml_samples
   (ANSYS Engineering Data style + plain MatML 3.1): 3 materials; steel k(T) from a degC table (60.5 W/m.K at
@@ -238,60 +238,60 @@ C. RESULTS SO FAR
   Tracker trimmed to case, version, comment, status, forked from, description, saved, file (offline test: v02
   forked from v01, comment + status saved and read back, one row written); New version offers the file name
   (pre-filled, Enter keeps it; GUI only, batch keeps the name).
-  Calculator fixes from the user's GUI test: the results panel is now opaque (in STAR's look-and-feel it was
+  Calculator fixes from a GUI test: the results panel is now opaque (in STAR's look-and-feel it was
   transparent and showed other content through it); with a library fluid selected, the density / viscosity /
   conductivity / cp fields are greyed and filled from the library (at T, the film temperature or the gas
   temperature of the form), the "(library)" fields are active; with "(entered values)" it is the other way round.
   STAR regression: all exit codes 0.
   Calculator results view rebuilt as styled text (JTextPane) instead of HTML: in STAR the HTML view threw
-  ArrayIndexOutOfBoundsException in BoxView on mouse move and stayed blank (user's GUI test). Same look (bold
+  ArrayIndexOutOfBoundsException in BoxView on mouse move and stayed blank (GUI test). Same look (bold
   values, amber warnings, grey notes, tab-aligned table); no HTML engine, no link handling. STAR regression: all
   exit codes 0, 24 classes preloaded.
   Main window redesigned (header with case / version / description, 4 columns Case, Before the run, After
   the run, Tools, one-line subtitle per button, status line; case-only tools greyed on a non-case sim) and
   tracker description editable (per case, saved in case_identity.txt; offline test: edit on v02 shown on v01,
-  1 case saved and read back). STAR regression SKT27: all exit codes 0, 19 classes preloaded.
+  1 case saved and read back). STAR regression: all exit codes 0, 19 classes preloaded.
   Calculator reorganised: a sidebar (Find box, groups, More for specialist pages) replaces the tabs, one
   calculation per page with a one-line "when to use"; last page remembered. New pages Inlet & outlet values
   (one of mass flow / velocity / volume / standard flow / total pressure / Mach in, all boundary values out,
   gauge to the reference pressure, isentropic for gases, choking limit) and Orifice / nozzle flow (mass flow,
   upstream pressure or hole diameter; choked or not; liquids). Removed: cell count estimate, the separate Mach
   form (now in Inlet & outlet), the duplicate Weber form. Self-check: inlet U 21.642 m/s and back from p0 to
-  0.05 kg/s; orifice 9.163e-4 kg/s (choked) and back to p0 = 5e5 Pa. STAR regression SKT28: all exit codes 0.
-  Fewer windows (user's GUI test: the result window popped up after every tool): the text window opens only
+  0.05 kg/s; orifice 9.163e-4 kg/s (choked) and back to p0 = 5e5 Pa. STAR regression: all exit codes 0.
+  Fewer windows (the result window opened after every tool): the text window opens only
   for Check, Compare versions, Ready to report?, About and on errors; other tools report on the status line
   (green done / amber cancelled or items skipped / red error) with a Details button; New case re-opens its form
-  when the description or folder is missing. STAR regression SKT29: all exit codes 0.
-  New case and New version merged into one button, Save as new (user: unclear which to use): not a case
+  when the description or folder is missing. STAR regression: all exit codes 0.
+  New case and New version merged into one button, Save as new: not a case
   yet -> creates the case (v01); a case -> one dialog, "Next version" selected (Enter, name pre-filled, file name
   shown) or "New case from this one", with a one-line hint for each. Toolbar: SimKit_SaveNewVersion.java
-  replaces SimKit_NewCase / SimKit_NewVersion. Batch action newversion unchanged. STAR regression SKT30: all
+  replaces SimKit_NewCase / SimKit_NewVersion. Batch action newversion unchanged. STAR regression: all
   exit codes 0 (newversion: ISO-001_v02 forked from v01, set-up changes listed).
   Main window groups renamed by what they work on: Case (+ Compare versions), Set-up, Results, Tools; "Always on
   top" renamed "Keep in front of other apps" (SimKit and Calculators).
-  Ready to report? removed (user: purpose unclear): button, toolbar macro, batch action ready, Case report
+  Ready to report? removed: button, toolbar macro, batch action ready, Case report
   section; the default batch action is now record + export (averaged results with drift_pct stay in Export
-  results). STAR regression SKT32: all exit codes 0.
+  results). STAR regression: all exit codes 0.
   Mesh study (replaces the Parametrize mesh button; toolbar SimKit_MeshStudy.java): Parametrize only, or Create
   mesh levels = one case per level (table: name, p_meshScale, size per parameter editable per level; ratio; mesh
   now or save without mesh), identity keys mesh_study / mesh_level / mesh_scale / mesh_cells / mesh_sizes_set;
-  GCI From cases pre-selects the study. STAR regression SKT33 with new step 07e (batch meshstudy: coarse 2 ->
+  GCI From cases pre-selects the study. STAR regression with new step 07e (batch meshstudy: coarse 2 ->
   ISO-002 3981 cells, medium 1 -> ISO-003 14655 cells, ISO-001 unchanged): all exit codes 0.
   Tracker: ID column (ISO-007.v03 = case + version) replaces case and version; "forked from" renamed "based on"
   and given as an ID (older file-name records converted on display); rows sorted by case and version; Hide... (a
   version or a whole case: hidden_vNN / hidden in case_identity.txt, files kept; a hidden case leaves case_list.csv),
   Show hidden (grey) and Show again; case_tracker.csv gets a hidden column. Offline test (3 versions, old-style
-  record, hide version, hide case, show again: case list 2 -> 1 -> 2 rows) passed; STAR regression SKT34: all 0.
+  record, hide version, hide case, show again: case list 2 -> 1 -> 2 rows) passed; STAR regression: all exit codes 0.
   Tracker window redrawn: cases as fold-able header rows (description once per case), versions underneath;
   columns ID (+ file name in grey) / status (coloured label, one click) / comment / based on (link) / saved; no Save
   button: each edit is written at once (one key of case_identity.txt, read just before writing); details box under
   the table (file, based on, mesh level, editable comment or description, Open case folder, Hide... / Show again);
   filter + status filter; reload when the window gets focus (no Refresh button); Change... folder; right-click menu.
-  Offline test (TrackerShot: render, table edits, details-box edit, fold, filter, hide) passed.
+  Offline test (render, table edits, details-box edit, fold, filter, hide) passed.
   Toolbar buttons: buttons/SimKit_InstallButtons.java writes the STAR-CCM+ favourite macros (StarSettings, keys
   MacroPlayFavoriteAction0..9 = macro ; icon ; tooltip) with icons from buttons/icons (16 x 16, coloured by group);
   only free and SimKit slots, own favourites kept; Remove. Runner steps 08b (install) / 08c (remove), the user's
-  settings.props backed up and restored around them, only the favourite lines logged. SKT36: all exit codes 0
+  settings.props backed up and restored around them, only the favourite lines logged. Batch run: all exit codes 0
   (10 buttons written to settings.props, then removed; the user's settings put back).
   Fix after the first GUI try (no button shown): the slots were written as tooltip ; macro ; icon, but STAR-CCM+
   reads macro ; icon ; tooltip (MacroPlayFavoriteAction.setSettings), so it found no macro file. Now: order
@@ -307,14 +307,14 @@ C. RESULTS SO FAR
   formatted there, in the table (first line + "+n lines", tooltip) and in the Case report. case_identity.txt keeps
   one line per key: multi-line values as ml:<lines joined by \n, backslash as \\>; one-line values unchanged (old
   comments with backslashes read as before). Every writer of case_identity.txt goes through identityText().
-  Offline test (CommentShot: encode round trips, typing with list continuation, bold toggle, save, read back,
+  Offline test (encode round trips, typing with list continuation, bold toggle, save, read back,
   CSV) passed.
   Tracker: Open in STAR-CCM+ (button, right-click, double-click on a version's ID) = new Simulation(path) in a
   background thread (SimulationManager: a file already open is not loaded twice). Runner step 11b (batch opensim):
   the open file is reported as already open, another version is loaded and closed again.
   Tracker: pin a case to the top (star; personal, kept in the SimKit preferences, key trackerPins = case folder
   paths), Open results folder, Copy reference (Ctrl+C / right-click: "ID  path" per selected row), Set status
-  on several versions (right-click; a case row = all its versions). Offline test (MoreShot) passed.
+  on several versions (right-click; a case row = all its versions). Offline test passed.
   Tracker: Open in STAR-CCM+... shows STAR-CCM+'s own Load Simulation dialog (star.coremodule.ui.OpenOptionsDialog,
   as File > Load: new OpenOptionsDialog(title, true, true), setSimFile(path), show(null)) with the file filled in,
   so processes / parallel / power session are STAR-CCM+'s own and remembered; direct load with default options
@@ -322,7 +322,7 @@ C. RESULTS SO FAR
   dialog and its calls are found.
   Tracker formatting: __underline__ (U, Ctrl+U) and text colour [red]text[/] (A button: red, orange, green, blue,
   purple, grey; only these names, so [m/s] stays as typed); the formatting bar is always shown (Done only while
-  writing). Offline test (FmtShot) passed; STAR regression SKT42 (Load dialog found) all 0.
+  writing). Offline test passed; STAR regression (Load dialog found): all exit codes 0.
   Tracker rework (trials marked in the window): details on the right of the table or below (Details on the right,
   remembered); details header = 2-line headline, blue Open in STAR-CCM+... and flat icons (results, case folder,
   copy, hide / show), status labels to click; comment box formatted while typing (JTextPane, marks in grey; Format
@@ -332,22 +332,22 @@ C. RESULTS SO FAR
   Open fixed: the first version loaded with new Simulation(path), which starts a server but makes no tab, and the
   second Open then said "already open". Now: open with its tab (SimulationProcessObject) -> setActive(true), its
   tab to the front; loaded without a tab -> that copy is closed, then STAR-CCM+'s Load dialog; otherwise the Load
-  dialog; no direct load in the window any more. Offline tests (UiShot both modes, earlier harnesses in the other
-  mode) passed. Bold was also read as italic (italic pattern matched inside **): fixed in the box, the view and
+  dialog; no direct load in the window. Offline tests in both modes passed. Bold was also read as italic (italic
+  pattern matched inside **): fixed in the box, the view and
   the one-line text.
-  Comment box like a word processor (user: the marks in grey were hard to read; both trials kept): the box shows
+  Comment box like a word processor (the marks in grey were hard to read): the box shows
   bold / italic / underline / colour and bullets with no marks; the file keeps the marks (one reader and one writer
   in Md: marks switch on and off, a mark only counts where it can open or close, so 2*3, a ** b, [m/s] stay text;
   spaces at the edge of a formatted piece are left out, italic inside a word takes the whole word, so it reads back
   the same; an unchanged box gives back exactly the text it showed). "- " at the start of a line makes a bullet;
   Ctrl+Z / Ctrl+Y; "No colour"; grey hint in an empty box. The trial switches and the earlier view-then-edit box
-  are gone; details always on the right. Offline RichShot (marks round trip, box typing, buttons, lists, template,
-  undo, saving) and TrackerShot passed.
+  are gone; details always on the right. Offline tests (marks round trip, box typing, buttons, lists, template,
+  undo, saving, tracker render) passed.
   Formatting bar redrawn as icons (B, serif italic I, U, A with a colour bar and a menu, one list button with a menu:
   bullets / numbered / no list, template page); box title "Comments" / "Description".
   Calculators: formulas written in a small LaTeX (class TeX: \frac, \sqrt, ^ _, \left \right, \dot, \text, Greek)
   and drawn as mathematics in the results (no library); the copied text and calc_log keep a plain form made from
-  the same formula. All 46 formulas drawn and checked on review sheets (FormulaSheet). Form: label without the
+  the same formula. All 46 formulas rendered offline and checked. Form: label without the
   bracket part, which is shown in grey inside the empty field (optional, empty: ...); units shown as kg/m3 with a
   raised 3, Pa.s with a middle dot; Compute in blue; a page with one form no longer repeats its title. Source kept
   ASCII (non-ASCII as \u escapes).
@@ -355,8 +355,8 @@ C. RESULTS SO FAR
   menu: Insert, Use this comment as my template (Java preference trackerTemplate, for this user), Back to the standard
   template; team template config/comment_template.txt if present. Compare versions removed (button, tool, the list of
   changes written by Save as new, its table in the case report); the set-up record is still written.
-  Offline RichShot passed.
-  Save as new (was Save as new): one window. A case: two cards, Next version (default, Enter; optional name in
+  Offline test passed.
+  Save as new: one window. A case: two cards, Next version (default, Enter; optional name in
   the file) and New case (description only; project and folder on one line with Change); the file to be created
   shown at the bottom. Not a case: "Start a case", description only. Errors in red in the window, nothing typed is
   lost. Configuration and label fields removed from a new case (configuration inherited from the case it is based on).
@@ -365,12 +365,12 @@ C. RESULTS SO FAR
   offered Start a case first. Per-level size editing dropped.
   Standard reports: one window, rows grouped by purpose with the surfaces (double-click to choose others) or the
   reason in grey; list in config/standard_reports.csv (types by plain name); new: r_mdot_imbalance_pct, r_p0_in_avg,
-  r_dp_static (expression reports), r_T_wall_max. Offline window pictures (DialogShot) checked.
-  Check removed (user: not enough value): the tool, its button (buttons/SimKit_Check.java and icon), batch actions
+  r_dp_static (expression reports), r_T_wall_max. Window rendered offline and checked.
+  Check removed: the tool, its button (buttons/SimKit_Check.java and icon), batch actions
   check / precheck, the case report section, config/naming_rules.csv and the object inventory it used. Test runners:
   step 03 removed; the button test (08) now plays buttons/SimKit_ExportResults.java. The installer clears the old
   Check slot with the other SimKit slots when it is played again.
-  Studies and runs (step 1 of 3, user: cases/versions did not fit; LSF round trip renames files): Save run starts a study
+  Studies and runs (step 1 of 3; the LSF round trip renames files): Save run starts a study
   (folder named by the user: sims/, results/, record/, simkit_study.txt) with the open sim as R001, then each Save run =
   next run R<nnn>[_name].sim, based on the open run at its iteration. Inside the sim: p_simkit_run, p_simkit_from,
   p_simkit_from_iteration; auto-save separator set to "_iter_" (STAR-CCM+ AutoSave.setSeparator); a label
@@ -388,14 +388,14 @@ C. RESULTS SO FAR
   study). Mesh study in a study: one run per level based on the starting run (record: mesh_study, mesh_level,
   mesh_scale, mesh_cells). Calculators: a study is the folder for calc_log (record/), GCI From cases reads the runs'
   record/key_results_R*.csv. Batch 11c extended: returned copy in job_12345_host_07/, comment via the tracker,
-  coarse + medium runs, study rows and case_tracker.csv. Offline StudyShot (tracker on a study, filter R004) passed.
+  coarse + medium runs, study rows and case_tracker.csv. Offline test (tracker on a study, filter R004) passed.
   Family tree (tracker, top right): separate window, generations left to right, cards with status band and chip,
   name, start of the comment, open run marked; curved links; click = select in the tracker, double-click = open.
-  Offline StudyShot tree picture checked (8 runs, branches).
-  Run names (user: make the free text more important than the R number): required in Save run, bold 15 pt field
+  Tree rendered offline and checked (8 runs, branches).
+  Run names: required in Save run, bold 15 pt field
   first; up to 40 letters, digits, _ and - (spaces -> _; not _iter_); tracker ID column "R007  **name**  it 5000",
   family tree card: R007 tag + bold name; SimKit window title: name, then R007 and iteration in grey.
-  Dry text (user): window titles only "SimKit" in the title bar; Save run = family tree preview (RunTree, shared with
+  Window texts: window titles only "SimKit" in the title bar; Save run = family tree preview (RunTree, shared with
   the tracker; the new run as a dashed blue card under the open run, its name as typed) + Name + Comment + file name
   checked as typed (red if not allowed); New study = Study, Description, Folder, First run; shorter texts in Run on
   cluster, Standard reports, Mesh study, the SimKit window (button lines, tooltips, status "Ready") and Calculators.
@@ -404,28 +404,28 @@ C. RESULTS SO FAR
   Family tree tooltip: the comment formatted (Md.toHtml).
   Tracker on a study: stars on the runs (click, Space, right-click > Star), starred runs first; no star on the
   study row (fold arrow only). Case folders keep the star on the case row.
-  One folder per run (user): <study>/[<group>/]R<nnn>_<name>/ with R<nnn>_<name>.sim, run.txt, submit/ (scripts, log,
+  One folder per run: <study>/[<group>/]R<nnn>_<name>/ with R<nnn>_<name>.sim, run.txt, submit/ (scripts, log,
   submissions.csv) and the returned job folders; Save run has a Group field (existing groups, or a new name);
   mesh levels go to group mesh_study_R<nnn>. Runs found anywhere below the study (run.txt); first studies (sims/,
-  record/R<nnn>.txt) still read. Removed (user: not mature): Export results, Case report, the results folder,
+  record/R<nnn>.txt) still read. Removed: Export results, Case report, the results folder,
   the run label at export, GCI From cases, batch actions export / casereport / default; test steps 05, 06, 10;
   the button test (08) plays SimKit_CaseTracker.java. Calculators: calc_log.csv at the study root. Guideline
   rewritten for studies and runs.
   Status diverged (red chip; filter Diverged). Tidy (tracker, studies): runs with their files (path from the run
   folder, iteration, size, date); older snapshots ticked; tick files or whole runs by hand; confirmation; recycle bin
-  if available (Desktop.moveToTrash), else deleted; emptied job folders removed; open file never deleted. Offline
-  TidyShot checked. Fix: a run's record read from its run folder (new study from a run said based on null).
-  Family tree (window and Save run preview): click and drag moves the view (offline PanTest: 200 px drag -> 200 px).
-  Save run: Group field removed (user: misplaced); a new run's folder goes next to the run it comes from.
+  if available (Desktop.moveToTrash), else deleted; emptied job folders removed; open file never deleted. Rendered
+  offline and checked. Fix: a run's record read from its run folder (new study from a run said based on null).
+  Family tree (window and Save run preview): click and drag moves the view (offline: 200 px drag -> 200 px).
+  Save run: Group field removed; a new run's folder goes next to the run it comes from.
   Save run: "in <study>/<folder>" line with a folder icon (chooser opens in the study; outside the study refused;
   a run folder chosen -> next to it); default: next to the run it comes from.
   "Study" renamed "Project" everywhere the user reads it; marker file simkit_project.txt (simkit_study.txt still
   read); New project window: "Run name (R001)" instead of "First run".
-  "Save run" renamed "Save as new run..." (user: a run is also a calculation; this is a Save As); window button "Save".
+  "Save run" renamed "Save as new run..."; window button "Save".
   Tracking parameters in the folder "SimKit run tracking" (GlobalParameterManager groups; findParam also looks in
   folders). Standard reports: reports and monitors in one folder per purpose, plots in "Standard reports"; window in
   two panes: list on the left, the selected report's surfaces on the right (checkboxes by region with type tags,
-  search, Default / All / None, count; blue dot = changed). Offline DialogShot checked.
+  search, Default / All / None, count; blue dot = changed). Rendered offline and checked.
   Calculators redesign: each page Inputs | Outputs; outputs recomputed 0.3 s after each change (no Compute
   button); calc_log row 2.5 s after the last change (first values at opening not logged); main output in large type
   with Copy; formula, source, validity under "Formula and source" (remembered). Pages removed: y+ correction,
@@ -436,59 +436,59 @@ C. RESULTS SO FAR
   selected number only), Pipe pressure drop (Darcy-Weisbach, Colebrook / Haaland, minor losses). Stoichiometry:
   Z, Z_st, phi from the mass flows, phi or Z; empty atom count = 0; Turns AFR and heat release removed. Time step:
   frequency and cycles removed (averaging time is an input). Output names without formulas. Offline: self-check
-  values unchanged, pipe f = 0.02089 at Re 5e4 (Colebrook), Re 66666.7; LiveTest (typing recomputes, error line,
-  fluid switch refills the properties); CalcShot2 renders checked.
+  values unchanged, pipe f = 0.02089 at Re 5e4 (Colebrook), Re 66666.7; typing recomputes, error line shown,
+  fluid switch refills the properties; pages rendered offline and checked.
   Tracker: List | Tree switch in the top bar (family tree inside the window, choice remembered per user); the Family
-  tree button removed. STAR regression SKT69 (21.04.009): all 15 exit codes 0, no exception; calculator self-check in
+  tree button removed. STAR regression (21.04.009): all 15 exit codes 0, no exception; calculator self-check in
   STAR identical to offline, 50 classes preloaded.
-  Removed (user): Tidy (tracker); About and Guideline buttons (main window, Tools: Calculators only);
+  Removed: Tidy (tracker); About and Guideline buttons (main window, Tools: Calculators only);
   config/links.csv deleted. Earlier notes on these features no longer apply.
   Standard reports: surfaces of the right pane grouped by name prefix (IN, OUT, OPEN, WALL, SYM, IF, other), one
   tick box per group (ticks the whole group) with a count; region shown next to a surface when there are several
-  regions. Offline DialogShot checked.
-  STAR regression SKT71 (21.04.009, with the removals and the surface groups): all 15 exit codes 0, no exception.
+  regions. Rendered offline and checked.
+  STAR regression (21.04.009, with the removals and the surface groups): all 15 exit codes 0, no exception.
   Save as new run (window only): open file with unsaved changes (Simulation.isModified) -> warning "Unsaved
   changes": changes saved in the new run only, the open file keeps its last saved state; Cancel stops. Not
   reached in batch (batch saves without asking); compiled against 21.04.009; offline render checked.
-  Tracker hide redesigned (user: broken in the tree, no way back, the whole-project question useless): Hide / Unhide
+  Tracker hide redesigned (hiding failed in the tree and could not be undone): Hide / Unhide
   button with text; no question; Undo in the message line; a project is never hidden as a whole (only its runs; a
   project hidden by an earlier SimKit is shown again by Unhide); "Hidden (n)" toggle in the top bar (only when
   something is hidden) shows hidden runs faded in the list and the tree; in the tree a run whose parent is hidden
-  is linked to the nearest shown run (dashed); right-click menu in the tree. Offline HideTest: 9 checks ok.
+  is linked to the nearest shown run (dashed); right-click menu in the tree. Offline: 9 checks ok.
   Standard reports fix: a tick in the right pane no longer clears the selected report (row updated only);
-  offline ReportsTickTest ok. STAR regression SKT72: all 15 exit codes 0, no exception.
-  Case model removed and file safety on the share (2026-11-14, from the independent review, items R1 and R4).
-  R1: the SimKit 0.2 case model is gone from SimKit.java (about 900 lines): <CASEID>/sim/<CASEID>_vNN.sim files,
+  offline test ok. STAR regression: all 15 exit codes 0, no exception.
+  Case model removed and file safety on the share (2026-11-14).
+  Case model: the SimKit 0.2 case model is gone from SimKit.java (about 900 lines): <CASEID>/sim/<CASEID>_vNN.sim files,
   case_identity.txt, case_list.csv, New case / New version, the old Save window, the set-up record and case card
   (batch action record), the case-folder branches of the tracker and of Mesh study, config/projects.csv. The tracker
   opens projects only (a folder that is not a project: message, nothing shown). Batch action newversion replaced by
   saverun (Save as new run in batch). Test runners: the test sim is R001 of a project; steps 04 (record) and the
-  set-up record listing removed. R4: (1) run.txt and simkit_project.txt are written to a temporary file and renamed
+  set-up record listing removed. File safety: (1) run.txt and simkit_project.txt are written to a temporary file and renamed
   over the old one (a reader never sees half a file; on Windows the rename is retried for 2 s while another user
   reads the file, then written directly); (2) a run number is taken with an exclusive create of
   .simkit/run_numbers/R<nnn>.txt, and the run folder is created new (an existing folder is not reused): two users
   saving at the same moment get two numbers; (3) one scan depth (6) for run.txt, .sim and the project above a file;
   (4) one walk of the project per 10 s (run.txt and .sim together), cleared by every SimKit write, instead of 2 + 1
-  per run on every tracker focus. Offline: R4Test (16 threads take 16 different numbers; a reader during 40
-  rewrites never sees a partial file; no temporary file left; cache and depth) ALL OK; HideTest 9/9 ok;
-  ReportsTickTest ok. STAR regression SKT73: all 14 exit codes 0, no exception (saverun: R004; mesh study:
+  per run on every tracker focus. Offline: file-safety test (16 threads take 16 different numbers; a reader during 40
+  rewrites never sees a partial file; no temporary file left; cache and depth) ALL OK; hide test 9/9 ok;
+  report tick test ok. STAR regression: all 14 exit codes 0, no exception (saverun: R004; mesh study:
   R002, R003; tracker 4 runs; open sim loads R002 and closes it).
-  Review decisions (2026-11-14). Removed: Standard scenes (tool, button, batch action scenes), templates/ISO (ISO
-  template docx and tools), Google/SimKit_Case_List_ISO.xlsx. Kept: the rich-text comment editor; the tracker window
+  Changes (2026-11-14). Removed: Standard scenes (tool, button, batch action scenes), templates/ISO (ISO
+  template docx and tools), Google/SimKit_Case_List_ISO.xlsx. Unchanged: the rich-text comment editor; the tracker window
   title "Case tracker - cases in ..." and the menu items "Open case folder", "Unfold all cases", "Fold all cases".
   Run on cluster: Linux only (on Windows: message, nothing done); submit scripts in the run folder's submit/ also for
   a returned copy; a pre-submit check (volume mesh, stopping criteria, auto-save, r_* reports, names, run number) is
   shown in its window and logged, never blocking. Calculators: calc_log.csv written on "Log this" (one row per click,
   same values twice = one row) instead of 2.5 s after each change. Trials, to keep or remove after use: Names (tool
-  NAMES: boundaries / part surfaces without a type prefix, prefix vs boundary type, default names; proposals from the
+  NAMES: boundaries / part surfaces without a type prefix, prefix vs boundary type, default names; proposed names from the
   boundary type; type buttons; Apply renames ticked rows only; config/naming.csv also drives bcToken of Standard
   reports) and Standard reports criterion / mean / update (columns criterion and mean of standard_reports.csv:
   MonitorIterationStoppingCriterion asymptotic / min / max, created off unless "on"; StatisticsReport Mean over
   LastNSamples; an existing standard report with new surfaces of its prefixes is offered as "update"). Structure:
   tools are an enum (Tool: SAVE, CLUSTER, TRACKER, NAMES, REPORTS, MESH, CALC); buttons pass the name (old numbers
   still accepted); SimKit.java ordered by tool (reorder script: every member placed once, member text unchanged).
-  Offline: R4Test ALL OK, HideTest 9/9, ReportsTickTest ok, menu and calculator renders checked. STAR regression
-  SKT74: all 14 exit codes 0, no exception; 07f names: 13 rows, 1 default name (Maximum 1); 07g pre-submit: 4 ok,
+  Offline: file-safety, hide (9/9) and report tick tests ok; menu and calculator renders checked. STAR regression:
+  all 14 exit codes 0, no exception; 07f names: 13 rows, 1 default name (Maximum 1); 07g pre-submit: 4 ok,
   3 to look at (auto-save off, 1 default name, no run number in the test sim); 07a: 2 stopping criteria (off) and
   2 mean reports created; 07b adds nothing. Not run: Names window and Apply in the GUI, the update of a report after
   new surfaces, Run on cluster on Linux.
@@ -497,15 +497,15 @@ C. RESULTS SO FAR
   "Issues only"; prefix buttons set the prefix on the ticked rows (none ticked: the selected rows); "Tick all
   proposed"; Rename n objects = ticked rows with a new name. A tick stays on whether or not the row has a new name
   (first version: a tick without a new name switched itself off). Text shortened (issues / total, "Filter by name",
-  "Issues only"). Offline: NamesTickTest (mouse clicks on row and heading ticks, prefix on ticked rows, fold) ALL OK;
-  renders of a 120-object model checked. STAR regression SKT76: all 14 exit codes 0, no exception.
+  "Issues only"). Offline: Names tick test (mouse clicks on row and heading ticks, prefix on ticked rows, fold) ALL OK;
+  a 120-object model rendered offline and checked. STAR regression: all 14 exit codes 0, no exception.
   Names: Rename keeps the window open (2026-11-14). The renames run in a worker thread, the rows are read again, the
   outcome is shown under the table; Close ends the window (Ui.sheet: a main button with client property simkit.stay
-  acts without closing). NamesTickTest extended (Rename: window open, renamed rows gone, outcome shown) ALL OK.
-  STAR regression SKT77: all 14 exit codes 0, no exception.
-  Naming, simple proposal items 1-4 (2026-11-14; review/SimKit_naming_simple.md). One rule: the TYPE prefix on
+  acts without closing). Names tick test extended (Rename: window open, renamed rows gone, outcome shown) ALL OK.
+  STAR regression: all 14 exit codes 0, no exception.
+  Naming (2026-11-14). One rule: the TYPE prefix on
   boundaries and part surfaces, no default names; the rest is read from STAR-CCM+. (1) A prefix that does not match
-  the boundary type gets no rename proposal; Names offers "Set type on n boundaries" (type chosen per prefix from
+  the boundary type gets no proposed name; Names offers "Set type on n boundaries" (type chosen per prefix from
   config/naming.csv; Boundary.setBoundaryType; the values are reset, stated in the confirmation). (2) IF_ is ok when the
   boundary is in an interface (Boundary.getDependentInterfaces), else "not in an interface"; the boundaries STAR-CCM+
   makes for an interface (InterfaceBoundary, type ContactBoundary, "IF_face5 [IF_test 1]") are left out everywhere.
@@ -514,33 +514,33 @@ C. RESULTS SO FAR
   statistics reports excluded), standard reports missing new surfaces, flow boundaries not in r_mdot_net, IF_ in no
   interface, regions without a physics continuum; warnings listed first. Batch test 07h chttest: on the test sim, in
   memory (not saved), a solid region with a solid continuum, an interface F_air/IF_face5 - S_plate/IF_plate, IF_lone
-  in no interface, WALL_face2 renamed IN_face2. SKT78 found: interface boundaries listed, expression reports flagged,
-  test region not solid (it took the fluid continuum); fixed. STAR regression SKT80: all 15 exit codes 0, no
-  exception; 07h: region type SolidRegion; interface boundaries left out; IF_lone flagged; IN_face2 no proposal,
-  Set type -> MassFlowBoundary; IF defaults F_air/IF_face5 only; pre-submit lines as expected. Offline: NamesTickTest
-  ALL OK, ReportsTickTest ok, Names render with Set type checked. Not run: the Set type dialog in the GUI.
+  in no interface, WALL_face2 renamed IN_face2. A first run found: interface boundaries listed, expression reports flagged,
+  test region not solid (it took the fluid continuum); fixed. STAR regression: all 15 exit codes 0, no
+  exception; 07h: region type SolidRegion; interface boundaries left out; IF_lone flagged; IN_face2 no proposed name,
+  Set type -> MassFlowBoundary; IF defaults F_air/IF_face5 only; pre-submit lines as expected. Offline: Names tick test
+  ALL OK, report tick test ok, Names window with Set type rendered and checked. Not run: the Set type dialog in the GUI.
   Not yet run: section B (GUI: Save as new, Case tracker, Calculators copy), release 2402, Linux.
 
   Calculators: Materials removed (2026-11-14). The Materials page is removed, with the MatML reader
   (config/material_folders.csv, tests/matml_samples) and the solid and emissivity tables (data/materials.csv,
-  data/emissivity.csv). The other pages keep their fluid list (data/fluids.csv). Older MatML notes above: history.
+  data/emissivity.csv). The other pages keep their fluid list (data/fluids.csv). The MatML notes above no longer apply.
 
-  3D-CAD faces (2026-11-14; naming automation items 1, 2 and 5). Names > 3D-CAD faces...: one row per 3D-CAD body;
+  3D-CAD faces (2026-11-14). Names > 3D-CAD faces...: one row per 3D-CAD body;
   Name from body (unnamed faces -> TYPE_assembly_body), Set rest name (Body.setUnNamedFacesDefaultAttributeName:
   TYPE_assembly_body_rest), check (unnamed without rest name, names without prefix), warning for a Unite feature with
-  Transfer face names off. Batch actions cadnames (log) and cadtest (test step 07i). SKT82: all 16 exit codes 0, no
+  Transfer face names off. Batch actions cadnames (log) and cadtest (test step 07i). Batch run: all 16 exit codes 0, no
   exception. 07i: 3D-CAD model built in memory (3 blocks), face names set without the 3D-CAD edit mode; Name from body
   10 faces, hand names IN_fuel / swirl kept, swirl flagged; rest name read back; Unite: Transfer face names on by
   default; the touching blocks merge coplanar faces (one name each); with the flag off the warning shows; geometry part
   surfaces = the face names (WALL_burner_draft-tube, swirl, WALL_burner_electrode-1_rest). Offline: window rendered,
-  NamesTickTest ALL OK. Not run: the window in the STAR-CCM+ GUI, a real CAD import.
+  Names tick test ALL OK. Not run: the window in the STAR-CCM+ GUI, a real CAD import.
 
   Reports per object (2026-11-14). Standard reports > Reports per object...: quantities x statistics x objects
   (boundaries, regions), one report each or one over all ticked objects, names r_<q>_<s>_<o> from
   config/report_names.csv, a monitor each, plots per quantity and statistic / per object / none, folders "Per object";
   rows new / exists (name in use, or same class + field + objects) / rename (reports of the six statistics on one
   object, standard reports left; ${old} in expressions and "<old> Monitor" follow). Batch action objtest (step 07j).
-  SKT84: all 17 exit codes 0. 07j: 15 reports + monitors + 6 plots (T, p x max, aavg, vavg x 3 WALL_ + region;
+  Batch run: all 17 exit codes 0. 07j: 15 reports + monitors + 6 plots (T, p x max, aavg, vavg x 3 WALL_ + region;
   8 n/a skipped); the same plan again: 0 to create; one report over the walls: r_T_max_walls found as the same report
   as r_T_wall_max, r_p_max_walls created; renames Maximum 1 / Minimum 1 / r_T_out_avg to the rule, ${Minimum 1} in an
   expression and "Minimum 1 Monitor" followed; ${r_test_dash-name} + 0 = 3 (a name with '-' works in expressions).
@@ -555,17 +555,17 @@ C. RESULTS SO FAR
   rename to the rule moved here) / Standard (status per report: present, add, update, or why not; no more "Nothing
   to add" dead end) / Per object (chips: quantities, statistics, report on each object or all together, object
   groups; result list). One blue button acting on the open tab; the window stays open. Batch path of Standard
-  reports unchanged (stdPlan + stdApply). SKT86: exit codes 0 (08b/08c skipped: STAR-CCM+ window open); 07j: window
-  data read (40 reports, Standard 15 present, 40 rows). Offline: the three tabs rendered (RepShot). Not run: GUI.
+  reports unchanged (stdPlan + stdApply). Batch run: exit codes 0 (08b/08c skipped: STAR-CCM+ window open); 07j: window
+  data read (40 reports, Standard 15 present, 40 rows). Offline: the three tabs rendered. Not run: GUI.
 
-  Reports window after a UI review (2026-11-14). Tabs Standard / Per object / In this simulation (opens on Standard);
+  Reports window, second version (2026-11-14). Tabs Standard / Per object / In this simulation (opens on Standard);
   flat tables (left header, row lines, pale blue selection, rows sized from the font, empty-state text); status pills
   Present / Create / Update / New; "No surfaces selected" turns a report off (back on when a surface is selected);
   right pane: formula text, or the surfaces; Per object: one report per object / for all selected objects as radio
   buttons under the objects, step 4 "Reports to create" with Status and Plot columns; In this simulation: real
   checkboxes, "Can be renamed (n)" filter, Select all / Clear; outcome next to the buttons, cleared on change; tabs
   and button off while working; Space toggles; Esc clears a search field, else closes; Close drawn flat (all SimKit
-  windows). SKT87: exit codes 0 (08b/08c skipped: STAR-CCM+ window open). Offline: three tabs rendered (RepShot).
+  windows). Batch run: exit codes 0 (08b/08c skipped: STAR-CCM+ window open). Offline: three tabs rendered.
   Not run: the window in the STAR-CCM+ GUI.
   Per object: "Add field..." (added a chip per field, the window could grow without limit) replaced by "Other field"
   (None, or one scalar field; a new choice replaces the previous one). Offline: rendered, Density adds its reports.
@@ -576,66 +576,66 @@ C. RESULTS SO FAR
   required for one report over all selected objects (no more r_..._group). Offline: rendered. Not run: GUI.
   Reports: the plots it creates are collapsed in the simulation tree (STAR-CCM+ shows a new plot node open). No API
   for the tree: the window's Swing trees (JTree, NetBeans Outline) are searched 0.3 / 1 / 2.5 s after the creation and
-  the nodes with the plot names are collapsed; GUI only, never fails the tool. Offline: CollapseTest (JTree) ok.
+  the nodes with the plot names are collapsed; GUI only, never fails the tool. Offline (JTree): ok.
   Not run: in the STAR-CCM+ window (which tree component it uses is not known).
-  Reports: the new plots show closed in the tree (confirmed by the user in the STAR-CCM+ window, 2026-11-14).
+  Reports: the new plots show closed in the tree (confirmed in the STAR-CCM+ GUI, 2026-11-14).
   Mesh study: parameters in Parameters > Mesh study (p_meshScale) and Mesh study > Mesh sizes (p_mesh_*); also applied
-  when a parametrized sim is parametrized again (parameters already in another folder stay there). SKT88: exit codes 0
+  when a parametrized sim is parametrized again (parameters already in another folder stay there). Batch run: exit codes 0
   (08b/08c skipped: STAR-CCM+ window open); 07c: Mesh study 2 objects, Mesh sizes 1 (p_mesh_MO30autoMesh_baseSize).
   Not run: the tree view in the GUI.
-  Mesh study window after a UI review (2026-11-14): Levels table (Level, Size factor, Base size, Cells (est.) = current
+  Mesh study window, second version (2026-11-14): Levels table (Level, Size factor, Base size, Cells (est.) = current
   count x (current factor / factor)^3, Saved as), Refinement ratio + "Current mesh is the coarsest / middle / finest
   level" set the factors, levels saved coarse to fine; amber note (p_meshScale not 1, sizes set by an expression,
   ratio below 1.3, fewer than 3 levels); Mesh sizes table with every size and its status (Link / Linked / Not scaled /
   Relative to base size / Expression); prism rows unticked (no master checkbox); same-factor check; "Parametrize sizes
   only" bottom left; own links no longer reported as foreign expressions. New: mesh_study_R00n/mesh_study.csv (level,
   run, size_factor, base_size, cells, phi; fine first, for the GCI calculator). Batch levels: coarse 1.41 and medium 1.
-  SKT89: exit codes 0 (08b/08c skipped: STAR-CCM+ window open); mesh_study.csv: medium R003 14655 cells, coarse R002
-  7962 cells. Offline: window rendered (MeshShot). Not run: the window in the STAR-CCM+ GUI. Not done (reviewer
-  options): keep the solution as starting field (needs a check of the solution mapping), GCI from a finished study.
-  Mesh study fix (user report: after Remove / Add the levels were level3, level4 and no level had factor 1): "Current
+  Batch run: exit codes 0 (08b/08c skipped: STAR-CCM+ window open); mesh_study.csv: medium R003 14655 cells, coarse R002
+  7962 cells. Offline: window rendered. Not run: the window in the STAR-CCM+ GUI. Not done: keep the solution
+  as starting field (needs a check of the solution mapping), GCI from a finished study.
+  Mesh study fix (after Remove / Add the levels were level3, level4 and no level had factor 1): "Current
   mesh is the <level> level" lists the level names; factors set again from the ratio after Add / Remove; names by
-  position unless typed; ratio <= 1: amber note, factors unchanged. Offline: the user's sequence rendered (MeshShot).
-  Mesh study levels as a ladder (user idea, design by a Fable 5.2 review): one table coarse to fine with a rail column;
+  position unless typed; ratio <= 1: amber note, factors unchanged. Offline: the Remove / Add sequence rendered.
+  Mesh study levels as a ladder: one table coarse to fine with a rail column;
   the open run is the reference (solid node, Current pill, factor 1), counted as a level and not saved again; the
   other levels (hollow nodes) are new runs. "Current mesh is the ... level" removed. + Add coarser / + Add finer level
   (one ratio step beyond the outermost), Remove level / Delete (not the open run), a typed factor re-sorts the row,
   names by position unless typed, ratio sets all factors. Button "Create n runs". The open run: listed in
   mesh_study.csv with its run id and cell count, its run.txt gets mesh_study / mesh_level / mesh_scale / mesh_cells
-  (the .sim is not touched). Batch: coarse 1.41 (07e) / 2.0 (11c) + the open run as medium. SKT90: exit codes 0
+  (the .sim is not touched). Batch: coarse 1.41 (07e) / 2.0 (11c) + the open run as medium. Batch run: exit codes 0
   (08b/08c skipped: STAR-CCM+ window open); 07e: "2 level(s), 1 new run(s)", mesh_study.csv medium R001 18090 cells,
-  coarse R002 7962 cells; R001 run.txt mesh_level=medium. Offline: ladder rendered (MeshShot). Not run: GUI.
-  Mesh study fix (user screenshot: the p_meshScale note overlapped the links and was cut): the note is gone; when
+  coarse R002 7962 cells; R001 run.txt mesh_level=medium. Offline: ladder rendered. Not run: GUI.
+  Mesh study fix (the p_meshScale note overlapped the links and was cut off): the note is gone; when
   p_meshScale is not 1 the ladder shows a p_meshScale column (value of each level); "above 1 coarser, below 1 finer"
   moved into the line above the table. Offline: rendered with p_meshScale 0.5.
 
-  2026-11-15. Linux fixes confirmed by the user on the team's Linux machine: java.lang.ProcessHandle (STAR-CCM+ there has
+  2026-11-15. Linux fixes, confirmed on Linux: java.lang.ProcessHandle (STAR-CCM+ there has
   star.base.neo.ProcessHandle: "reference is ambiguous"), Tracker without any pinned run (trackerPins null).
-  Run on cluster: the team's launcher from the user's working example: bsub.starccmp --input={file} --cpus={ncpus}
+  Run on cluster: site launcher bsub.starccmp --input={file} --cpus={ncpus}
   --queue={queue} --version={version} --fairshare_group={fairshare} --project={project}; queues mc_all_ser / mc_all_par;
   version = release of the STAR-CCM+ that runs SimKit (ReleaseNumber 21.04.009 -> 2606; 18.06 -> 2310); fairshare
   ug_st_std, project OTHER_ESA in config/cluster.csv. More options: --mem (MB, default 1000), --estimated_runtime (h,
-  default 360) only when changed, --jobname, --result_dir, --send_completed_notification. SKT91: exit codes 0;
+  default 360) only when changed, --jobname, --result_dir, --send_completed_notification. Batch run: exit codes 0;
   11c: "bsub.starccmp --input=R002_finer.sim --cpus=4 --queue=mc_all_par --version=2606 --fairshare_group=ug_st_std
-  --project=OTHER_ESA". Offline (OptTest): options added as expected. Not run: a submission on the cluster with
+  --project=OTHER_ESA". Offline: options added as expected. Not run: a submission on the cluster with
   SimKit, the window on Linux.
-  Run on cluster window after a Fable 5.2 review (user: works on the cluster, window below the GUI standard): window in
-  submitWindow (static, rendered offline: SubmitShot); sections Job / Command / Pre-submit check; CPUs with live queue
+  Run on cluster window, second version (submission on the cluster works): window in
+  submitWindow (static, rendered offline); sections Job / Command / Pre-submit check; CPUs with live queue
   and red validation, Up/Down; last submission line (submissions.csv + run.txt last_job); More options folded with a
   summary of non-default options, remembered open/closed; command in a selectable monospace area with Copy (Copied for
   1.5 s); team settings line, red and blocking when project, command or release is missing; checks in a table (Warning /
   Not read pills, names in the tooltip, 5 rows visible); "Save and submit"; Esc closes (the form fields are not cleared).
   After the terminal starts, the launcher's log is read for 90 s: "Job <n> is submitted to queue <q>" -> status line +
   run.txt last_job; "Job not submitted" / "Request aborted" / "command not found" -> red status line. Pre-submit texts:
-  sentence case, plurals, "Fix in Names.", "na" state. SKT92: exit codes 0 (08b/08c skipped: STAR-CCM+ window open);
+  sentence case, plurals, "Fix in Names.", "na" state. Batch run: exit codes 0 (08b/08c skipped: STAR-CCM+ window open);
   07g pre-submit lines with the new texts; 11c command unchanged. Not run: the window and the job number on Linux.
-  Run on cluster, suggested CPUs (Fable 5.2 spec; nodes are shared, so no node count): toolSubmit reads fluid and solid
+  Run on cluster, suggested CPUs (nodes are shared, so no node count): toolSubmit reads fluid and solid
   cells (cellSplit, temporary ElementCountReport, solid = SolidRegion) and the CPUs of the run's last submission.
   Suggested = (fluid + solid_cell_weight x solid) / cells_per_cpu: below 1.5 -> 1, below 16 -> nearest whole number (min 2),
   else nearest multiple of cpu_step; capped by cpus_max ("(team limit)"). Link "Suggested: n" (Alt+S) next to the field
   fills it, disabled when equal; tooltip: cell counts and cells per CPU. State line amber when cells per CPU <
   cells_per_cpu_min (2 CPUs or more) or above cpus_max; never blocks. Field starts at the last submission's CPUs, else
   the suggestion, else the user's last value. config/cluster.csv: cells_per_cpu 50000, solid_cell_weight 0.3,
-  cells_per_cpu_min 20000, cpu_step 8, cpus_max empty (team estimates; tune from own scaling runs). Offline (SubmitShot,
+  cells_per_cpu_min 20000, cpu_step 8, cpus_max empty (estimates, to be tuned from scaling runs). Offline (rendered,
   9.8 M fluid + 2.6 M solid): Suggested 208; 640 CPUs -> "16 500 cells per CPU, poor scaling below 20 000" in amber.
   Not run: cellSplit in STAR-CCM+ (Linux GUI only), the window on Linux.

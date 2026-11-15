@@ -1,19 +1,19 @@
 #!/bin/bash
 # =====================================================================================================
-# SimKit - automated batch validation on a licensed STAR-CCM+ installation, LINUX (RHEL 7 / RHEL 9).
-# Same steps and same PASTE_THIS.txt as tests/Run-SimKitTests.ps1 (Windows 10/11):
-#   00 version | 01 build test sim (tests/BuildSimKitTestSim.java) | 02 SimKitCalc self-check |
-#   07 reports, mesh, mesh study | 08 buttons | optional 09 short solver run | 10-11 runs, tracker.
-# Needs only bash >= 4.2, GNU coreutils/grep/sed/awk, tar (all standard on RHEL 7 and 9).
+# SimKit batch validation on a licensed STAR-CCM+ installation, Linux (RHEL 7 and RHEL 9).
+# Runs the same steps and writes the same PASTE_THIS.txt as tests/Run-SimKitTests.ps1 on Windows:
+#   00 version, 01 test sim build (tests/BuildSimKitTestSim.java), 02 SimKitCalc self-check,
+#   07 SimKit tools, 08 toolbar buttons, 09 short solver run (optional), 10-11 save as new run and tracker.
+# Needs bash 4.2 or later, GNU coreutils, grep, sed, awk and tar, all standard on RHEL 7 and 9.
 #
 # Usage:
 #   bash run-simkit-tests.sh --star /opt/Siemens/21.04.009 [--license 1999@licserver | /path/license.dat]
 #        [--sim /path/real.sim] [--test-root ~/SimKitTest] [--np 1] [--star-args "-power -podkey XXX"]
 #        [--run-solver] [--interactive] [--kit-source /path/_SIMKIT]
-#   --star     launcher (.../star/bin/starccm+) OR an installation root searched for star/bin/starccm+
+#   --star     launcher (.../star/bin/starccm+) or an installation root that contains star/bin/starccm+
 #   --license  sets CDLMD_LICENSE_FILE for the STAR-CCM+ processes of this script only. The licence file is
 #              never read or printed; its location is masked as <licence> in PASTE_THIS.txt and the archive.
-# Output: <test-root>/results/PASTE_THIS.txt (paste it into the chat) + <test-root>/simkit_test_results_<ts>.tar.gz
+# Output: <test-root>/results/PASTE_THIS.txt and <test-root>/simkit_test_results_<timestamp>.tar.gz
 # =====================================================================================================
 set -u
 STAR=""; SIM=""; LICENSE=""; STAR_ARGS=""; TEST_ROOT="$HOME/SimKitTest"; NP=1
@@ -63,7 +63,7 @@ mkdir -p "$RESULTS" || die "cannot create $RESULTS"
 
 log() { echo "$*"; echo "$*" >> "$RESULTS/script.log"; }
 
-# runs the launcher with SIMKIT_ACTION=$2; remaining args are passed as they are; rc in RC
+# invoke_star <name> <action> <args...> runs the launcher with SIMKIT_ACTION=<action> and sets RC to its exit code.
 invoke_star() {
   local name="$1" action="$2"; shift 2
   local lg="$RESULTS/$name.log" t0 t1
@@ -91,7 +91,7 @@ export SIMKIT_GUI=""
 "$LAUNCHER" -version > "$RESULTS/00_version.log" 2>&1
 log "star version  : $(grep -m1 -E '[0-9]+\.[0-9]+\.[0-9]+' "$RESULTS/00_version.log")"
 
-# ------------------------------------------------------------------ 1. kit copy + ready-made case
+# ------------------------------------------------------------------ 1. kit copy and test case
 cp -R "$KIT_SOURCE" "$TEST_ROOT/_SIMKIT" || die "cannot copy the kit"
 KIT="$TEST_ROOT/_SIMKIT"
 
@@ -107,14 +107,14 @@ if [ -z "$SIM" ]; then
   invoke_star 01_build_testsim "" ${COMMON[@]+"${COMMON[@]}"} -new -batch "$KIT/tests/BuildSimKitTestSim.java"
   unset SIMKIT_TESTSIM
   if [ ! -f "$SIM" ]; then
-    log "ERROR: the test sim was not created; see results/01_build_testsim.log (paste its end into the chat)."
+    log "ERROR: the test sim was not created; see results/01_build_testsim.log."
     tail -n 60 "$RESULTS/01_build_testsim.log" > "$RESULTS/PASTE_THIS.txt"
     die "test sim build failed - paste $RESULTS/PASTE_THIS.txt"
   fi
   log "test sim      : built $SIM ($(du -h "$SIM" | cut -f1))"
 fi
 
-# the test project: cases/SIMKIT_TEST/simkit_project.txt, run R001_base/R001_base.sim + run.txt
+# Test project cases/SIMKIT_TEST with simkit_project.txt and the run R001_base (R001_base.sim, run.txt).
 CASE="$TEST_ROOT/cases/SIMKIT_TEST"
 RUN_DIR="$CASE/R001_base"
 mkdir -p "$RUN_DIR"
@@ -138,7 +138,7 @@ file=R001_base/R001_base.sim
 EOF
 log "test run      : $CASE_SIM"
 
-# ------------------------------------------------------------------ 2-13. batch runs
+# ------------------------------------------------------------------ batch runs
 declare -A RCS
 invoke_star 02_SimKitCalc_selfcheck "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/lib/generic/SimKitCalc.java" "$CASE_SIM"; RCS[calc]=$RC
 invoke_star 07a_SimKit_reports reports ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[reports]=$RC
@@ -152,16 +152,16 @@ invoke_star 07i_SimKit_cadtest cadtest ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/
 invoke_star 07j_SimKit_objtest objtest ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[objtest]=$RC
 invoke_star 08_button_Tracker "" ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/buttons/SimKit_CaseTracker.java" "$CASE_SIM"; RCS[button]=$RC
 
-# Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
-# keys): every settings.props under ~/.star-* is copied aside first and put back afterwards, and only the
-# MacroPlayFavoriteAction lines are ever logged.
+# Toolbar buttons are installed, then removed. STAR-CCM+ keeps them in settings.props of the user, which also
+# holds licence keys. Every settings.props under ~/.star-* is copied aside first and restored afterwards, and
+# only the MacroPlayFavoriteAction lines are logged.
 star_settings() { find "$HOME" -maxdepth 3 -path "$HOME/.star-*/config/settings.props" -type f 2>/dev/null; }
 log_buttons() {
   local f n ok
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     n=$(grep -c '^MacroPlayFavoriteAction[0-9]=' "$f")
-    # STAR-CCM+ reads "macro ; icon ; tooltip": a button only shows when the first field is the macro file
+    # STAR-CCM+ reads "macro ; icon ; tooltip". A button is shown only when the first field is a macro file.
     ok=$(grep '^MacroPlayFavoriteAction[0-9]=' "$f" | sed 's/^[^=]*=//' | awk -F';' '{gsub(/[ \t]+$/, "", $1)} $1 ~ /\.java$/' | wc -l)
     log "    $1: $n favourite-macro line(s), $ok with a macro file first (button shown), in $f"
     grep '^MacroPlayFavoriteAction[0-9]=' "$f" | while IFS= read -r l; do log "      $l"; done
@@ -169,8 +169,8 @@ log_buttons() {
     log "    $1: SimKit toolbar $([ -d "$tb" ] && echo present || echo absent), $(ls "$tb"/*.shadow 2>/dev/null | wc -l) button link(s)"
   done < <(star_settings)
 }
-# A STAR-CCM+ window that is open reads these settings: its buttons would point at the test kit or be gone while
-# the steps run. The steps are skipped then (a starccm+ process without -batch / -server).
+# An open STAR-CCM+ window reads these settings, and its buttons would change while the steps run. The steps
+# are skipped when a starccm+ process without -batch or -server is running.
 if ps -eo args 2>/dev/null | grep -E '(^|/)(starccm\+|star-ccm\+)( |$)' | grep -v -E -- '-batch|-server' | grep -q .; then
   log "    08b / 08c skipped: a STAR-CCM+ window is open (these steps write the user's toolbar settings)"
   RCS[buttons]=skip; RCS[buttonsrm]=skip
@@ -207,12 +207,12 @@ invoke_star 11_SimKit_tracker tracker ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/S
 invoke_star 11b_SimKit_opensim opensim ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[opensim]=$RC
 invoke_star 11c_SimKit_study studytest ${COMMON[@]+"${COMMON[@]}"} -batch "$KIT/SimKit.java" "$CASE_SIM"; RCS[study]=$RC
 
-# ------------------------------------------------------------------ PASTE_THIS.txt (raw, redacted below)
+# ------------------------------------------------------------------ PASTE_THIS.txt, redacted below
 PASTE="$RESULTS/PASTE_THIS.txt"
 RAW="$RESULTS/.paste_raw.txt"
 PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a \(|FAIL|WARN|PASS|batch:|licen|License|Could not|cannot|Self-check|GCI|Gamma|X=|p=|written|wrote|saved|exported|set-up record|case card|list of changes|case list|plots exported|scenes exported|report values|=> |names|expected|button|kit |created|monitors|not proposed|already exists|boundary types|report\(s\)|READY|averaged|key results|solution|residuals|mass balance|monitors stable|y\+ vs|p_mesh|follow|Relative to the base|mesh size|boundary values|scene|case report|cells|case tracker|new version|forked|toolbar buttons|favourite|study|run R|submit|separator'
 {
-  echo "===== SIMKIT BATCH VALIDATION (LINUX) - paste everything below into the chat ====="
+  echo "===== SIMKIT BATCH VALIDATION (LINUX) ====="
   echo "date $STAMP | launcher $LAUNCHER | $(cat /etc/redhat-release 2>/dev/null || uname -sr)"
   echo "star version: $(grep -m1 -E 'STAR-CCM\+|Simcenter' "$RESULTS/00_version.log")"
   printf 'exit codes:'; for k in $(printf '%s\n' "${!RCS[@]}" | sort); do printf '  %s=%s' "$k" "${RCS[$k]}"; done; echo
@@ -243,10 +243,10 @@ PATTERNS='\[BuildTestSim\]|error:|Exception|Error:|\[SimKit\]|\[SimKitCalc\]|n/a
   echo "===== END ====="
 } > "$RAW" 2>&1
 
-# ------------------------------------------------------------------ privacy: never expose the licence
-# The licence file content is never read. Its location (and its folder, and any path in a folder named
-# 'confidential') is masked, and licence FEATURE/SIGN lines that a tool might echo are dropped. The secrets are
-# passed to awk through the environment so that they never appear on a command line.
+# ------------------------------------------------------------------ licence redaction
+# The licence file is never read. Its location, its folder and any path in a folder named 'confidential' are
+# masked, and licence FEATURE and SIGN lines that a tool echoes are dropped. The secrets reach awk through the
+# environment so that they never appear on a command line.
 redact() {   # redact <in> <out>
   SK_SECRET1="$LICENSE" SK_SECRET2="$( [ -n "$LICENSE" ] && [ -e "$LICENSE" ] && dirname "$LICENSE" )" \
   awk '
@@ -262,7 +262,7 @@ redact() {   # redact <in> <out>
 }
 redact "$RAW" "$PASTE"; rm -f "$RAW"
 
-# archive (logs + case outputs, no .sim), every text file redacted
+# archive of the logs and case outputs, without .sim files, with every text file redacted
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/simkit_tar_XXXXXX")
 cp -R "$RESULTS" "$TMP/results"; cp -R "$TEST_ROOT/cases" "$TMP/cases"
 find "$TMP" \( -name '*.sim' -o -name '*.sim~' \) -type f -delete

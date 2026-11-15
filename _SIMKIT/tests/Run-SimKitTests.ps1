@@ -1,41 +1,41 @@
 ﻿<#
 .SYNOPSIS
-  SimKit 0.3 - automated batch validation on a licensed STAR-CCM+ installation (Windows 10/11).
+  Batch validation of SimKit on a licensed STAR-CCM+ installation (Windows 10/11).
 
 .DESCRIPTION
-  Runs, without any GUI interaction, every check of TESTING.txt that works in batch:
-    0. environment and STAR-CCM+ version
-    1. test share set-up (copy of _SIMKIT + a project SIMKIT_TEST whose run R001_base is your sim)
-    2. SimKitCalc.java in batch  -> compiles the calculator macro and prints its self-check
-    3. (Check removed)
-    7. (optional, -RunSolver)    -> starccm+ -batch run,SimKit.java : short solver run
-  Then it writes  <TestRoot>\results\PASTE_THIS.txt  (paste it into the chat) and a zip with all logs/outputs.
-  The interactive tools (case initialisation dialogs, renaming previews, parameter-sync preview, calculator
-  window) still need the GUI: use -Interactive at the end, or section C of TESTING.txt.
+  Runs the checks of TESTING.txt that work in batch, without GUI interaction:
+    00  environment and STAR-CCM+ version
+    01  test share (copy of _SIMKIT and a project SIMKIT_TEST whose run R001_base is the test sim)
+    02  SimKitCalc.java self-check
+    07, 08, 10, 11  SimKit tools, toolbar buttons, save as new run and tracker in batch
+    09  short solver run, only with -RunSolver
+  It then writes <TestRoot>\results\PASTE_THIS.txt and a zip with all logs and outputs.
+  The interactive tools (case dialogs, renaming previews, parameter-sync preview, calculator window) need the
+  GUI. Use -Interactive, or section C of TESTING.txt.
 
 .PARAMETER Star
-  STAR-CCM+ launcher (...\star\bin\starccm+.bat) OR the installation root (e.g. "C:\Program Files\Siemens\19.02.009");
-  the script searches the root for star\bin\starccm+.bat.
+  STAR-CCM+ launcher (...\star\bin\starccm+.bat) or the installation root, e.g. "C:\Program Files\Siemens\19.02.009".
+  The root is searched for star\bin\starccm+.bat.
 .PARAMETER Sim
-  Optional. A real simulation file to test on (regions, mesh, some reports/plots/scenes); it is COPIED, never
-  modified. If omitted, the script first builds a small test case with tests\BuildSimKitTestSim.java
-  (starccm+ -new -batch ...) into <TestRoot>\scratch\SimKit_testcase.sim and tests on it.
+  Optional. A simulation file to test on, with regions, mesh and some reports, plots and scenes. It is copied, never
+  modified. If omitted, tests\BuildSimKitTestSim.java builds a small test case into
+  <TestRoot>\scratch\SimKit_testcase.sim.
 .PARAMETER LicenseFile
-  Optional. Licence file or server (e.g. "C:\licenses\license.dat" or "1999@licserver"); sets CDLMD_LICENSE_FILE
-  for the STAR-CCM+ processes started by this script only. The script never reads or prints the licence file;
-  its location is masked as <licence> in PASTE_THIS.txt and in the zipped logs.
+  Optional. Licence file or server, e.g. "C:\licenses\license.dat" or "1999@licserver". Sets CDLMD_LICENSE_FILE
+  for the STAR-CCM+ processes of this script only. The licence file is never read or printed, and its location
+  is masked as <licence> in PASTE_THIS.txt and in the zipped logs.
 .PARAMETER StarArgs
   Optional extra launcher arguments, e.g. "-power -podkey XXXXXXXX" or "-licpath 1999@licserver".
 .PARAMETER TestRoot
-  Test share (default C:\SimKitTest). It is created; existing test outputs are moved to a dated backup folder.
+  Test share, default C:\SimKitTest. An existing folder is moved to <TestRoot>_backup_<timestamp>.
 .PARAMETER Np
   Number of processes for the batch runs (default 1).
 .PARAMETER RunSolver
-  Also run the solver for the stopping criteria set in the copy (use a tiny case or a sim with few steps).
+  Also runs the solver up to the stopping criteria of the copy. Use a small case or a sim with few steps.
 .PARAMETER Interactive
-  At the end, open STAR-CCM+ on the test case with the SimKit menu (for the GUI part of TESTING.txt).
+  At the end, opens STAR-CCM+ on the test case with the SimKit menu, for the GUI part of TESTING.txt.
 .PARAMETER KitSource
-  Folder of the delivered _SIMKIT (default: the folder that contains this script's parent).
+  The _SIMKIT folder to test. Default is the parent folder of this script.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File Run-SimKitTests.ps1 -Star "C:\Program Files\Siemens\19.02.009" -Sim "D:\cases\test.sim" -LicenseFile "1999@licserver"
@@ -116,7 +116,7 @@ $verLog = Join-Path $results "00_version.log"
 & cmd.exe /c "`"$script:launcher`" -version > `"$verLog`" 2>&1"
 Log ("star version  : {0}" -f ((Get-Content $verLog -ErrorAction SilentlyContinue | Select-String -Pattern "\d+\.\d+\.\d+" | Select-Object -First 1).Line))
 
-# ------------------------------------------------------------------ 1. test share + ready-made case
+# ------------------------------------------------------------------ 1. test share and test case
 Copy-Item -Path $KitSource -Destination (Join-Path $TestRoot "_SIMKIT") -Recurse -Force
 
 $common = @()
@@ -132,13 +132,13 @@ if (-not $Sim) {
   $null = Invoke-Star "01_build_testsim" ($common + @("-new", "-batch", "`"$builder`"")) ""
   $env:SIMKIT_TESTSIM = ""
   if (-not (Test-Path $Sim -PathType Leaf)) {
-    Log "ERROR: the test sim was not created; see results\01_build_testsim.log (paste its end into the chat)."
+    Log "ERROR: the test sim was not created; see results\01_build_testsim.log."
     Get-Content (Join-Path $results "01_build_testsim.log") -Tail 60 | Set-Content (Join-Path $results "PASTE_THIS.txt")
     throw "test sim build failed - paste $results\PASTE_THIS.txt"
   }
   Log ("test sim      : built {0} ({1:N1} MB)" -f $Sim, ((Get-Item $Sim).Length / 1MB))
 }
-# the test project: cases\SIMKIT_TEST\simkit_project.txt, run R001_base\R001_base.sim + run.txt
+# Test project cases\SIMKIT_TEST with simkit_project.txt and the run R001_base (R001_base.sim, run.txt).
 $case = Join-Path $TestRoot "cases\SIMKIT_TEST"
 $runDir = Join-Path $case "R001_base"
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
@@ -154,7 +154,7 @@ Log "test run      : $caseSim"
 $kit = Join-Path $TestRoot "_SIMKIT"
 $q = { param($s) "`"$s`"" }
 
-# ------------------------------------------------------------------ 2-5. batch runs
+# ------------------------------------------------------------------ batch runs
 $rc = @{}
 $rc["calc"]     = Invoke-Star "02_SimKitCalc_selfcheck" ($common + @("-batch", (& $q (Join-Path $kit "lib\generic\SimKitCalc.java")), (& $q $caseSim))) ""
 $rc["reports"]  = Invoke-Star "07a_SimKit_reports"      ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "reports"
@@ -168,15 +168,15 @@ $rc["cadtest"]  = Invoke-Star "07i_SimKit_cadtest"       ($common + @("-batch", 
 $rc["objtest"]  = Invoke-Star "07j_SimKit_objtest"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "objtest"
 $rc["button"]   = Invoke-Star "08_button_Tracker"       ($common + @("-batch", (& $q (Join-Path $kit "buttons\SimKit_CaseTracker.java")), (& $q $caseSim))) ""
 
-# Toolbar buttons: install, then remove. STAR-CCM+ keeps them in the user's settings.props (which also holds licence
-# keys): every settings.props of the user is copied aside first and put back afterwards, and only the
-# MacroPlayFavoriteAction lines are ever logged.
+# Toolbar buttons are installed, then removed. STAR-CCM+ keeps them in settings.props of the user, which also
+# holds licence keys. All settings.props files of the user are copied aside first and restored afterwards, and
+# only the MacroPlayFavoriteAction lines are logged.
 $setDirs = @((Join-Path $env:LOCALAPPDATA "Siemens"), (Join-Path $env:LOCALAPPDATA "CD-adapco"), (Join-Path $env:APPDATA "Siemens"))
 function Get-StarSettingsFiles { foreach ($d in $setDirs) { if (Test-Path $d) { Get-ChildItem $d -Recurse -Filter "settings.props" -ErrorAction SilentlyContinue } } }
 function Log-Buttons([string]$when) {
   foreach ($f in Get-StarSettingsFiles) {
     $b = @(Get-Content $f.FullName -ErrorAction SilentlyContinue | Where-Object { $_ -match "^MacroPlayFavoriteAction[0-9]=" })
-    # STAR-CCM+ reads "macro ; icon ; tooltip": a button only shows when the first field is the macro file
+    # STAR-CCM+ reads "macro ; icon ; tooltip". A button is shown only when the first field is a macro file.
     $ok = @($b | Where-Object { ($_ -replace "^[^=]*=", "").Split(";")[0].Trim() -match "\.java$" }).Count
     Log ("    {0}: {1} favourite-macro line(s), {2} with a macro file first (button shown), in {3}" -f $when, $b.Count, $ok, $f.FullName)
     foreach ($l in $b) { Log ("      " + $l) }
@@ -185,8 +185,8 @@ function Log-Buttons([string]$when) {
     Log ("    {0}: SimKit toolbar {1}, {2} button link(s)" -f $when, $(if (Test-Path $tb) { "present" } else { "absent" }), $links.Count)
   }
 }
-# A STAR-CCM+ window that is open reads these settings: its buttons would point at the test kit or be gone while
-# the steps run. The steps are skipped then.
+# An open STAR-CCM+ window reads these settings, and its buttons would change while the steps run. The steps
+# are skipped in that case.
 if (Get-Process starccmw -ErrorAction SilentlyContinue) {
   Log "    08b / 08c skipped: a STAR-CCM+ window is open (these steps write the user's toolbar settings)"
   $rc["buttons"] = "skip"; $rc["buttonsrm"] = "skip"
@@ -226,10 +226,10 @@ $rc["tracker"]  = Invoke-Star "11_SimKit_tracker"        ($common + @("-batch", 
 $rc["opensim"]  = Invoke-Star "11b_SimKit_opensim"       ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "opensim"
 $rc["study"]    = Invoke-Star "11c_SimKit_study"         ($common + @("-batch", (& $q (Join-Path $kit "SimKit.java")), (& $q $caseSim))) "studytest"
 
-# ------------------------------------------------------------------ 6. PASTE_THIS.txt
+# ------------------------------------------------------------------ PASTE_THIS.txt
 $paste = Join-Path $results "PASTE_THIS.txt"
 $out = New-Object System.Collections.Generic.List[string]
-$out.Add("===== SIMKIT BATCH VALIDATION - paste everything below into the chat =====")
+$out.Add("===== SIMKIT BATCH VALIDATION =====")
 $out.Add("date $stamp | launcher $script:launcher")
 $out.Add("star version: " + ((Get-Content $verLog -ErrorAction SilentlyContinue | Select-String -Pattern "STAR-CCM\+|Simcenter" | Select-Object -First 1).Line))
 $out.Add("exit codes: " + (($rc.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join "  "))
@@ -253,7 +253,7 @@ foreach ($f in Get-ChildItem $results -Filter "0*.log" | Sort-Object Name) {
   $out.Add("")
 }
 
-# n/a summary by [Unn] tag (the key to the next fixes)
+# n/a and error count per [Unn] tag
 $all = Get-ChildItem $results -Filter "0*.log" | ForEach-Object { Get-Content $_.FullName -ErrorAction SilentlyContinue }
 $tags = $all | Where-Object { $_ -match "n/a|FAIL|Exception|error:" -and $_ -notmatch "warning:" } |
         Select-String -Pattern "\[U\d+\]" -AllMatches | ForEach-Object { $_.Matches } | ForEach-Object { $_.Value }
@@ -265,7 +265,6 @@ $out.Add("----- deprecation warnings (compile OK; API deviation to note vs 2402)
 if ($dep) { foreach ($d in $dep) { $out.Add($d) } } else { $out.Add("(none)") }
 $out.Add("")
 
-# produced files
 $out.Add("----- files produced in the test case -----")
 Get-ChildItem $case -Recurse -File | Where-Object { $_.Extension -ne ".sim" } |
   ForEach-Object { $out.Add(("{0}  {1:N0} B" -f $_.FullName.Substring($case.Length + 1), $_.Length)) }
@@ -273,10 +272,9 @@ $out.Add("")
 
 $out.Add("===== END =====")
 
-# ------------------------------------------------------------------ privacy: never expose the licence
-# The licence file content is never read or printed by this script. Its location (and any path in a folder
-# named 'confidential') is masked in PASTE_THIS.txt and in the zipped logs; licence FEATURE/SIGN lines that a
-# tool might echo are dropped.
+# ------------------------------------------------------------------ licence redaction
+# The licence file is never read. Its location, and any path in a folder named 'confidential', is masked in
+# PASTE_THIS.txt and in the zipped logs. Licence FEATURE and SIGN lines that a tool echoes are dropped.
 $secret = @()
 if ($LicenseFile) {
   $secret += $LicenseFile
@@ -292,7 +290,7 @@ function Redact([string]$s) {
 $out = $out | ForEach-Object { Redact $_ }
 $out | Set-Content -Path $paste -Encoding UTF8
 
-# zip everything (logs + case outputs, without .sim files)
+# zip of the logs and case outputs, without .sim files, redacted
 $zip = Join-Path $TestRoot "simkit_test_results_$stamp.zip"
 $tmp = Join-Path $env:TEMP "simkit_zip_$stamp"
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null

@@ -1,17 +1,15 @@
-// BuildSimKitTestSim.java -- builds a small simulation that exercises every SimKit 0.2 tool (test use only)
+// Builds a small test simulation that exercises the SimKit tools. Test use only.
 //
-// Purpose : create, from an empty simulation, a small air channel with the objects SimKit works on:
-//           a named part, split part surfaces, a fluid region, a physics continuum (unsteady, ideal gas,
-//           segregated flow + energy, SST k-omega), an automated mesh operation with non-default values and
-//           a custom surface control, a mass-flow inlet / pressure outlet / walls, a global parameter, reports
-//           (one deliberately left with its default name), monitors and plots, a plane section, a scene,
-//           stopping criteria for a 10-step run. The volume mesh is generated.
-// Run     : starccm+ -new -batch BuildSimKitTestSim.java          (sim written to %SIMKIT_TESTSIM% or to
-//           <session dir>\SimKit_testcase.sim). Run-SimKitTests.ps1 does this automatically when -Sim is omitted.
-// Design  : every STAR-CCM+ call whose name or signature may differ between releases goes through the small
-//           reflection helper R, so this file compiles in 2402 and later; a step that fails is logged
-//           ("FAIL <step>: <reason>") and the build continues. The build log is printed and written next to the sim.
-// Version : SimKit 0.2 test utility, 2026-11-11. Not run in STAR-CCM+ by its author: report the log.
+// Starting from an empty simulation it creates an air channel with a named part, split part surfaces, a fluid
+// region, a physics continuum (unsteady, ideal gas, segregated flow and energy, SST k-omega), an automated mesh
+// operation with non-default values and a surface control, a mass-flow inlet, pressure outlets and walls, a global
+// parameter, reports (one left with its default name), monitors, plots, a plane section, a scene and stopping
+// criteria for a short run. The volume mesh is generated.
+// Run: starccm+ -new -batch BuildSimKitTestSim.java. The sim is written to %SIMKIT_TESTSIM%, else to
+// <session dir>/SimKit_testcase.sim. Run-SimKitTests.ps1 runs this when -Sim is omitted.
+// Calls whose name or signature differ between releases go through the reflection helper R, so the file compiles
+// in 2402 and later. A failed step is logged as "FAIL <step>: <reason>" and the build continues. The log is
+// printed and written next to the sim as <sim>.build.log.
 package macro;
 
 import java.io.File;
@@ -31,11 +29,11 @@ import star.common.StarMacro;
 public class BuildSimKitTestSim extends StarMacro {
 
   static final double LX = 1.0, LY = 0.2, LZ = 0.2;   // channel size [m]
-  static final double BASE = 0.025;                   // mesh base size [m] (non-default on purpose)
+  static final double BASE = 0.025;                   // mesh base size [m], not the default value
 
   Simulation sim;
-  /** SIMKIT_BUILD_MODE=factory: keep every catalogue setting at its STAR-CCM+ default (for "Snapshot baseline
-   *  > factory defaults"); boundary types are set by surface order instead of by centroid, and no mesh is made. */
+  /** SIMKIT_BUILD_MODE=factory keeps every catalogue setting at its STAR-CCM+ default, for "Snapshot baseline
+   *  > factory defaults". Boundary types are then set by surface order instead of by centroid, and no mesh is made. */
   final boolean factory = "factory".equalsIgnoreCase(String.valueOf(System.getenv("SIMKIT_BUILD_MODE")));
   final List<String> log = new ArrayList<>();
   int nOk = 0, nFail = 0;
@@ -72,16 +70,16 @@ public class BuildSimKitTestSim extends StarMacro {
 
     step("units m", () -> units_m = R.call(R.call(sim, "getUnitsManager"), "getObject", "m"));
 
-    // ---------------------------------------------------------------- global parameter (user / template kind)
+    // ---------------------------------------------------------------- global parameter
     step("parameter p_inletMdot", () -> {
       Object gpm = R.call(sim, "get", R.cls("star.common.GlobalParameterManager"));
       Object p = R.call(gpm, "createGlobalParameter", R.cls("star.common.ScalarGlobalParameter"), "Scalar");
       R.call(p, "setPresentationName", "p_inletMdot");
       Object q = R.call(p, "getQuantity");
-      R.call(q, "setValue", 0.02);   // dimensionless here on purpose (dimension tests are in ISO_parameters)
+      R.call(q, "setValue", 0.02);   // dimensionless on purpose, dimensions are tested in ISO_parameters
     });
 
-    // ---------------------------------------------------------------- geometry: block part, surfaces split
+    // ---------------------------------------------------------------- geometry
     step("block part ENV_box", () -> {
       Object factory = R.call(sim, "get", R.cls("star.meshing.MeshPartFactory"));
       Object spm = R.call(sim, "get", R.cls("star.common.SimulationPartManager"));
@@ -113,7 +111,7 @@ public class BuildSimKitTestSim extends StarMacro {
         "star.kwturb.SstKwTurbModel", "star.kwturb.KwAllYplusWallTreatment"};
     for (String m : models) step("model " + m.substring(m.lastIndexOf('.') + 1), () -> R.call(continuum, "enable", R.cls(m)));
 
-    // ---------------------------------------------------------------- region from part
+    // ---------------------------------------------------------------- region
     step("region F_air (one boundary per part surface)", () -> {
       Object rm = R.call(sim, "getRegionManager");
       NeoObjectVector parts = new NeoObjectVector(new Object[] {part});
@@ -165,7 +163,7 @@ public class BuildSimKitTestSim extends StarMacro {
     });
     if (!factory) step("generate the mesh", () -> R.call(autoMesh, "execute"));
 
-    // ---------------------------------------------------------------- boundary identification and types
+    // ---------------------------------------------------------------- boundary types
     if (!factory) step("boundary types (x-min inlet, x-max outlet, top open, others walls)", () -> {
       Object ffm = R.call(sim, "getFieldFunctionManager");
       Object centroid = R.call(ffm, "getFunction", "Centroid");
@@ -203,7 +201,7 @@ public class BuildSimKitTestSim extends StarMacro {
       }
     });
 
-    // ---------------------------------------------------------------- solver and stopping criteria (10 steps)
+    // ---------------------------------------------------------------- solver and stopping criteria
     if (!factory) step("time step 1e-3 s", () -> {
       Object solver = R.call(R.call(sim, "getSolverManager"), "getSolver", R.cls("star.common.ImplicitUnsteadySolver"));
       R.call(R.call(solver, "getTimeStep"), "setValue", 1.0e-3);
@@ -260,9 +258,9 @@ public class BuildSimKitTestSim extends StarMacro {
     });
     step("scene sc_T_midSide", () -> {
       Object smgr = R.call(sim, "getSceneManager");
-      Object made = R.call(smgr, "createScalarScene", "Scalar Scene", "Outline", "Scalar");   // void in 2604
+      Object made = R.call(smgr, "createScalarScene", "Scalar Scene", "Outline", "Scalar");   // returns void in 2604
       Object sc = made;
-      if (sc == null) for (Object s : (Collection<?>) R.call(smgr, "getScenes")) sc = s;     // newest scene
+      if (sc == null) for (Object s : (Collection<?>) R.call(smgr, "getScenes")) sc = s;     // the last scene is the new one
       R.call(sc, "setPresentationName", "sc_T_midSide");
     });
 

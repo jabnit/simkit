@@ -1,26 +1,26 @@
 key,value
-# Run on cluster (Linux). command: the team's submit command, run in the file's folder. Placeholders: {file} file name,
-# {sim} full path, {ncpus} CPUs, {queue} queue below, {version} STAR-CCM+ release, {fairshare}, {project}.
+# Run on cluster (Linux). command is the submit command, run in the folder of the sim file. Placeholders: {file} file name,
+# {sim} full path, {ncpus} CPU count, {queue} queue below, {version} STAR-CCM+ release, {fairshare}, {project}.
 command,bsub.starccmp --input={file} --cpus={ncpus} --queue={queue} --version={version} --fairshare_group={fairshare} --project={project}
-# queue for 1 CPU (serial) and for more than 1 (parallel)
+# Queue for 1 CPU (serial) and for more than 1 CPU (parallel).
 queue_serial,mc_all_ser
 queue_parallel,mc_all_par
-# release for --version: empty = the release of the STAR-CCM+ that runs SimKit (21.04 -> 2606); or a fixed value, e.g. 2310
+# Release for --version, e.g. 2310. Empty means the release of the running STAR-CCM+ (21.04 -> 2606).
 version,
-# the team's fairshare group and project (rarely changed)
+# Fairshare group and project of the team.
 fairshare,ug_st_std
 project,OTHER_ESA
-# defaults of the launcher: --mem (MB per slot) and --estimated_runtime (hours) are only added when a user changes them
+# Launcher defaults for --mem [MB per slot] and --estimated_runtime [h]. The options are passed only when changed at submit.
 mem,1000
 estimated_runtime,360
-# terminal opened on Linux to run the command (konsole, gnome-terminal or xterm)
+# Terminal opened on Linux to run the command: konsole, gnome-terminal or xterm.
 terminal,konsole
-# suggested CPUs = (fluid cells + solid_cell_weight x solid cells) / cells_per_cpu. Team estimates, tune from own scaling runs.
+# Suggested CPUs = (fluid cells + solid_cell_weight x solid cells) / cells_per_cpu. Estimates, to be tuned from scaling runs.
 cells_per_cpu,50000
 solid_cell_weight,0.3
-# amber note below this many cells per CPU (poor scaling)
+# Below this many cells per CPU a warning on poor scaling is shown.
 cells_per_cpu_min,20000
-# suggestions of 16 CPUs or more are rounded to a multiple of this
+# Suggestions of 16 CPUs or more are rounded to a multiple of this value.
 cpu_step,8
-# largest CPU count per job (queue or team limit); empty = no limit
+# Largest CPU count per job (queue or team limit). Empty means no limit.
 cpus_max,

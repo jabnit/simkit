@@ -1,4 +1,4 @@
-# ---- STAR-CCM+ simulations and case output (never commit) ----
+# STAR-CCM+ simulations and case output
 *.sim
 *.sim~
 *.sim.bak
@@ -15,7 +15,7 @@ cases/
 # Case reports written next to a sim (e.g. ISO-CF-001_v01@00050-11112026_180507.html)
 _SIMKIT/*@*.html
 
-# ---- Licence / credentials (never commit) ----
+# Licence files and credentials
 *.lic
 license.dat
 licence.dat
@@ -23,11 +23,11 @@ licence.dat
 .env.*
 secrets.*
 
-# ---- Test runs ----
+# Test runs
 SimKitTest/
 PASTE_THIS.txt
 
-# ---- Java / IDE / OS ----
+# Java, IDE, OS
 *.class
 .idea/
 .vscode/

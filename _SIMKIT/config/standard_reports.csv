@@ -1,12 +1,12 @@
 name,group,type,field,surfaces,condition,meaning,criterion,mean
-# Standard reports of the team. One line per report; Standard reports proposes those that fit the simulation.
+# Standard reports of the team, one line per report. Standard reports proposes those that fit the simulation.
 # type: mass flow | area average | mass-flow average | maximum | minimum | heat flow | expression (field = the expression)
-# surfaces: name prefixes joined by + (IN, OUT, OPEN, WALL, ...) or REGIONS; the default surfaces are those of the fluid
-#   regions (in conjugate heat transfer the solid side is listed, not ticked); condition: energy | unsteady | needs <report> <report>
-# criterion (optional): stopping criterion on the report's monitor: asymptotic <width> <samples> | below <limit> | above <limit>;
-#   created off (tick it in Stopping Criteria); add ' on' to create it on. mean (optional): last <n> = report <name>_mean,
+# surfaces: name prefixes joined by + (IN, OUT, OPEN, WALL, ...) or REGIONS. Surfaces of fluid regions are ticked by default,
+#   solid-side surfaces in conjugate heat transfer are listed but not ticked. condition: energy | unsteady | needs <report> <report>
+# criterion (optional): stopping criterion on the monitor of the report, asymptotic <width> <samples> | below <limit> | above <limit>.
+#   It is created disabled, append ' on' to create it enabled. mean (optional): last <n> creates the report <name>_mean,
 #   the mean of the monitor over the last n samples (iterations, or time steps of an unsteady run).
-# A standard report already in the simulation is proposed again when new surfaces of its prefixes exist: Create adds them.
+# A standard report that exists is proposed again when there are new surfaces with its prefixes. Create adds them to it.
 r_mdot_in,massBalance,mass flow,,IN,,mass flow entering (IN_ surfaces),,
 r_mdot_out,massBalance,mass flow,,OUT+OPEN,,mass flow leaving (OUT_ and OPEN_),,
 r_mdot_net,massBalance,mass flow,,IN+OUT+OPEN,,net mass flow: tends to 0 when mass is conserved,,

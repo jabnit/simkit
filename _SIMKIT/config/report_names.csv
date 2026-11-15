@@ -1,9 +1,9 @@
 kind,key,code
 # Names of the reports made by Reports per object (Standard reports > Reports per object...).
-# pattern: the report name; {q} = quantity code, {s} = statistic code, {o} = object name (boundary or region).
-# quantity: field function name (as in Tools > Field Functions, function name), or <name>:magnitude for a vector.
-#   Listed quantities that the simulation does not have are not shown. Other scalar fields: Add a field... (code = function name).
-# statistic: maximum, minimum, area average, mass-flow average, surface integral, volume average.
+# pattern is the report name, with {q} quantity code, {s} statistic code and {o} object name (boundary or region).
+# quantity is the field function name as in Tools > Field Functions, or <name>:magnitude for a vector.
+#   Quantities that the simulation does not have are not shown. Other scalar fields are added with "Add a field...", code = function name.
+# statistic is one of maximum, minimum, area average, mass-flow average, surface integral, volume average.
 pattern,,r_{q}_{s}_{o}
 quantity,Temperature,T
 quantity,Pressure,p

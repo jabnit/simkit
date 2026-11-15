@@ -1,4 +1,4 @@
-# Repository files we author by hand: LF.
+# Hand-written repository files use LF.
 *.md     text eol=lf
 *.cff    text eol=lf
 *.yml    text eol=lf
@@ -14,6 +14,6 @@
 *.png   binary
 *.jpg   binary
 
-# The kit must stay byte-identical to what is deployed on the share: some CSV/TXT files are CRLF
-# and the macros and runners read them as they are, so git must not normalise line endings here.
+# The kit must stay byte-identical to the deployed copy on the share. Some CSV and TXT files are CRLF and are read
+# as they are, so git does not normalise line endings under _SIMKIT.
 _SIMKIT/** -text

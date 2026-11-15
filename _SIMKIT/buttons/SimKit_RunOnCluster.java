@@ -1,8 +1,7 @@
-// SimKit: Run on cluster (saves the file, then submits it with the team's command, config/cluster.csv)
+// SimKit toolbar button: saves the simulation and submits it with the command in config/cluster.csv.
 //
-// SimKit 0.3 toolbar button. Play it from the buttons/ folder of the SimKit root on the team share (do not copy
-// it elsewhere): it finds the root from its own location (STAR-CCM+ resolvePath("..")) and plays SimKit.java
-// from there, running that tool directly (no menu). No environment variable or path to set.
+// Play it from <root>/buttons/ on the team share, not from a copy. It finds the SimKit root with
+// resolvePath("..") and plays SimKit.java with the system property simkit.tool set, which opens the tool directly.
 package macro;
 
 import java.nio.file.Files;
@@ -14,7 +13,7 @@ import star.common.*;
 public class SimKit_RunOnCluster extends StarMacro {
 
   static final String TOOL = "CLUSTER";
-  /** Macro to play, relative to the SimKit root ('/' on every OS). */
+  /** Macro to play, relative to the SimKit root, with '/' as separator on every OS. */
   static final String MACRO = "SimKit.java";
 
   @Override

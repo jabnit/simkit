@@ -10,6 +10,16 @@
 5. A change to a tool must keep the kit's conventions (`SimKit.java` header): release-dependent STAR-CCM+ calls in
    try/catch, writes confined to the case folders, nothing ever deleted.
 
+## Code comments
+
+Comment only what the code does not show: STAR-CCM+ API behaviour and release differences, the reason for a
+workaround, contracts the signature does not show (null or empty returns, units, file formats), the intent of a
+regex or a constant. Do not restate the code, and do not comment getters or obvious fields. No commented-out code.
+
+Wording: short, dry, factual, present tense. No history ("now", "no longer", "fix for"), no reference to people,
+requests, reviews or discussions, no first person, no judging words ("simple", "clean", "robust"). One plain
+sentence rather than a chain of colons, semicolons and brackets. The same rules apply to `#` lines in `config/*.csv`.
+
 ## Branching
 
 - `main`: released kit only, tagged `v<version>` at each release.

@@ -1,31 +1,22 @@
-// Engineering calculators: inlet and outlet, orifice, turbulence inlet, y+ and prism layers, time step, averaging window, dimensionless numbers, pipe pressure drop, GCI, convection, thermocouple, stoichiometry, units
+// Engineering calculators used to set up and post-process CFD cases.
 //
-// SimKitCalc.java -- SimKit 0.2 (2026-11-11) -- UNTESTED IN STAR-CCM+ (written for Simcenter STAR-CCM+ 2402 / 19.02).
-// Spec: SIMKIT_SPEC_v02.md section B. See _SIMKIT\TESTING.txt.
+// Written for Simcenter STAR-CCM+ 2402 (19.02). The STAR-CCM+ calls are untested. Core (physics) and Library
+// (data loading) have no STAR-CCM+ imports and are unit-tested with a plain JDK 11 compiler.
+// Specification: SIMKIT_SPEC_v02.md, section B. Test procedure: _SIMKIT\TESTING.txt.
 //
-// Purpose
-//   One window of engineering calculators used while setting up and post-processing CFD cases. Sidebar groups:
-//   Set-up, Mesh, Time, Flow, Verification, Heat transfer, Fire test, Combustion, Units.
-//   Each page: Inputs (left) and Outputs (right). Outputs are computed again on every change of an input; the main
-//   output is shown first, the formula, source and validity under "Formula and source". Inputs outside a validity
-//   range give a warning (property data are clamped to [T_min, T_max] of the library row).
-//   Buttons: From parameter... / From report... (fill an input from the open sim), To parameter... (create/update a
-//   global parameter p_<name> from an output), Copy value for STAR-CCM+..., Copy all results, Close.
-//   The self-check of the reference examples runs in batch (starccm+ -batch SimKitCalc.java).
-//   Traceability: "Log this" next to the result appends a row (timestamp, user, page, inputs, outputs) to
-//   calc_log.csv of the project and prints it to the Output window. Without a project nothing is written to disk.
+// Each page has inputs on the left and outputs on the right. Outputs are recomputed on every input change.
+// Inputs outside a validity range give a warning. Property data are clamped to [T_min, T_max] of the library row.
+// The self-check of the reference examples runs in batch (starccm+ -batch SimKitCalc.java).
+// "Log this" appends a row (timestamp, user, page, inputs, outputs) to calc_log.csv of the project and prints it
+// to the Output window. Without a project nothing is written to disk.
 //
-// Version 0.2 (2026-11-11). The physics (class Core) and the data loading (class Library) have NO STAR-CCM+
-// imports and were unit-tested with a plain JDK 11 compiler; the STAR-CCM+ calls are UNTESTED in STAR.
+// Data: <root>/lib/generic/data/fluids.csv, read at start.
 //
-// Data (read at start): <root>/lib/generic/data/fluids.csv. <root> = the SimKit root, found from this
-//   file's own location (two folders up); no variable or path to set.
+// The window is non-modal. The macro ends once it is shown, so STAR-CCM+ stays usable. From parameter, From report
+// and To parameter call STAR-CCM+ directly from the button handler.
 //
-// Threading: the window is NON-modal and floats next to STAR-CCM+; the macro ends as soon as it is shown, so the
-//   model stays usable. Compute is pure Java. From parameter / From report / To parameter call STAR-CCM+ directly
-//   from the button (short calls, as in a Simulation Assistant).
-//
-// Uncertain STAR-CCM+ API calls (each wrapped in try/catch(Throwable); failures are logged "n/a (<reason>)"):
+// STAR-CCM+ API calls not verified for 2402. Each is wrapped in try/catch(Throwable) and a failure is logged as
+// "n/a (<reason>)".
 //   [U10] GlobalParameterManager.getObjects(), createGlobalParameter(ScalarGlobalParameter.class, "Scalar");
 //         ScalarGlobalParameter.getQuantity(); ScalarPhysicalQuantity.getRawValue(), getUnits(), setValue(double)
 //   [U19] Simulation.getReportManager().getObjects(); Report.getReportMonitorValue()
@@ -36,9 +27,9 @@
 //   [U51] UnitsManager.getPreferredUnits(Dimensions) [reflection], used only if no unit name matches
 //   [U52] Simulation.println(String) called from the Swing event thread on Compute; fallback System.out
 //   [U53] Report.getUnits() [reflection], only to display the units of a report value
-//   (U10/U19/U30/U31 are the same calls as in SimKit.java / ISO_parameters.java.)
+//   U10, U19, U30 and U31 are the same calls as in SimKit.java and ISO_parameters.java.
 //
-// Rules (SimKit): Java 11, no external libraries, never deletes anything, writes only <case>/record/calc_log.csv.
+// Java 11, no external libraries. Deletes nothing and writes only calc_log.csv.
 package macro;
 
 import java.awt.BorderLayout;
@@ -90,11 +81,11 @@ import star.common.*;
 public class SimKitCalc extends StarMacro {
 
   static final String VERSION = "SimKitCalc 0.2 (2026-11-11)";
-  /** SimKit root, found from this file's own location (STAR-CCM+ resolvePath; no variable to set). */
+  /** SimKit root, resolved from the location of this file. */
   static Path ROOT;
   /** Property tables, relative to the SimKit root. */
   static final String DATA_DIR = "lib/generic/data";
-  static final Pattern CASE_ID = Pattern.compile("^([A-Z][A-Z0-9]{1,9})-(?:([A-Z0-9]{2,3})-)?([0-9]{3})$");   // ISO-007 (old ISO-CF-001)
+  static final Pattern CASE_ID = Pattern.compile("^([A-Z][A-Z0-9]{1,9})-(?:([A-Z0-9]{2,3})-)?([0-9]{3})$");   // e.g. ISO-007 or ISO-CF-001
   static final Pattern PARAM_NAME = Pattern.compile("^p_[a-z][A-Za-z0-9]*$");
   static final String[] CALC_LOG_HEADER = {"timestamp", "user", "tab", "inputs", "outputs"};
   static final String ENTERED = "(entered values)";
@@ -112,19 +103,19 @@ public class SimKitCalc extends StarMacro {
   final List<Tab> tabs = new ArrayList<>();
   Tab current;                                   // page shown
   JPanel cards;                                  // one card per page
-  javax.swing.JList<Object> side;                // sidebar: group headings, pages, the "More" row
+  javax.swing.JList<Object> side;                // group headings, pages and the "More" row
   final javax.swing.DefaultListModel<Object> sideModel = new javax.swing.DefaultListModel<>();
   JTextField filter;
   boolean moreOpen, sideSync;
-  boolean filling;                 // true while SimKit writes a field (no new computation for that)
-  boolean detailsOpen;             // "Formula and source" open (remembered)
+  boolean filling;                 // true while the code writes a field, so no recomputation starts
+  boolean detailsOpen;             // "Formula and source" expanded, kept in the user preferences
   String lastLogged = "";
-  final List<JComboBox<String>> mixedFluidCombos = new ArrayList<>();   // ENTERED + fluids
-  final List<JComboBox<String>> fluidCombos = new ArrayList<>();        // fluids only
+  final List<JComboBox<String>> mixedFluidCombos = new ArrayList<>();   // "(entered values)" and the library fluids
+  final List<JComboBox<String>> fluidCombos = new ArrayList<>();        // library fluids only
 
   @Override
   public void execute() {
-    int preloaded = preloadOwnClasses(getClass());   // before anything else: see preloadOwnClasses
+    int preloaded = preloadOwnClasses(getClass());   // must run first, see preloadOwnClasses
     sim = getActiveSimulation();
     log = new Log(sim);
     ROOT = Paths.get(resolvePath("../..")).toAbsolutePath().normalize();   // this file is <root>/lib/generic/
@@ -149,13 +140,13 @@ public class SimKitCalc extends StarMacro {
     if (old instanceof java.awt.Window) ((java.awt.Window) old).dispose();
     buildWindow();
     System.getProperties().put(WINDOW_KEY, dlg);
-    dlg.setVisible(true);   // non-modal: the macro ends here and STAR-CCM+ stays free to use
+    dlg.setVisible(true);   // non-modal, so execute() returns and STAR-CCM+ stays usable
     log.line("Calculators open (the window floats next to STAR-CCM+).");
   }
 
   static final String WINDOW_KEY = "simkit.calc.window";
 
-  /** The STAR-CCM+ main window (largest visible frame), so the calculator floats over it. */
+  /** Largest visible frame, taken as the STAR-CCM+ main window. The calculator floats over it. */
   static java.awt.Frame starFrame() {
     java.awt.Frame best = null;
     long area = -1;
@@ -167,9 +158,9 @@ public class SimKitCalc extends StarMacro {
     return best;
   }
 
-  /** STAR-CCM+ compiles a macro into a temporary folder and DELETES the class files when execute() returns. The
-   *  SimKit windows live on after that (non-blocking), so every class of this macro is loaded into memory now,
-   *  while the files still exist. Returns the number of classes loaded (-1 if the folder could not be read). */
+  /** STAR-CCM+ compiles a macro into a temporary folder and deletes the class files when execute() returns. The
+   *  windows stay open after that, so all classes of this macro are loaded now, while the files exist.
+   *  Returns the number of classes loaded, or -1 if the folder could not be read. */
   static int preloadOwnClasses(Class<?> self) {
     try {
       java.nio.file.Path dir = java.nio.file.Paths.get(self.getProtectionDomain().getCodeSource().getLocation().toURI());
@@ -192,7 +183,7 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** Same heuristics as SimKit.java; env SIMKIT_GUI=1 forces the window. */
+  /** Reason to run without the window, or null. Same rules as SimKit.java. SIMKIT_GUI=1 forces the window. */
   static String headlessReason() {
     if ("1".equals(System.getenv("SIMKIT_GUI"))) return null;
     try { if (GraphicsEnvironment.isHeadless()) return "Java is headless"; } catch (Throwable t) { return "no display"; }
@@ -208,14 +199,13 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** calc_log.csv: at the root of a project, or in record/ of a case folder. */
+  /** calc_log.csv is at the root of a project or study folder, or in record/ of a case folder. */
   Path logFile() {
     return Files.isRegularFile(caseDir.resolve("simkit_project.txt")) || Files.isRegularFile(caseDir.resolve("simkit_study.txt"))
         ? caseDir.resolve("calc_log.csv")
         : caseDir.resolve("record").resolve("calc_log.csv");
   }
 
-  /** Case folder from the sim path: <any folder>/<CASEID>/sim/<file>.sim (SimKit case) */
   void detectCase() {
     String path = "";
     try { path = sim.getSessionPath(); } catch (Throwable t) { /* unsaved */ }
@@ -227,12 +217,13 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** Case directory for a sim path, or null (the sim must be <CASEID>/sim/<CASEID>..._v<nn>.sim). */
+  /** Folder for calc_log.csv, or null. A project or study folder (marker file in the sim folder or up to 5 levels
+   *  above) is used first. Otherwise the sim must be <CASEID>/sim/<CASEID>*.sim. */
   static Path caseDirOf(String simPath) {
     if (simPath == null || simPath.trim().isEmpty()) return null;
     try {
       Path f = Paths.get(simPath).toAbsolutePath().normalize();
-      Path d = f.getParent();   // a study (simkit_study.txt in the folder or up to 5 above): its record/ holds calc_log.csv
+      Path d = f.getParent();
       for (int k = 0; d != null && k < 6; k++, d = d.getParent()) if (Files.isRegularFile(d.resolve("simkit_project.txt")) || Files.isRegularFile(d.resolve("simkit_study.txt"))) return d;
       Path simDir = f.getParent();
       if (simDir == null || !simDir.getFileName().toString().equalsIgnoreCase("sim")) return null;
@@ -249,12 +240,12 @@ public class SimKitCalc extends StarMacro {
   // Window
   // =====================================================================================================
 
-  /** One calculation page (sidebar entry): its forms, the Outputs view and the last result. */
+  /** One calculator page in the sidebar, with its forms, the outputs view and the last result. */
   final class Tab {
     final String name, group, help;
     final boolean more;
     final List<Form> forms = new ArrayList<>();
-    /** Plain-text result (what "All results" copies); a message written here replaces the Outputs view. */
+    /** Plain-text result as copied by "All results". A message written here replaces the outputs view. */
     final JTextArea out = new JTextArea();
     final javax.swing.JTextPane view = new javax.swing.JTextPane();
     final JLabel status = new JLabel(" ");
@@ -270,7 +261,7 @@ public class SimKitCalc extends StarMacro {
       this.more = Arrays.asList(MORE_GROUPS).contains(group);
       out.setEditable(false);
       view.setEditable(false);
-      view.setOpaque(true);                          // STAR's look-and-feel makes it transparent otherwise
+      view.setOpaque(true);                          // the STAR-CCM+ look-and-feel makes it transparent otherwise
       view.setBackground(java.awt.Color.WHITE);
       view.setMargin(new Insets(10, 14, 10, 14));
       status.setForeground(Styled.MUTED);
@@ -292,7 +283,7 @@ public class SimKitCalc extends StarMacro {
       });
     }
 
-    /** A plain message (library folders read, errors) in place of the outputs. */
+    /** Shows a plain message, e.g. the library folders read or an error, in place of the outputs. */
     void message(String text) {
       if (styledSet) return;
       javax.swing.text.StyledDocument d = new javax.swing.text.DefaultStyledDocument();
@@ -302,7 +293,7 @@ public class SimKitCalc extends StarMacro {
       view.setCaretPosition(0);
     }
 
-    /** One line under the outputs (copied value, parameter written). */
+    /** Status line under the outputs, e.g. the copied value or the parameter written. */
     void note(String s) { status.setText(s); }
 
     void showResult(String inputs, Core.R r) {
@@ -320,7 +311,7 @@ public class SimKitCalc extends StarMacro {
       render();
     }
 
-    /** Outputs: main value, other outputs, warnings, then formula and source (folded). */
+    /** Draws the main value, the other outputs, the warnings, then the folded formula and source. */
     void render() {
       javax.swing.text.StyledDocument d = new javax.swing.text.DefaultStyledDocument();
       Styled.add(d, "Outputs\n", Styled.style(12, true, Styled.MUTED, null));
@@ -366,7 +357,7 @@ public class SimKitCalc extends StarMacro {
       view.setCaretPosition(0);
     }
 
-    /** One row in calc_log.csv: this page, the inputs and outputs shown now. The same values twice: one row. */
+    /** Logs the inputs and outputs shown now. The same values twice in a row give one row only. */
     void logThis() {
       if (last == null || last.items.isEmpty()) return;
       String key = name + "|" + lastInputs + "|" + last.outputs();
@@ -391,15 +382,15 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** One labelled input field. 'scale' converts the field unit to SI (NaN = not an SI-convertible unit). */
+  /** One labelled input field. 'scale' converts the field unit to SI, NaN for a unit without an SI factor. */
   static final class Field {
     String key, label, name, sym, unit, hint;
-    boolean opt, libOnly;   // optional input; used only with a library fluid (temperature, pressure)
+    boolean opt, libOnly;   // libOnly: used only with a library fluid (temperature, pressure)
     double scale;
     JTextField tf;
   }
 
-  /** A text field showing a grey hint while it is empty ("optional", "empty: from the area" ...). */
+  /** Text field that shows a grey hint while it is empty, e.g. "optional". */
   static final class HintField extends JTextField {
     private static final long serialVersionUID = 1L;
     String hint = "";
@@ -424,20 +415,20 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** "mass flow (From report: r_mdot_in)" -> {"mass flow", "From report: r_mdot_in"}: label and hint. */
+  /** Splits a label into label and hint, e.g. "mass flow (From report: r_mdot_in)" -> {"mass flow", "From report: r_mdot_in"}. */
   static String[] labelHint(String label) {
     int i = label.indexOf(" (");
     if (i > 0 && label.endsWith(")")) return new String[] {label.substring(0, i), label.substring(i + 2, label.length() - 1)};
     return new String[] {label, ""};
   }
 
-  /** A unit as shown: kg/m^3 -> kg/m\u00B3, Pa-s -> Pa\u00B7s, "-" (no unit) -> nothing. */
+  /** Display form of a unit, e.g. kg/m^3 -> kg/m\u00B3, Pa-s -> Pa\u00B7s, "-" -> empty. */
   static String showUnit(String u) {
     if (u == null || u.equals("-")) return "";
     return u.replace("^2", "\u00B2").replace("^3", "\u00B3").replace("^4", "\u2074").replaceAll("(?<=[A-Za-z\u00B2\u00B3\u2074])-(?=[A-Za-z])", "\u00B7");
   }
 
-  /** A set of inputs and its calculation; computed again on every change. */
+  /** A set of inputs and its calculation, recomputed on every change. */
   final class Form {
     final Tab tab;
     final String title;
@@ -448,7 +439,7 @@ public class SimKitCalc extends StarMacro {
     final List<String> shownOrder = new ArrayList<>();             // order on screen (optional inputs last)
     final Map<String, List<JComponent>> rows = new LinkedHashMap<>();
     Function<Form, Core.R> calc;
-    /** Keys not used with the current choices (hidden). Null: all shown. */
+    /** Keys hidden with the current choices. Null shows all. */
     Function<Form, Set<String>> hidden;
     Field lastField;
     javax.swing.Timer timer;
@@ -459,13 +450,13 @@ public class SimKitCalc extends StarMacro {
       tab.forms.add(this);
     }
 
-    /** Required input: name, symbol (small TeX), unit, default value. */
+    /** Required input. 'sym' is written in the TeX subset of class TeX. */
     Form in(String key, String name, String sym, String unit, String def) { return add(key, name, sym, unit, def, "", false); }
 
-    /** Optional input, listed under "Optional"; 'hint' is shown in the empty field. */
+    /** Optional input, listed under "Optional". 'hint' is shown in the empty field. */
     Form opt(String key, String name, String sym, String unit, String def, String hint) { return add(key, name, sym, unit, def, hint, true); }
 
-    /** The last input is used only with a library fluid (temperature or pressure of the property evaluation). */
+    /** Marks the last input as used only with a library fluid (temperature or pressure of the property evaluation). */
     Form lib() {
       lastField.libOnly = true;
       return this;
@@ -550,7 +541,7 @@ public class SimKitCalc extends StarMacro {
 
     int idx(String key) { return combos.get(key).getSelectedIndex(); }
 
-    /** Writes an SI value into a field (property taken from the library); no new computation for that. */
+    /** Writes an SI value into a field without a recomputation. */
     void put(String key, double si) {
       Field f = fields.get(key);
       if (f == null) return;
@@ -560,7 +551,7 @@ public class SimKitCalc extends StarMacro {
       try { f.tf.setText(t); } finally { filling = false; }
     }
 
-    /** key=value unit; ... for calc_log (inputs used with the current choices). */
+    /** Inputs used with the current choices, as "key=value unit; ..." for calc_log. */
     String inputs() {
       Set<String> hide = hiddenKeys();
       List<String> parts = new ArrayList<>();
@@ -598,7 +589,7 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** Sidebar groups (MORE_GROUPS: under a "More" row, none at present). */
+  /** Sidebar groups. MORE_GROUPS are listed under a "More" row. */
   static final String[] MAIN_GROUPS = {"Set-up", "Mesh", "Time", "Flow", "Verification", "Heat transfer", "Fire test", "Combustion", "Units"};
   static final String[] MORE_GROUPS = {};
   static final String MORE_ROW = "(more)";
@@ -681,7 +672,7 @@ public class SimKitCalc extends StarMacro {
 
   Tab currentTab() { return current != null ? current : tabs.get(0); }
 
-  // ----- sidebar ------------------------------------------------------------------------------------------
+  // ----- Sidebar ------------------------------------------------------------------------------------------
 
   JComponent buildSidebar() {
     filter = new JTextField();
@@ -691,7 +682,7 @@ public class SimKitCalc extends StarMacro {
       @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { refillSide(); }
       @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { refillSide(); }
     });
-    filter.addActionListener(e -> {   // Enter: open the first match
+    filter.addActionListener(e -> {   // Enter opens the first match
       for (int i = 0; i < sideModel.size(); i++) {
         if (sideModel.get(i) instanceof Tab) { selectPage((Tab) sideModel.get(i)); return; }
       }
@@ -709,7 +700,7 @@ public class SimKitCalc extends StarMacro {
       } else if (MORE_ROW.equals(v)) {
         moreOpen = !moreOpen;
         javax.swing.SwingUtilities.invokeLater(this::refillSide);
-      } else {   // a heading: move on to the next page in the direction of travel (keyboard), else stay
+      } else {   // heading row: select the next page in the direction of keyboard travel
         int cur = sideModel.indexOf(current), dir = i > cur ? 1 : -1;
         for (int k = i; k >= 0 && k < sideModel.size(); k += dir) {
           if (sideModel.get(k) instanceof Tab) { final Tab t = (Tab) sideModel.get(k); javax.swing.SwingUtilities.invokeLater(() -> selectPage(t)); return; }
@@ -746,7 +737,7 @@ public class SimKitCalc extends StarMacro {
     return true;
   }
 
-  /** Rebuilds the sidebar (filter, More open or closed) and selects the page shown. */
+  /** Rebuilds the sidebar for the filter text and the More state, and selects the page shown. */
   void refillSide() {
     if (side == null) return;
     String q = filter.getText().trim().toLowerCase(Locale.ROOT);
@@ -783,7 +774,7 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** Shows a page and remembers it (per user). */
+  /** Shows a page and stores it in the user preferences. */
   void showPage(Tab t) {
     current = t;
     ((java.awt.CardLayout) cards.getLayout()).show(cards, "p" + tabs.indexOf(t));
@@ -803,7 +794,7 @@ public class SimKitCalc extends StarMacro {
     return n;
   }
 
-  /** Sidebar look: group headings in small grey capitals, pages indented, the More row as a toggle. */
+  /** Draws group headings in small grey capitals, pages indented and the More row as a toggle. */
   final class SideRenderer extends javax.swing.DefaultListCellRenderer {
     @Override
     public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> l, Object v, int i, boolean sel, boolean foc) {
@@ -833,8 +824,7 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** Runs a short STAR-CCM+ action (read/create a parameter, read a report) from the button, as a Simulation
-   *  Assistant does; the window stays open and STAR-CCM+ stays usable. */
+  /** Runs a short STAR-CCM+ action from the button handler, as a Simulation Assistant does. The window stays open. */
   void starAction(Runnable job) {
     try {
       job.run();
@@ -850,7 +840,7 @@ public class SimKitCalc extends StarMacro {
     try { return sim.getPresentationName(); } catch (Throwable t) { return "?"; }
   }
 
-  /** A page: title and one line of use, Inputs (left) and Outputs (right). */
+  /** Page layout: title, one line of help, inputs on the left and outputs on the right. */
   JComponent layoutPage(Tab t) {
     JPanel head = new JPanel(new java.awt.GridLayout(0, 1, 0, 2));
     head.setBorder(BorderFactory.createEmptyBorder(2, 2, 10, 2));
@@ -936,7 +926,7 @@ public class SimKitCalc extends StarMacro {
     return l;
   }
 
-  /** Inputs of a form: name | symbol | value | unit; choices first where declared; optional inputs last. */
+  /** Input grid with the columns name, symbol, value and unit. Choices come first, optional inputs last. */
   JPanel layoutForm(Form fm) {
     JPanel p = new JPanel(new GridBagLayout());
     p.setOpaque(false);
@@ -1026,7 +1016,7 @@ public class SimKitCalc extends StarMacro {
     return p;
   }
 
-  /** Shows the inputs used with the current choices; a section heading only if one of its inputs is shown. */
+  /** Shows the inputs used with the current choices. A section heading is shown only if one of its inputs is. */
   void applyVisibility(Form fm) {
     Set<String> hide = fm.hiddenKeys();
     List<String> so = fm.shownOrder;
@@ -1064,7 +1054,7 @@ public class SimKitCalc extends StarMacro {
     fm.timer.restart();
   }
 
-  /** Pure Java on the Swing thread: outputs shown (calc_log is written on Log this). */
+  /** Computes on the Swing thread (pure Java) and shows the outputs. calc_log is written only by Log this. */
   void compute(Form fm) {
     Tab t = fm.tab;
     try {
@@ -1079,7 +1069,7 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** Appends one row to <case>/record/calc_log.csv (if a case folder exists) and prints it. Returns a status line. */
+  /** Appends one row to calc_log.csv if a case folder exists, prints it and returns a status line. */
   String calcLog(String tabName, String inputs, String outputs) {
     log.line("calc | " + tabName + " | in: " + inputs + " | out: " + outputs);    // [U52] on the Swing thread
     if (caseDir == null) return "calc_log: not written (no case folder) -- logged in the Output window only.";
@@ -1093,7 +1083,7 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** Copies ONE result as a bare number (paste it in a STAR-CCM+ field) and says which STAR unit to select. */
+  /** Copies one result as a bare number for a STAR-CCM+ field and shows which STAR-CCM+ unit to select. */
   void copyValue(Tab t) {
     if (t.last == null || t.last.items.isEmpty()) {
       t.note("No output to copy.");
@@ -1116,7 +1106,7 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** Number as STAR-CCM+ fields accept it: dot decimal, 6 significant digits, no grouping (e.g. 1.23456E-5). */
+  /** Number in the form STAR-CCM+ fields accept, with dot decimal, 6 significant digits and no grouping (e.g. 1.23456E-5). */
   static String starNumber(double v) {
     if (v == Math.rint(v) && Math.abs(v) < 1e9) return String.valueOf((long) v);
     String s = String.format(Locale.ROOT, "%.6g", v).trim();
@@ -1128,7 +1118,7 @@ public class SimKitCalc extends StarMacro {
     return s.contains(".") ? s.replaceAll("0+$", "").replaceAll("\\.$", "") : s;
   }
 
-  /** Unit as written in the STAR-CCM+ unit list: m3 -> m^3, J/kg.K -> J/kg-K, "-" -> dimensionless. */
+  /** Unit name as in the STAR-CCM+ unit list, e.g. m3 -> m^3, J/kg.K -> J/kg-K, "-" -> dimensionless. */
   static String starUnit(String u) {
     if (u == null || u.isEmpty() || u.equals("-")) return "(dimensionless)";
     return u.replaceAll("([A-Za-z])([0-9])", "$1^$2").replace('.', '-');
@@ -1143,7 +1133,7 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  // ----- fluid helpers ------------------------------------------------------------------------------------
+  // ----- Fluid helpers ------------------------------------------------------------------------------------
 
   String[] fluidNames(boolean withEntered) {
     List<String> n = new ArrayList<>();
@@ -1162,8 +1152,8 @@ public class SimKitCalc extends StarMacro {
 
   static final String[] PROPERTY_KEYS = {"rho", "mu", "k", "cp"};
 
-  /** Library fluid selected: the property fields are filled from the library and greyed (not to be typed); the
-   *  "(library)" inputs (temperature, pressure) are active. "(entered values)": the other way round. */
+  /** With a library fluid, the property fields are filled from the library and disabled, and the library-only
+   *  inputs (temperature, pressure) are enabled. With "(entered values)" it is the other way round. */
   void fluidFields(Form fm) {
     if (!fm.combos.containsKey("fluid")) return;
     String fl = fm.s("fluid");
@@ -1175,7 +1165,7 @@ public class SimKitCalc extends StarMacro {
       else if (libOnly) setActive(f, !entered);
     }
     if (entered) return;
-    try {   // show the library values at the temperature / pressure of the form (Compute uses the right temperature)
+    try {   // preview at the form temperature, Compute uses its own evaluation temperature
       double T = fm.has("T") ? fm.v("T")                                                   // temperature field,
           : fm.has("Tinf") && fm.has("Ts") ? 0.5 * (fm.v("Tinf") + fm.v("Ts"))             // else film temperature,
           : fm.has("Tg") ? fm.v("Tg") : Double.NaN;                                           // else gas temperature
@@ -1192,7 +1182,7 @@ public class SimKitCalc extends StarMacro {
     f.tf.setToolTipText(on ? null : "From the library fluid (\"" + ENTERED + "\": values typed in)");
   }
 
-  /** Properties: library fluid (at a temperature chosen by Core) or the entered rho, mu, k, cp. */
+  /** Properties of the library fluid at a temperature chosen by Core, or the entered rho, mu, k, cp. */
   Core.Props props(Form fm, double p) {
     String fl = fm.s("fluid");
     if (fl.isEmpty() || fl.equals(ENTERED)) {
@@ -1202,7 +1192,7 @@ public class SimKitCalc extends StarMacro {
     return lib.fluidProps(fl, p);
   }
 
-  /** After a library-based compute: show the property values used in the entry fields. */
+  /** Shows the library property values used by the last compute in the entry fields. */
   static void writeBack(Form fm, Core.R r) {
     if (fm.s("fluid").equals(ENTERED)) return;
     for (String k : new String[] {"rho", "mu", "k", "cp"}) if (r.has(k)) fm.put(k, r.get(k));
@@ -1221,7 +1211,7 @@ public class SimKitCalc extends StarMacro {
   }
 
   // =====================================================================================================
-  // The pages (sidebar order: group, then the order below)
+  // Pages. The sidebar lists them by group, then in the order below.
   // =====================================================================================================
 
   void buildTabs() {
@@ -1284,8 +1274,8 @@ public class SimKitCalc extends StarMacro {
     };
   }
 
-  /** Gas constant R [J/kg-K] of the selected fluid, NaN for a liquid. Library: ideal-gas density rows; entered values: an
-   *  apparent p / (rho T) above 20 J/kg-K is taken as a gas. */
+  /** Gas constant R [J/kg-K] of the selected fluid, NaN for a liquid. A library fluid is a gas if its density row is
+   *  ideal-gas. For entered values, an apparent p / (rho T) above 20 J/kg-K is taken as a gas. */
   double gasConstant(Form fm, double rho, double p, double T) {
     String fl = fm.s("fluid");
     if (!fl.isEmpty() && !fl.equals(ENTERED)) {
@@ -1366,7 +1356,7 @@ public class SimKitCalc extends StarMacro {
         fm.req("Nft"), fm.v("dt")).main("tEnd");
   }
 
-  /** Inputs of the dimensionless numbers: key, name, symbol, unit, default. */
+  /** Inputs of the dimensionless numbers. Columns: key, name, symbol, unit, default. */
   static final String[][] DIM_FIELDS = {
       {"rho", "Density", "\\rho", "kg/m^3", "1.177"}, {"U", "Velocity", "U", "m/s", "10"}, {"L", "Length", "L", "m", "0.1"},
       {"mu", "Dynamic viscosity", "\\mu", "Pa-s", "1.846e-5"}, {"T", "Temperature", "T", "K", "300"},
@@ -1484,7 +1474,7 @@ public class SimKitCalc extends StarMacro {
     };
   }
 
-  /** Atom count: empty field = 0. */
+  /** Atom count. An empty field counts as 0. */
   static double atoms(Form fm, String k) {
     double v = fm.v(k);
     return Double.isNaN(v) ? 0 : v;
@@ -1521,7 +1511,7 @@ public class SimKitCalc extends StarMacro {
   }
 
   // =====================================================================================================
-  // STAR actions (macro thread): From parameter / From report / To parameter
+  // STAR-CCM+ actions: From parameter, From report, To parameter
   // =====================================================================================================
 
   /** Asks which input field of the tab receives a value. */
@@ -1570,7 +1560,7 @@ public class SimKitCalc extends StarMacro {
     log.line(line);
   }
 
-  /** [U50] SI value of a scalar parameter; falls back to the raw value (warning appended to 'msg'). */
+  /** [U50] SI value of a scalar parameter. Falls back to the raw value and appends a warning to 'msg'. */
   static double paramSI(ScalarGlobalParameter p, StringBuilder msg) {
     ScalarPhysicalQuantity q = p.getQuantity();                                                            // [U10]
     Object si = Reflect.tryCall(q, "getSIValue");                                                         // [U50]
@@ -1690,7 +1680,7 @@ public class SimKitCalc extends StarMacro {
 
   static boolean isDimless(int[] e) { return e[0] == 0 && e[1] == 0 && e[2] == 0 && e[3] == 0; }
 
-  /** [U31] STAR unit object for an SI unit name; [U51] preferred units for the dimensions as a fallback. */
+  /** [U31] STAR-CCM+ unit object for an SI unit name, else [U51] the preferred units for the dimensions, else null. */
   Units unitsFor(String unit, int[] e, List<String> report) {
     List<String> names = new ArrayList<>(Arrays.asList(unit));
     if (unit.equals("1/s")) names.addAll(Arrays.asList("/s", "Hz"));
@@ -1719,12 +1709,12 @@ public class SimKitCalc extends StarMacro {
   }
 
   // =====================================================================================================
-  // Core: all physics. NO STAR-CCM+ types here (unit-testable with a plain JDK).
+  // Core: physics only, no STAR-CCM+ types
   // =====================================================================================================
 
   static final class Core {
-    static final double SIGMA = 5.670374419e-8;   // Stefan-Boltzmann, W/m^2-K^4 (CODATA 2018)
-    static final double RU = 8314.462618;         // J/kmol-K
+    static final double SIGMA = 5.670374419e-8;   // Stefan-Boltzmann constant [W/m^2-K^4], CODATA 2018
+    static final double RU = 8314.462618;         // universal gas constant [J/kmol-K]
     static final double CMU = 0.09;
 
     static final String[] WALL_CORR = {"flat plate, turbulent (Schlichting)", "pipe (Blasius)", "flat plate, laminar (Blasius)"};
@@ -1745,15 +1735,15 @@ public class SimKitCalc extends StarMacro {
       }
     }
 
-    /** Result of a calculator: items + formula/source/validity lines + warnings. */
+    /** Result of a calculator: output items, formula, source and validity lines, and warnings. */
     static final class R {
       final String title;
       final List<Item> items = new ArrayList<>();
       final List<String> lines = new ArrayList<>();
       final List<String> warns = new ArrayList<>();
 
-      String main;            // key of the main output (null: the first)
-      boolean showFormula;    // formula drawn under the main value (definitions)
+      String main;            // key of the main output, null for the first item
+      boolean showFormula;    // draw the formula under the main value (definitions)
 
       R(String title) { this.title = title; }
 
@@ -1794,9 +1784,9 @@ public class SimKitCalc extends StarMacro {
         throw new IllegalArgumentException("no result " + key);
       }
 
-      final List<String> tex = new ArrayList<>();   // formulas as written (a small LaTeX), drawn in the window
+      final List<String> tex = new ArrayList<>();   // formulas as TeX source, drawn in the window
 
-      /** A formula in a small LaTeX (see TeX): drawn in the window, plain text in the copied results. */
+      /** Adds a formula in the TeX subset of class TeX. The window draws it, the copied results get plain text. */
       R f(String s) {
         tex.add(s);
         lines.add("Formula:  " + TeX.plain(s));
@@ -1869,7 +1859,7 @@ public class SimKitCalc extends StarMacro {
     abstract static class Props {
       final List<String> warns = new ArrayList<>();
       final List<String> sources = new ArrayList<>();
-      /** false: only rho and mu are evaluated (k, cp returned as NaN), so unused rows give no warnings. */
+      /** If false, only rho and mu are evaluated and k, cp are NaN, so unused rows give no warnings. */
       boolean needKcp = true;
 
       abstract double[] at(double T);
@@ -1895,7 +1885,7 @@ public class SimKitCalc extends StarMacro {
       return x;
     }
 
-    // ----- 1. Wall & prism layers ------------------------------------------------------------------------
+    // ----- Wall and prism layers -------------------------------------------------------------------------
 
     static R wallFirstCell(double U, double L, double rho, double mu, double yPlus, int corr) {
       pos("U", U); pos("L", L); pos("density", rho); pos("viscosity", mu); pos("y+", yPlus);
@@ -2007,9 +1997,8 @@ public class SimKitCalc extends StarMacro {
       res.valid("r in (1, 1.5] recommended (<= 1.2 for heat transfer / separation); r <= 3 accepted by the solver here");
     }
 
-    // ----- 2. Dimensionless numbers -------------------------------------------------------------------
 
-    // ----- 3. Turbulence inlet -------------------------------------------------------------------------
+    // ----- Turbulence inlet ----------------------------------------------------------------------------
 
     static R turbulenceInlet(double U, double I, double l, double VR, double nu, double Dh, double A, double P) {
       pos("U", U); pos("nu", nu);
@@ -2057,7 +2046,7 @@ public class SimKitCalc extends StarMacro {
       return r;
     }
 
-    // ----- 4. Time step & statistics -------------------------------------------------------------------
+    // ----- Time step and statistics --------------------------------------------------------------------
 
     static R timeStep(double co, double dx, double U, double lft, double tInit, double tAvg, double sps, double cores) {
       pos("Courant number", co); pos("cell size", dx); pos("velocity", U);
@@ -2082,7 +2071,7 @@ public class SimKitCalc extends StarMacro {
       return r.main("dt");
     }
 
-    // ----- 5. Mesh & GCI -------------------------------------------------------------------------------
+    // ----- Mesh and GCI --------------------------------------------------------------------------------
 
     static R gci(double n1, double n2, double n3, double f1, double f2, double f3, int dim) {
       pos("N1", n1); pos("N2", n2); pos("N3", n3);
@@ -2161,14 +2150,15 @@ public class SimKitCalc extends StarMacro {
       return r;
     }
 
-    // ----- Inlet & outlet values, orifice ----------------------------------------------------------------
+    // ----- Inlet and outlet values, orifice --------------------------------------------------------------
 
     static final String[] INLET_GIVEN = {"mass flow [kg/s]", "mass flow [g/s]", "velocity [m/s]", "volume flow [m^3/s]",
         "volume flow [l/min]", "standard volume flow [Nl/min, 0 degC, 1 atm]", "standard volume flow [SCFM, 60 degF, 14.696 psi]",
         "total pressure, gauge [Pa] (relative to the reference)", "Mach number [-]"};
     static final double T_NORMAL = 273.15, T_SCFM = 288.70556, P_STD = 101325, FT3 = 0.028316846592;
 
-    /** Uniform flow through a section: one quantity given, all boundary values out. Rg = NaN: liquid (constant density). */
+    /** Uniform flow through a section. One quantity is given, all boundary values are returned. Rg = NaN means
+     *  a liquid with constant density. */
     static R inletOutlet(int given, double value, double p, double T, double pref, double D, double A, double rho, double mu,
         double cp, double gammaIn, double Rg) {
       pos("static pressure", p); pos("static temperature", T); pos("density", rho);
@@ -2352,7 +2342,7 @@ public class SimKitCalc extends StarMacro {
       return r;
     }
 
-    // ----- 8. Heat transfer ----------------------------------------------------------------------------
+    // ----- Heat transfer -------------------------------------------------------------------------------
 
     static double churchillBernstein(double re, double pr) {
       return 0.3 + 0.62 * Math.sqrt(re) * Math.cbrt(pr) / Math.pow(1 + Math.pow(0.4 / pr, 2.0 / 3), 0.25)
@@ -2459,10 +2449,10 @@ public class SimKitCalc extends StarMacro {
       return r;
     }
 
-    /** Thermocouple temperature from the gas temperature: h(Tg - T) = eps(sigma T^4 - G/4), Newton. */
+    /** Thermocouple temperature from the gas temperature, solving h(Tg - T) = eps(sigma T^4 - G/4) by Newton iteration. */
     static double tcTtc(double tg, double eps, double G, double h) {
       double tRad = Math.pow(Math.max(G, 0) / (4 * SIGMA), 0.25);
-      double T = Math.max(tg, tRad);           // F(T) <= 0 here and F is concave decreasing -> monotone Newton
+      double T = Math.max(tg, tRad);           // F(T) <= 0 here and F is concave and decreasing, so Newton converges monotonically
       for (int i = 0; i < 200; i++) {
         double F = h * (tg - T) - eps * (SIGMA * Math.pow(T, 4) - G / 4), dF = -h - 4 * eps * SIGMA * T * T * T;
         double dT = F / dF;
@@ -2527,9 +2517,9 @@ public class SimKitCalc extends StarMacro {
       return r;
     }
 
-    // ----- 9. Combustion & spray -----------------------------------------------------------------------
+    // ----- Combustion and spray ------------------------------------------------------------------------
 
-    /** CxHyOz in dry air. given: 0 mass flows, 1 equivalence ratio, 2 mixture fraction; an empty atom count is 0. */
+    /** CxHyOz in dry air. 'given' selects the input: 0 mass flows, 1 equivalence ratio, 2 mixture fraction. */
     static R stoich(double x, double y, double z, int given, double mFuel, double mAir, double phiIn, double zIn) {
       if (x < 0 || y < 0 || z < 0) throw new IllegalArgumentException("Atom counts: >= 0 required");
       double o2 = x + y / 4 - z / 2;
@@ -2567,7 +2557,7 @@ public class SimKitCalc extends StarMacro {
 
     // ----- Dimensionless numbers ------------------------------------------------------------------------
 
-    /** symbol, name, input keys (as in DIM_FIELDS of the window). */
+    /** Columns: symbol, name, input keys. Keys as in DIM_FIELDS. */
     static final String[][] DIMLESS = {
         {"Re", "Reynolds", "rho,U,L,mu"}, {"Ma", "Mach", "U,T,gamma,M"}, {"Fr", "Froude", "U,g,L"}, {"Kn", "Knudsen", "lam,L"},
         {"St", "Strouhal", "f,L,U"}, {"Co", "Courant", "U,dt,dx"}, {"Cp", "Pressure coefficient", "p,pinf,rho,U"},
@@ -2761,7 +2751,7 @@ public class SimKitCalc extends StarMacro {
       return r.main("dp");
     }
 
-    // ----- 10. Units --------------------------------------------------------------------------------------
+    // ----- Units ------------------------------------------------------------------------------------------
 
     static final String[] CONV_NAMES = {"BTU/(ft^2 s) -> kW/m^2", "kW/m^2 -> BTU/(ft^2 s)", "BTU/h -> W", "W -> BTU/h",
         "W/cm^2 -> kW/m^2", "kW/m^2 -> W/cm^2", "psi -> Pa", "Pa -> psi", "ft/min -> m/s", "m/s -> ft/min", "in -> mm", "mm -> in"};
@@ -2802,7 +2792,7 @@ public class SimKitCalc extends StarMacro {
       return r;
     }
 
-    // ----- units -> dimensions (M, L, T, Theta) for To parameter ----------------------------------------
+    // ----- Unit to dimension exponents (M, L, T, Theta) for To parameter --------------------------------
 
     static int[] dimsOf(String unit) {
       switch (unit) {
@@ -2828,12 +2818,12 @@ public class SimKitCalc extends StarMacro {
         case "W": return new int[] {1, 2, -3, 0};
         case "N/m": return new int[] {1, 0, -2, 0};
         case "1/K": return new int[] {0, 0, 0, -1};
-        case "kg/kmol": return new int[] {0, 0, 0, 0};   // molar mass: kept dimensionless (no mole dimension used here)
-        default: return new int[] {0, 0, 0, 0};          // "-", "%", "", "core-h", "h" (hours), ...: dimensionless
+        case "kg/kmol": return new int[] {0, 0, 0, 0};   // molar mass is kept dimensionless, no mole dimension is used
+        default: return new int[] {0, 0, 0, 0};          // "-", "%", "", "core-h", "h" [hours] and others are set as dimensionless
       }
     }
 
-    // ----- self-check (documented reference examples) -----------------------------------------------------
+    // ----- Self-check with reference examples -------------------------------------------------------------
 
     static String selfCheck() {
       StringBuilder sb = new StringBuilder("SimKitCalc self-check (Core, reference examples)\n");
@@ -2873,18 +2863,18 @@ public class SimKitCalc extends StarMacro {
   }
 
   // =====================================================================================================
-  // Library: data/fluids.csv (no STAR types)
+  // Fluid property library (data/fluids.csv)
   // =====================================================================================================
 
   static final class Library {
     static final String[] PROP_COLS = {"property", "model", "coefficients", "T_unit", "T_min", "T_max", "unit", "source", "note"};
     static final Set<String> MODELS = new HashSet<>(Arrays.asList("const", "table", "linear", "sutherland", "andrade", "idealgas", "polyC"));
 
-    /** One property row. */
+    /** One row of fluids.csv. */
     static final class Prop {
       String owner, prop, model, coeffText, tUnit, unit, source, note;
-      double[] c;              // coefficients (table: T values in tab[0], values in tab[1])
-      double[][] tab;
+      double[] c;
+      double[][] tab;   // table model: T values in tab[0], property values in tab[1]
       double tMin = Double.NaN, tMax = Double.NaN;
       boolean celsius;
 
@@ -2924,7 +2914,7 @@ public class SimKitCalc extends StarMacro {
       return sb.toString();
     }
 
-    /** Parses fluids.csv; every unparseable row is reported in 'errors' and skipped. */
+    /** Parses fluids.csv. Rows that cannot be parsed are added to errors and skipped. */
     static List<Prop> parseProps(String text, String file, List<String> errors) {
       List<Prop> out = new ArrayList<>();
       List<String[]> rows = Csv.parse(text);
@@ -2957,7 +2947,7 @@ public class SimKitCalc extends StarMacro {
           p.tMax = optNum(get(r, col, "T_max"), "T_max");
           if (!Double.isNaN(p.tMin) && !Double.isNaN(p.tMax) && p.tMin > p.tMax) throw new IllegalArgumentException("T_min > T_max");
           parseCoefficients(p);
-          // evaluate once in range to catch nonsense (non-finite / non-positive where physical)
+          // Evaluate once inside the valid range to reject coefficients that give a non-finite value.
           double tTest = !Double.isNaN(p.tMin) && !Double.isNaN(p.tMax) ? 0.5 * (p.tMin + p.tMax) : !Double.isNaN(p.tMin) ? p.tMin
               : !Double.isNaN(p.tMax) ? p.tMax : (p.celsius ? 20 : 300);
           double v = eval(p, p.celsius ? tTest + 273.15 : tTest, 101325, new ArrayList<>());
@@ -3020,7 +3010,7 @@ public class SimKitCalc extends StarMacro {
       }
     }
 
-    /** Value of a property at T (kelvin) and p (Pa). T is clamped to [T_min, T_max] (and to the table range) with a warning. */
+    /** Value of a property at tK [K] and pPa [Pa]. T outside [T_min, T_max] or the table range is clamped, with a warning in warns. */
     static double eval(Prop p, double tK, double pPa, List<String> warns) {
       if (Double.isNaN(tK)) throw new IllegalArgumentException("temperature required");
       double T = p.celsius ? tK - 273.15 : tK, tu = T;
@@ -3066,7 +3056,7 @@ public class SimKitCalc extends StarMacro {
       return p.model + "(" + p.coeffText + ")";
     }
 
-    /** Core.Props backed by a fluid of the library: rho (or idealgas), mu (or nu*rho), k, cp. */
+    /** Core.Props for a library fluid. mu is taken as nu * rho when the fluid has no mu row. */
     Core.Props fluidProps(String name, double pPa) {
       Map<String, Prop> m = fluids.get(name);
       if (m == null) throw new IllegalArgumentException("fluid '" + name + "' not in fluids.csv");
@@ -3079,7 +3069,7 @@ public class SimKitCalc extends StarMacro {
           return new double[] {rho, mu, k, cp};
         }
 
-        /** Evaluates one property (NaN if the fluid has no such row) and cites its source once. */
+        /** Evaluates one property and adds its source to sources once. Returns NaN if the fluid has no such row. */
         double ev(String key, double T) {
           Prop p = m.get(key);
           if (p == null) return Double.NaN;
@@ -3117,7 +3107,7 @@ public class SimKitCalc extends StarMacro {
       }
     }
 
-    /** SimKit unit spelling (W/m.K, J/kg.K, Pa.s, kg/m3, m2/s) -> STAR-style name used by To parameter. */
+    /** Converts the SimKit unit spelling (e.g. W/m.K) to the STAR-CCM+ unit name (W/m-K) used when writing a parameter. */
     static String siUnit(String u) {
       switch (u) {
         case "kg/m3": return "kg/m^3";
@@ -3132,15 +3122,13 @@ public class SimKitCalc extends StarMacro {
   }
 
   // =====================================================================================================
-  // Helpers (same behaviour as in SimKit.java)
+  // Helpers (copies of the SimKit.java helpers)
   // =====================================================================================================
 
-  /** Styled-text rendering of a result: warnings first, the results table (tab stops), then the details. */
-  /** Formulas written in a small part of LaTeX and drawn as mathematics, with no library (STAR-CCM+ macros cannot load
-   *  one without set-up): \frac{a}{b}, \sqrt{x}, x^{2}, x_{i}, \left( ... \right) (also [ ] \{ \} | \lceil \rceil),
-   *  \dot m, \text{...}, \ln \log \exp, \int, Greek letters, \cdot \times \le \ge, spaces \, \; \quad. One letter is a
-   *  variable (italic), several letters a name (Re, Pr, upright). The same formula gives a plain-text form, copied with
-   *  the results and written in calc_log. */
+  /** Draws formulas written in a subset of LaTeX, without a library (a STAR-CCM+ macro cannot load one without set-up).
+   *  Supported are \frac, \sqrt, ^ and _, \left ... \right with ( [ \{ | \lceil, \dot, \text, \ln \log \exp, \int,
+   *  Greek letters, \cdot \times \le \ge and the spaces \, \; \quad. A single letter is drawn as an italic variable,
+   *  several letters as an upright name (Re, Pr). plain() gives the text form used in the copied results and calc_log. */
   static final class TeX {
     static final Map<String, String[]> CMD = new java.util.HashMap<>();   // name -> {symbol, plain text, kind}
     static {
@@ -3161,7 +3149,7 @@ public class SimKitCalc extends StarMacro {
     static final java.awt.font.FontRenderContext FRC = new java.awt.font.FontRenderContext(null, true, true);
     static final java.awt.Color INK = new java.awt.Color(0x1D, 0x27, 0x33);
 
-    /** A laid-out piece: width, height above and below the baseline. */
+    /** A laid-out part with width w, ascent a and descent d. */
     abstract static class Box {
       double w, a, d;
       abstract void draw(java.awt.Graphics2D g, double x, double y);
@@ -3193,9 +3181,9 @@ public class SimKitCalc extends StarMacro {
       return b;
     }
 
-    /** A parsed formula part: drawn (box) or written as plain text. */
+    /** A parsed formula part. box() lays it out for drawing, plain() gives the text form. */
     abstract static class Node {
-      String kind = "ord";   // ord, var, bin, rel, open, close, punct, fn, big, space
+      String kind = "ord";   // ord, var, bin, rel, open, close, punct, fn, big, space or soft
       abstract Box box(float size, int level);
       abstract String plain();
     }
@@ -3242,7 +3230,7 @@ public class SimKitCalc extends StarMacro {
         for (int i = 0; i < ns.size(); i++) {
           Node n = ns.get(i);
           String k = n.kind;
-          if (k.equals("soft")) {   // a typed space: a thin space between two plain parts only
+          if (k.equals("soft")) {   // a typed space gives a thin space only between two ordinary parts
             String next = i + 1 < ns.size() ? ns.get(i + 1).kind : "end";
             if (!(prev.equals("ord") || prev.equals("var") || prev.equals("close") || prev.equals("fn"))
                 || !(next.equals("ord") || next.equals("var") || next.equals("open") || next.equals("fn") || next.equals("big"))) continue;
@@ -3292,7 +3280,7 @@ public class SimKitCalc extends StarMacro {
       return p.length() <= 1 || p.matches("-?[\\w.\u0080-\uFFFF]+") || p.matches("\\w*\\(.*\\)") && depthOk(p) ? p : "(" + p + ")";
     }
 
-    static boolean depthOk(String p) {   // "(a)(b)" is not one bracket
+    static boolean depthOk(String p) {   // false for "(a)(b)", which is not one bracketed group
       int d = 0;
       for (int i = 0; i < p.length(); i++) {
         if (p.charAt(i) == '(') d++;
@@ -3380,7 +3368,7 @@ public class SimKitCalc extends StarMacro {
         boolean ital = base instanceof Sym && ((Sym) base).italic;
         final double u = pb == null ? 0 : Math.max(size * 0.38, bb.a - pb.a * 0.55);
         double v0 = sb == null ? 0 : Math.max(size * 0.2, sb.a - size * 0.28);
-        if (pb != null && sb != null) v0 = Math.max(v0, sb.a - u + pb.d + size * 0.1);   // the two scripts apart
+        if (pb != null && sb != null) v0 = Math.max(v0, sb.a - u + pb.d + size * 0.1);   // keep superscript and subscript from overlapping
         final double v = v0, kern = ital ? size * 0.06 : 0;
         Box b = new Box() {
           @Override void draw(java.awt.Graphics2D g, double x, double y) {
@@ -3418,7 +3406,7 @@ public class SimKitCalc extends StarMacro {
       @Override Box box(float size, int level) {
         final Box ib = in.box(size, level);
         final double h = ib.a + ib.d;
-        if (h <= size * 1.05) {   // small: the ordinary characters
+        if (h <= size * 1.05) {   // small content uses the font characters
           List<Node> ns = new ArrayList<>();
           ns.add(new Sym(open.equals(".") ? "" : open, "", false, "open"));
           ns.add(in);
@@ -3519,7 +3507,7 @@ public class SimKitCalc extends StarMacro {
       @Override String plain() { return t; }
     }
 
-    /** The reader of the formula text. */
+    /** Recursive-descent parser of the formula text. k is the read position. */
     static final class P {
       final String s;
       int k;
@@ -3595,7 +3583,7 @@ public class SimKitCalc extends StarMacro {
       }
 
       String name() {
-        k++;   // the backslash
+        k++;   // skip the backslash
         int e = k;
         while (e < s.length() && Character.isLetter(s.charAt(e))) e++;
         if (e == k) e = Math.min(s.length(), k + 1);
@@ -3604,7 +3592,7 @@ public class SimKitCalc extends StarMacro {
         return n;
       }
 
-      String raw() {   // {text} as it is
+      String raw() {   // returns the {...} argument unparsed
         while (k < s.length() && s.charAt(k) == ' ') k++;
         if (k >= s.length() || s.charAt(k) != '{') return "";
         int e = s.indexOf('}', k);
@@ -3649,14 +3637,14 @@ public class SimKitCalc extends StarMacro {
 
     static Node parse(String tex) { return new P(tex).list(false, false); }
 
-    /** The formula as plain text (a / b, sqrt(x), x^2, rho, eps ...). */
+    /** Plain-text form of the formula, e.g. a/b, sqrt(x), x^2, rho. Equations are separated by " ; ". */
     static String plain(String tex) {
       List<String> eqs = new ArrayList<>();
       for (String e : tex.split(" ; ")) eqs.add(parse(e).plain().replaceAll(" +", " ").replace("( ", "(").replace(" )", ")").trim());
       return String.join(" ; ", eqs);
     }
 
-    /** One equation drawn, as an icon (for a styled text). */
+    /** One equation drawn as an Icon for a StyledDocument. */
     static javax.swing.Icon icon(String tex, final float size) {
       final Box b = parse(tex).box(size, 0);
       final int pad = 3;
@@ -3692,10 +3680,10 @@ public class SimKitCalc extends StarMacro {
     }
 
     static void add(javax.swing.text.StyledDocument d, String text, javax.swing.text.AttributeSet a) {
-      try { d.insertString(d.getLength(), text, a); } catch (javax.swing.text.BadLocationException e) { /* never */ }
+      try { d.insertString(d.getLength(), text, a); } catch (javax.swing.text.BadLocationException e) { /* cannot happen when inserting at the end */ }
     }
 
-    /** Paragraph tab stops of the outputs table: name | value (right-aligned) | unit. */
+    /** Tab stops of the outputs table. The value column is right-aligned, the unit follows. */
     static void rows(javax.swing.text.StyledDocument d, int start) {
       javax.swing.text.SimpleAttributeSet p = new javax.swing.text.SimpleAttributeSet();
       javax.swing.text.StyleConstants.setTabSet(p, new javax.swing.text.TabSet(new javax.swing.text.TabStop[] {
@@ -3734,11 +3722,11 @@ public class SimKitCalc extends StarMacro {
       return b;
     }
 
-    /** Formula (drawn), source, validity, notes, inputs, log. */
+    /** Writes the details of a result: formulas, result lines, inputs and the log note. */
     static void details(javax.swing.text.StyledDocument d, Core.R r, String inputs, String logNote) {
       if (!r.showFormula) formulas(d, r);
       for (String l : r.lines) {
-        if (!r.tex.isEmpty() && l.startsWith("Formula:")) continue;   // drawn
+        if (!r.tex.isEmpty() && l.startsWith("Formula:")) continue;   // already drawn as a formula
         int c = l.indexOf(':');
         if (!l.isEmpty() && c > 0 && c < 10) {
           add(d, l.substring(0, c + 1), style(11, true, GREY, null));
@@ -3760,10 +3748,10 @@ public class SimKitCalc extends StarMacro {
             try {
               javax.swing.text.StyleConstants.setIcon(ic, TeX.icon(eq, 17f));
               add(d, " ", ic);
-            } catch (Throwable x) {   // never lose the result for a drawing problem
+            } catch (Throwable x) {   // fall back to plain text so a drawing error does not lose the result
               add(d, TeX.plain(eq), style(12, false, java.awt.Color.DARK_GRAY, null));
             }
-            add(d, "        ", style(12, false, null, null));   // equations side by side, wrapped like words
+            add(d, "        ", style(12, false, null, null));   // the spaces let the equations wrap like words
           }
         }
         add(d, "\n", style(12, false, null, null));
@@ -3789,13 +3777,13 @@ public class SimKitCalc extends StarMacro {
     Log(Simulation sim) { this.sim = sim; }
 
     void line(String s) {
-      try { sim.println("[SimKitCalc] " + s); } catch (Throwable t) { System.out.println("[SimKitCalc] " + s); }   // [U52]
+      try { sim.println("[SimKitCalc] " + s); } catch (Throwable t) { System.out.println("[SimKitCalc] " + s); }
     }
   }
 
   static final class Fs {
     static Path kit() { return ROOT; }
-    /** A file or folder of the kit, relative to the SimKit root with '/' (same text on Windows and Linux). */
+    /** Resolves a path relative to the SimKit root. rel uses '/' as separator on all platforms. */
     static Path inKit(String rel) {
       Path p = kit();
       for (String part : rel.split("/")) if (!part.isEmpty()) p = p.resolve(part);
@@ -3804,7 +3792,7 @@ public class SimKitCalc extends StarMacro {
 
     static String user() { return System.getProperty("user.name", "unknown"); }
 
-    /** Comparison key of a path: case-insensitive on Windows only (Linux file systems are case-sensitive). */
+    /** Comparison key of a path. Lower case on Windows, unchanged on Linux where file names are case-sensitive. */
     static String key(Path p) {
       String s = p.toAbsolutePath().normalize().toString();
       return java.io.File.separatorChar == '\\' ? s.toLowerCase(Locale.ROOT) : s;
@@ -3820,7 +3808,7 @@ public class SimKitCalc extends StarMacro {
       return s.startsWith("\uFEFF") ? s.substring(1) : s;
     }
 
-    /** Appends a CSV row (header first if the file is new). Write guard: only inside the case folder. */
+    /** Appends a CSV row, with the header when the file is new. Throws IOException for a path outside caseDir. */
     static void appendCsv(Path f, Path caseDir, String[] header, String[] row) throws IOException {
       if (!under(f, caseDir)) throw new IOException("refused to write outside the case folder " + caseDir + ": " + f);
       Path g = f.toAbsolutePath().normalize();
@@ -3902,7 +3890,7 @@ public class SimKitCalc extends StarMacro {
     }
   }
 
-  /** Reflection for getters whose 2402 name is not certain (as in SimKit.java). */
+  /** Reflection calls for getters whose name in STAR-CCM+ 2402 is not certain. */
   static final class Reflect {
     static Object tryCall(Object target, String method, Object... args) {
       if (target == null) return null;
