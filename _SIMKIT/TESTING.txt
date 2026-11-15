@@ -674,3 +674,10 @@ C. RESULTS SO FAR
   (grep). Found: "SimKit: confirmed, closing window..." and the terminal closes after 2 s. Not found: "SimKit: submission
   not confirmed, keeping window open." and an interactive shell stays open. Changed on the team Linux machine. A
   refused job shows "Not submitted: see the terminal and submit/<log>" on the status line.
+  Tool windows do not block STAR-CCM+: Ui.sheet is a modeless dialog; the calling tool waits in a secondary event loop
+  (EventQueue.createSecondaryLoop) until the window closes, so the tool code is unchanged. A toolbar button starts its
+  tool in a background thread and the macro ends at once. One tool at a time across plays of the macro: system
+  property simkit.running holds the running tool; another start brings the open window (simkit.sheet) to the front
+  and logs "<tool> is open. Close it first." Short questions (JOptionPane) stay modal. Offline test: the dialog is
+  MODELESS, the caller waits, another window takes clicks, OK returns true and clears simkit.sheet. Not run: the
+  STAR-CCM+ GUI on Windows and Linux.

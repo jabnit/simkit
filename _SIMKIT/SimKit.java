@@ -152,8 +152,13 @@ public class SimKit extends StarMacro {
         + " | classes preloaded: " + preloaded);
     Tool direct = Env.directTool();   // set by a toolbar button macro (buttons/SimKit_<Tool>.java)
     if (direct != null) {
-      if (gui) runTool(direct);
-      else runBatchTool(direct);
+      if (gui) {   // in a background thread, so the macro ends and STAR-CCM+ stays usable while the tool window is open
+        Thread t = new Thread(() -> runTool(direct), "SimKit " + direct.title);
+        t.setDaemon(true);
+        t.start();
+      } else {
+        runBatchTool(direct);
+      }
       return;
     }
     if (!gui) {
@@ -249,8 +254,29 @@ public class SimKit extends StarMacro {
 
   volatile int lastLevel;                          // 0 done, 1 cancelled or items skipped, 2 error
 
-  /** Runs one tool. Failures are logged and not thrown. */
+  /** System property holding the title of the running tool. It is shared by every play of the macro, because each
+   *  play loads its own copy of the SimKit classes. */
+  static final String RUNNING_KEY = "simkit.running";
+
+  /** Runs one tool. Failures are logged and not thrown. Only one tool runs at a time: while another one runs, its
+   *  window comes to the front and nothing else is done. */
   void runTool(Tool id) {
+    Object other = System.getProperties().putIfAbsent(RUNNING_KEY, id.title);
+    if (other != null) {
+      Ui.frontSheet();
+      lastLevel = 1;
+      lastStatus = other + " is open. Close it first.";
+      log.line("SimKit: " + lastStatus);
+      return;
+    }
+    try {
+      runToolNow(id);
+    } finally {
+      System.getProperties().remove(RUNNING_KEY, id.title);
+    }
+  }
+
+  void runToolNow(Tool id) {
     log.take();
     summary = null;
     log.line("=== " + id.title + " ===");
@@ -9237,7 +9263,7 @@ public class SimKit extends StarMacro {
     static boolean sheet(String title, String sub, javax.swing.JComponent body, final JButton ok, final java.util.function.Supplier<String> check,
         final JButton extra) {
       return edt(() -> {
-        final JDialog d = new JDialog(owner(), "SimKit", java.awt.Dialog.ModalityType.APPLICATION_MODAL);
+        final JDialog d = new JDialog(owner(), "SimKit", java.awt.Dialog.ModalityType.MODELESS);
         d.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
         final boolean[] done = {false};
         JPanel root = new JPanel(new BorderLayout(0, 14));
@@ -9301,8 +9327,33 @@ public class SimKit extends StarMacro {
         d.pack();
         d.setLocationRelativeTo(owner());
         Env.track(d);
+        // Modeless, so STAR-CCM+ stays usable. The secondary loop keeps the Swing events running and returns when
+        // the window is closed, so the caller still gets the answer as with a modal dialog.
+        final java.awt.SecondaryLoop loop = java.awt.Toolkit.getDefaultToolkit().getSystemEventQueue().createSecondaryLoop();
+        d.addWindowListener(new java.awt.event.WindowAdapter() {
+          @Override public void windowClosed(java.awt.event.WindowEvent e) {
+            System.getProperties().remove(SHEET_KEY, d);
+            loop.exit();
+          }
+        });
+        System.getProperties().put(SHEET_KEY, d);
         d.setVisible(true);
+        loop.enter();
         return done[0];
+      });
+    }
+
+    /** System property holding the open tool window, shared by every play of the macro. */
+    static final String SHEET_KEY = "simkit.sheet";
+
+    /** Brings the open tool window to the front, if there is one. */
+    static void frontSheet() {
+      javax.swing.SwingUtilities.invokeLater(() -> {
+        Object w = System.getProperties().get(SHEET_KEY);
+        if (w instanceof java.awt.Window && ((java.awt.Window) w).isDisplayable()) {
+          ((java.awt.Window) w).setVisible(true);
+          ((java.awt.Window) w).toFront();
+        }
       });
     }
 
