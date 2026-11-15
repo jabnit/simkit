@@ -116,12 +116,14 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       changes, images); sections not produced yet say "not available".
    4f. Calculators > Flow-through & averaging window: From report... can fill the mass flow from
       r_mdot_in; Compute gives t_ft, the averaging window start and the end time.
-   4h. Case tracker: one grey header row per case (ID, description, "n versions") with its versions underneath
-      (ID + grey file name, coloured status, comment, based on, saved). The open case is unfolded, its version has
-      a green dot and is selected. Click the arrow of another case: it unfolds; again: it folds. Right-click > Fold
-      all / Unfold all. Click a status, pick "running": saved at once (bottom line "Saved: status of ..."); "dropped"
-      strikes the comment through. The formatting bar (B, I, U, A colour, lists, Template) is always shown above the
-      box beside the table, titled "Comments" (a case row: "Description"). Double-click a comment: the caret goes in
+   4h. Tracker: title "Tracker - project <name> - <folder>". Runs in the project folder have no heading; runs in a
+      sub-folder are under a grey heading with the folder name and its run count. The open run has a green dot and is
+      selected. Click the arrow of a heading: it folds; again: it unfolds. Right-click > Fold all folders / Unfold all
+      folders. With no row selected the details show the project and its description. Click a status, pick
+      "running": saved at once (bottom line "Saved: status of ..."); "dropped" strikes the comment through. Tree:
+      Fit to view (Ctrl+0) shows the whole tree; - and + or Ctrl+wheel zoom between 20 % and 200 %; a click on a
+      card at any zoom selects that run. The formatting bar (B, I, U, A colour, lists, Template) is always shown above the
+      box beside the table, titled "Comments" (no row selected: "Description"). Double-click a comment: the caret goes in
       the box. Type several lines; select a word and press B, I, U, A (pick red, then "No colour"); the list button:
       Bullets, Numbered, No list; press B with nothing selected, type, press B again; type "- "
       at the start of a line (a bullet appears), Enter (next bullet), Enter on the empty bullet (list ends);
@@ -692,3 +694,9 @@ C. RESULTS SO FAR
   Per quantity and statistic / Per object / None; the reports table is grouped by plot, heading "Plot T_max new · 4
   curves" or "exists · +5 curves" (existing plot or its former pl_ name), heading tick selects the group's new reports;
   the Plot column is removed. Rendered offline with sample sets. Batch objtest logs the sets.
+  Tracker: the project row is replaced by sub-folder headings (folder relative to the project, from the run folder;
+  runs in the project folder have no heading; headings fold, Fold all folders / Unfold all folders); the project and
+  its description show in the details when no row is selected. Tree: Fit to view (Ctrl+0), - / + and Ctrl+wheel zoom
+  (20 % to 200 %), card hits and the dashed new-run card scale with the zoom. Wording: "Tracker - project <name>",
+  "Open folder", folders instead of cases, runs instead of versions. Rendered offline on a project with
+  mesh_study_R002 and variants sub-folders (14 runs): headings with run counts, tree fitted at 26 %.

@@ -2309,6 +2309,11 @@ public class SimKit extends StarMacro {
     final Map<String, String[]> byId = new HashMap<>();
     static final java.awt.Color INK = new java.awt.Color(0x1D, 0x27, 0x33), EDGE = new java.awt.Color(0xC3, 0xCB, 0xD5),
         FRAME = new java.awt.Color(0xD5, 0xD9, 0xDE);
+    static final double ZOOM_MIN = 0.2, ZOOM_MAX = 2.0;
+    /** Drawing scale. The cards are laid out at scale 1 (box, base size); mouse positions are divided by zoom. */
+    double zoom = 1.0;
+    int baseW = M, baseH = M;
+    Runnable onZoom;   // called after the zoom changes, e.g. to update a percentage label
 
     RunTree() {
       setOpaque(true);
@@ -2332,6 +2337,13 @@ public class SimKit extends StarMacro {
           picked = id;
           repaint();
           onClick.accept(id, e.getClickCount());
+        }
+      });
+      addMouseWheelListener(e -> {
+        if (e.isControlDown()) {
+          setZoom(zoom * Math.pow(1.15, -e.getWheelRotation()), e.getPoint());
+        } else if (getParent() != null) {   // a listener here takes the wheel from the scroll pane: pass it on
+          getParent().dispatchEvent(javax.swing.SwingUtilities.convertMouseEvent(this, e, getParent()));
         }
       });
       addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
@@ -2370,8 +2382,50 @@ public class SimKit extends StarMacro {
     }
 
     String at(java.awt.Point p) {
-      for (Map.Entry<String, java.awt.Rectangle> e : box.entrySet()) if (e.getValue().contains(p)) return e.getKey();
+      java.awt.Point q = new java.awt.Point((int) Math.floor(p.x / zoom), (int) Math.floor(p.y / zoom));
+      for (Map.Entry<String, java.awt.Rectangle> e : box.entrySet()) if (e.getValue().contains(q)) return e.getKey();
       return null;
+    }
+
+    /** Sets the zoom and keeps the point 'at' (component coordinates, null: the view centre) under the mouse. */
+    void setZoom(double z, java.awt.Point at) {
+      z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+      if (Math.abs(z - zoom) < 1e-3) return;
+      javax.swing.JViewport vp = (javax.swing.JViewport) javax.swing.SwingUtilities.getAncestorOfClass(javax.swing.JViewport.class, this);
+      java.awt.Point view = vp == null ? new java.awt.Point() : vp.getViewPosition();
+      java.awt.Dimension ext = vp == null ? new java.awt.Dimension() : vp.getExtentSize();
+      if (at == null) at = new java.awt.Point(view.x + ext.width / 2, view.y + ext.height / 2);
+      double mx = at.x / zoom, my = at.y / zoom;   // model point under the mouse
+      int sx = at.x - view.x, sy = at.y - view.y;  // its position in the viewport
+      zoom = z;
+      sizeToZoom();
+      if (vp != null) {
+        vp.validate();
+        int x = (int) Math.round(mx * zoom) - sx, y = (int) Math.round(my * zoom) - sy;
+        java.awt.Dimension d = getPreferredSize();
+        vp.setViewPosition(new java.awt.Point(Math.max(0, Math.min(x, Math.max(0, d.width - ext.width))),
+            Math.max(0, Math.min(y, Math.max(0, d.height - ext.height)))));
+      }
+      if (onZoom != null) onZoom.run();
+    }
+
+    /** Zoom that shows the whole tree in the view, at most 100 %. */
+    void fit() {
+      javax.swing.JViewport vp = (javax.swing.JViewport) javax.swing.SwingUtilities.getAncestorOfClass(javax.swing.JViewport.class, this);
+      if (vp == null || baseW <= 0 || baseH <= 0) return;
+      java.awt.Dimension ext = vp.getExtentSize();
+      double z = Math.min(1.0, Math.min(ext.width / (double) baseW, ext.height / (double) baseH));
+      zoom = Math.max(ZOOM_MIN, z);
+      sizeToZoom();
+      vp.validate();
+      vp.setViewPosition(new java.awt.Point(0, 0));
+      if (onZoom != null) onZoom.run();
+    }
+
+    void sizeToZoom() {
+      setPreferredSize(new java.awt.Dimension((int) Math.ceil(baseW * zoom), (int) Math.ceil(baseH * zoom)));
+      revalidate();
+      repaint();
     }
 
     @Override public String getToolTipText(java.awt.event.MouseEvent e) {
@@ -2385,7 +2439,10 @@ public class SimKit extends StarMacro {
           + "</body></html>";
     }
 
-    java.awt.Rectangle ghostBox() { return ghost == null ? null : box.get(ghost[0]); }
+    java.awt.Rectangle ghostBox() {
+      java.awt.Rectangle b = ghost == null ? null : box.get(ghost[0]);
+      return b == null ? null : new java.awt.Rectangle((int) (b.x * zoom), (int) (b.y * zoom), (int) (b.width * zoom), (int) (b.height * zoom));
+    }
 
     /** Places the cards: children in the next column, a parent centred on its children. */
     void relayout() {
@@ -2427,9 +2484,9 @@ public class SimKit extends StarMacro {
       for (String id : ids) if (!seen.contains(id)) place(id, 0, kids, slot, seen);   // runs in a based-on loop are drawn as roots
       int wMax = M, hMax = M;
       for (java.awt.Rectangle b : box.values()) { wMax = Math.max(wMax, b.x + b.width + M); hMax = Math.max(hMax, b.y + b.height + M); }
-      setPreferredSize(new java.awt.Dimension(wMax, hMax));
-      revalidate();
-      repaint();
+      baseW = wMax;
+      baseH = hMax;
+      sizeToZoom();
     }
 
     int place(String id, int depth, Map<String, List<String>> kids, int[] slot, Set<String> seen) {
@@ -2447,6 +2504,8 @@ public class SimKit extends StarMacro {
       g.fillRect(0, 0, getWidth(), getHeight());
       g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
       g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+      g.setRenderingHint(java.awt.RenderingHints.KEY_FRACTIONALMETRICS, java.awt.RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+      g.scale(zoom, zoom);
       String gid = ghost == null ? null : ghost[0];
       java.awt.Stroke solid = new java.awt.BasicStroke(1.6f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND);
       java.awt.Stroke dash = new java.awt.BasicStroke(1.8f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND, 1f,
@@ -2651,7 +2710,8 @@ public class SimKit extends StarMacro {
     };
   }
 
-  /** Case tracker window. Edits are saved at once. The rows are reread from the case folders when the window gets focus. */
+  /** Tracker window of a project. Edits are saved at once. The rows are read again from the project folder when the
+   *  window gets focus. */
   final class TrackerWindow {
     static final int T_ID = 0, T_STATUS = 1, T_COMMENT = 2, T_BASED = 3, T_SAVED = 4;
     final String[] cols = {"ID", "status", "comment", "based on", "saved"};
@@ -2660,13 +2720,15 @@ public class SimKit extends StarMacro {
         grey = new java.awt.Color(0x6B, 0x75, 0x80), link = new java.awt.Color(0x1F, 0x4E, 0x9A),
         red = new java.awt.Color(0xB0, 0x20, 0x20), green = new java.awt.Color(0x2E, 0x6B, 0x2E);
 
-    /** One table row: a case header (r == null) or a version. */
+    /** One table row: a sub-folder heading (r == null, folder relative to the project) or a run. caseId is the
+     *  project. */
     final class Item {
-      final String caseId;
+      final String caseId, folder;
       final String[] r;
-      Item(String caseId, String[] r) { this.caseId = caseId; this.r = r; }
-      boolean isCase() { return r == null; }
-      String key() { return r == null ? "case:" + caseId : r[COL_ID]; }
+      Item(String caseId, String[] r) { this(caseId, r, null); }
+      Item(String caseId, String[] r, String folder) { this.caseId = caseId; this.r = r; this.folder = folder; }
+      boolean isFolder() { return r == null; }
+      String key() { return r == null ? "folder:" + folder : r[COL_ID]; }
     }
 
     Path dir;
@@ -2674,7 +2736,8 @@ public class SimKit extends StarMacro {
     List<String[]> rows = new ArrayList<>();
     final Map<String, List<String[]>> byCase = new LinkedHashMap<>();
     final Map<String, Map<String, String>> ids = new HashMap<>();
-    final Set<String> expanded = new HashSet<>();
+    final Set<String> folded = new HashSet<>();                // folded sub-folders
+    final Map<String, Integer> folderRuns = new HashMap<>();   // runs per sub-folder, without the hidden ones
     final List<Item> view = new ArrayList<>();
     final JDialog w;
     final JTable table;
@@ -2682,7 +2745,7 @@ public class SimKit extends StarMacro {
     final JTextField filter;
     final JComboBox<String> statusFilter = new JComboBox<>(new String[] {"All statuses", "Active (planned, meshing, running)",
         "Done", "Dropped", "No status", "Diverged"});
-    /** Shows hidden runs and versions, faded. Visible only when something is hidden. */
+    /** Shows hidden runs, faded. Visible only when something is hidden. */
     final javax.swing.JToggleButton showHidden = new javax.swing.JToggleButton("Hidden");
     final JButton undoBtn = Ui.link("Undo");
     Runnable undoAction;
@@ -2716,7 +2779,7 @@ public class SimKit extends StarMacro {
     final JButton folderBtn = new JButton(actionIcon(1)), hideBtn = new JButton(actionIcon(4)),
         simBtn = new JButton("Open in STAR-CCM+..."), copyBtn = new JButton(actionIcon(2));
     boolean opening = false;
-    final Set<String> pins = new LinkedHashSet<>();   // pinned case folders, per user
+    final Set<String> pins = new LinkedHashSet<>();   // starred runs, per user
 
     String pinKey(String caseId) { return dir.resolve(caseId).toAbsolutePath().normalize().toString(); }
 
@@ -2729,7 +2792,7 @@ public class SimKit extends StarMacro {
       rebuild();
       say(shown(caseId) + (on ? " starred" : " unstarred"), grey);
     }
-    String areaKey = null;   // version ID for a comment, "case:<id>" for a case description
+    String areaKey = null;   // run ID for a comment, "case:<project>" for the project description
 
     /** Display ID: R007 for a run, the project name for the project row. */
     String shown(String id) { return id.matches(".*\\.v[0-9]+$") ? runId(runOf(id)) : id; }
@@ -2737,7 +2800,6 @@ public class SimKit extends StarMacro {
     TrackerWindow(Path dir0, String openId) {
       this.dir = dir0;
       this.openId = openId;
-      if (openId != null) expanded.add(caseOf(openId));
       for (String p : java.util.Objects.toString(Env.pref("trackerPins"), "").split("\n")) if (!p.trim().isEmpty()) pins.add(p.trim());
       model = new javax.swing.table.AbstractTableModel() {
         private static final long serialVersionUID = 1L;
@@ -2746,7 +2808,7 @@ public class SimKit extends StarMacro {
         @Override public String getColumnName(int c) { return cols[c]; }
         @Override public Object getValueAt(int row, int col) {
           Item it = view.get(row);
-          if (it.isCase()) return col == T_ID ? it.caseId : col == T_COMMENT ? description(it.caseId) : "";
+          if (it.isFolder()) return col == T_ID ? it.folder : "";
           switch (col) {
             case T_ID: return it.r[COL_ID];
             case T_STATUS: return it.r[COL_STATUS];
@@ -2756,13 +2818,13 @@ public class SimKit extends StarMacro {
           }
         }
         @Override public boolean isCellEditable(int row, int col) {   // comments and descriptions are edited in the box below
-          return !view.get(row).isCase() && col == T_STATUS;
+          return !view.get(row).isFolder() && col == T_STATUS;
         }
         @Override public void setValueAt(Object v, int row, int col) {
           Item it = view.get(row);
           String s = v == null ? "" : Fmt.oneLine(String.valueOf(v)).trim();
-          if (it.isCase()) saveDescription(it.caseId, s);
-          else if (col == T_STATUS) saveVersion(it.r, COL_STATUS, "status", s);
+          if (it.isFolder()) return;
+          if (col == T_STATUS) saveVersion(it.r, COL_STATUS, "status", s);
           else saveVersion(it.r, COL_COMMENT, "comment", s);
           fireTableRowsUpdated(row, row);
           showDetails();
@@ -2771,7 +2833,7 @@ public class SimKit extends StarMacro {
       table = new JTable(model);
       table.setRowHeight(26);
       table.setShowVerticalLines(false);
-      table.setShowHorizontalLines(false);   // stripes and case headers separate the rows
+      table.setShowHorizontalLines(false);   // stripes and folder headings separate the rows
       table.setIntercellSpacing(new java.awt.Dimension(0, 0));
       table.setFillsViewportHeight(true);
       table.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
@@ -2804,17 +2866,17 @@ public class SimKit extends StarMacro {
           if (row < 0 || !javax.swing.SwingUtilities.isLeftMouseButton(e)) return;
           Item it = view.get(row);
           if (col == T_COMMENT && e.getClickCount() == 2) startEdit();
-          else if (!it.isCase() && col == T_ID && onRunStar(row, e)) togglePin(it.r[COL_ID]);
-          else if (!it.isCase() && col == T_ID && e.getClickCount() == 2) openSelected();
-          else if (it.isCase() && (col == T_ID || e.getClickCount() == 2)) toggle(it.caseId);
-          else if (!it.isCase() && col == T_BASED && byId(it.r[COL_BASED]) != null) jumpTo(it.r[COL_BASED]);
+          else if (!it.isFolder() && col == T_ID && onRunStar(row, e)) togglePin(it.r[COL_ID]);
+          else if (!it.isFolder() && col == T_ID && e.getClickCount() == 2) openSelected();
+          else if (it.isFolder() && (col == T_ID || e.getClickCount() == 2)) toggle(it.folder);
+          else if (!it.isFolder() && col == T_BASED && byId(it.r[COL_BASED]) != null) jumpTo(it.r[COL_BASED]);
         }
       });
       table.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
         @Override public void mouseMoved(java.awt.event.MouseEvent e) {
           int row = table.rowAtPoint(e.getPoint()), col = table.columnAtPoint(e.getPoint());
-          boolean hand = row >= 0 && (view.get(row).isCase() && col == T_ID
-              || !view.get(row).isCase() && col == T_BASED && byId(view.get(row).r[COL_BASED]) != null);
+          boolean hand = row >= 0 && (view.get(row).isFolder() && col == T_ID
+              || !view.get(row).isFolder() && col == T_BASED && byId(view.get(row).r[COL_BASED]) != null);
           table.setCursor(java.awt.Cursor.getPredefinedCursor(hand ? java.awt.Cursor.HAND_CURSOR : java.awt.Cursor.DEFAULT_CURSOR));
           if (row != hoverRow) { hoverRow = row; table.repaint(); }   // hover highlight
         }
@@ -2828,10 +2890,10 @@ public class SimKit extends StarMacro {
       keyOn(table, "SPACE", () -> {
         Item it = current();
         if (it == null) return;
-        if (!it.isCase()) togglePin(it.r[COL_ID]);   // only runs can be pinned, not the project
+        if (!it.isFolder()) togglePin(it.r[COL_ID]);   // only runs can be starred
       });
-      keyOn(table, "LEFT", () -> { Item it = current(); if (it != null && expanded.contains(it.caseId)) toggleKeep(it.caseId); });
-      keyOn(table, "RIGHT", () -> { Item it = current(); if (it != null && !expanded.contains(it.caseId)) toggleKeep(it.caseId); });
+      keyOn(table, "LEFT", () -> { Item it = current(); if (it != null && it.isFolder() && !folded.contains(it.folder)) toggleKeep(it.folder); });
+      keyOn(table, "RIGHT", () -> { Item it = current(); if (it != null && it.isFolder() && folded.contains(it.folder)) toggleKeep(it.folder); });
 
       filter = new JTextField(26) {
         private static final long serialVersionUID = 1L;
@@ -2977,7 +3039,7 @@ public class SimKit extends StarMacro {
       change.setToolTipText("Show the runs of another project");
       change.addActionListener(e -> changeFolder());
 
-      w = new JDialog(Ui.owner(), "Case tracker", java.awt.Dialog.ModalityType.MODELESS);
+      w = new JDialog(Ui.owner(), "Tracker", java.awt.Dialog.ModalityType.MODELESS);
       w.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
       JButton close = new JButton("Close");
       close.addActionListener(e -> w.dispose());
@@ -3077,8 +3139,37 @@ public class SimKit extends StarMacro {
       JScrollPane treeScroll = new JScrollPane(runTree);
       treeScroll.getViewport().setBackground(java.awt.Color.WHITE);
       treeScroll.getVerticalScrollBar().setUnitIncrement(16);
+      treeScroll.getHorizontalScrollBar().setUnitIncrement(16);
+      final JLabel zoomPct = Ui.muted("100 %");
+      final JButton fitBtn = new JButton("Fit to view"), zOut = new JButton("\u2212"), zIn = new JButton("+");
+      fitBtn.setToolTipText("Show the whole tree (Ctrl+0)");
+      zOut.setToolTipText("Zoom out (Ctrl+wheel)");
+      zIn.setToolTipText("Zoom in (Ctrl+wheel)");
+      for (JButton b : new JButton[] {fitBtn, zOut, zIn}) b.setFocusable(false);
+      fitBtn.addActionListener(e -> runTree.fit());
+      zOut.addActionListener(e -> runTree.setZoom(runTree.zoom / 1.25, null));
+      zIn.addActionListener(e -> runTree.setZoom(runTree.zoom * 1.25, null));
+      runTree.onZoom = () -> {
+        zoomPct.setText(Math.round(runTree.zoom * 100) + " %");
+        zOut.setEnabled(runTree.zoom > RunTree.ZOOM_MIN + 1e-3);
+        zIn.setEnabled(runTree.zoom < RunTree.ZOOM_MAX - 1e-3);
+      };
+      JPanel zoomBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 2));
+      zoomBar.add(fitBtn);
+      zoomBar.add(javax.swing.Box.createHorizontalStrut(6));
+      zoomBar.add(zOut);
+      zoomBar.add(zoomPct);
+      zoomBar.add(zIn);
+      JPanel treeCard = new JPanel(new BorderLayout());
+      treeCard.add(zoomBar, BorderLayout.NORTH);
+      treeCard.add(treeScroll, BorderLayout.CENTER);
+      treeCard.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke("ctrl 0"), "simkitFit");
+      treeCard.getActionMap().put("simkitFit", new javax.swing.AbstractAction() {
+        private static final long serialVersionUID = 1L;
+        @Override public void actionPerformed(java.awt.event.ActionEvent e) { if (treeCard.isShowing()) runTree.fit(); }
+      });
       leftCards.add(tableScroll, "list");
-      leftCards.add(treeScroll, "tree");
+      leftCards.add(treeCard, "tree");
       split = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, leftCards, details);
       split.setBorder(null);
       split.setDividerSize(7);
@@ -3123,10 +3214,10 @@ public class SimKit extends StarMacro {
       return r >= 0 && r < view.size() ? view.get(r) : null;
     }
 
-    /** Folds or unfolds a case from the keyboard and keeps the case row selected. */
-    void toggleKeep(String caseId) {
-      toggle(caseId);
-      for (int i = 0; i < view.size(); i++) if (view.get(i).isCase() && view.get(i).caseId.equals(caseId)) table.setRowSelectionInterval(i, i);
+    /** Folds or unfolds a sub-folder from the keyboard and keeps its heading selected. */
+    void toggleKeep(String folder) {
+      toggle(folder);
+      for (int i = 0; i < view.size(); i++) if (view.get(i).isFolder() && view.get(i).folder.equals(folder)) table.setRowSelectionInterval(i, i);
     }
 
     void keyOn(javax.swing.JComponent c, String keyStroke, Runnable r) {
@@ -3158,8 +3249,7 @@ public class SimKit extends StarMacro {
       ids.clear();
       for (String[] r : rows) byCase.computeIfAbsent(caseOf(r[COL_ID]), k -> new ArrayList<>()).add(r);
       for (String cid : byCase.keySet()) ids.put(cid, identityOf(dir, cid));
-      if (openId == null && expanded.isEmpty()) expanded.addAll(byCase.keySet());
-      w.setTitle("Case tracker  -  cases in " + dir);
+      w.setTitle("Tracker  -  project " + dir.getFileName() + "  -  " + dir);
       folderName.setText(dir.getFileName() == null ? dir.toString() : dir.getFileName().toString());
       folderName.setToolTipText(dir.toString());
       rebuild();
@@ -3190,7 +3280,7 @@ public class SimKit extends StarMacro {
       }
     }
 
-    /** Rebuilds the visible rows from the data, the filter and the folded cases. Keeps the selection. */
+    /** Rebuilds the visible rows from the data, the filter and the folded sub-folders. Keeps the selection. */
     void rebuild() {
       if (table.isEditing()) table.getCellEditor().cancelCellEditing();
       Set<String> sel = new HashSet<>();
@@ -3198,7 +3288,7 @@ public class SimKit extends StarMacro {
       String t = filter.getText().trim().toLowerCase(Locale.ROOT);
       view.clear();
       int nVers = 0, nRunning = 0, nHidden = 0;
-      for (Map.Entry<String, List<String[]>> e : byCase.entrySet()) {   // one entry per case
+      for (Map.Entry<String, List<String[]>> e : byCase.entrySet()) {   // one entry: the project
         String cid = e.getKey();
         List<String[]> vis = new ArrayList<>();
         for (String[] r : e.getValue()) {
@@ -3218,8 +3308,14 @@ public class SimKit extends StarMacro {
           vis = top;
           vis.addAll(rest);
         }
-        view.add(new Item(cid, null));
-        if (expanded.contains(cid) || filtering()) for (String[] r : vis) view.add(new Item(cid, r));
+        Map<String, List<String[]>> byFolder = new TreeMap<>();   // "" (the project folder) first, without a heading
+        for (String[] r : vis) byFolder.computeIfAbsent(folderOf(r), k -> new ArrayList<>()).add(r);
+        for (Map.Entry<String, List<String[]>> f : byFolder.entrySet()) {
+          if (!f.getKey().isEmpty()) view.add(new Item(cid, null, f.getKey()));
+          if (f.getKey().isEmpty() || !folded.contains(f.getKey()) || filtering()) for (String[] r : f.getValue()) view.add(new Item(cid, r));
+        }
+        folderRuns.clear();
+        for (String[] r : e.getValue()) if (!hidden(r)) folderRuns.merge(folderOf(r), 1, Integer::sum);
       }
       model.fireTableDataChanged();
       rowHeights();
@@ -3233,10 +3329,22 @@ public class SimKit extends StarMacro {
       showDetails();
     }
 
-    void toggle(String caseId) {
+    void toggle(String folder) {
       if (filtering()) { say("Clear the filter to fold or unfold", grey); return; }
-      if (!expanded.remove(caseId)) expanded.add(caseId);
+      if (!folded.remove(folder)) folded.add(folder);
       rebuild();
+    }
+
+    /** Sub-folder of a run relative to the project, "/" separated; "" when the run folder is in the project folder. */
+    String folderOf(String[] r) {
+      try {
+        Path p = studyRunFolder(r).toAbsolutePath().normalize().getParent();
+        Path root = dir.toAbsolutePath().normalize();
+        if (p == null || !p.startsWith(root)) return "";
+        return root.relativize(p).toString().replace('\\', '/');
+      } catch (Throwable t) {
+        return "";
+      }
     }
 
     // ----- Family tree (each run under the run it is based on) -----
@@ -3275,7 +3383,7 @@ public class SimKit extends StarMacro {
       if (runTree != null && v.equals("tree")) {
         runTree.relayout();
         Item it = current();
-        runTree.picked = it == null || it.isCase() ? null : it.r[COL_ID];
+        runTree.picked = it == null || it.isFolder() ? null : it.r[COL_ID];
         runTree.repaint();
       }
       leftLayout.show(leftCards, v);
@@ -3344,7 +3452,7 @@ public class SimKit extends StarMacro {
       String[] r = byId(id);
       if (r == null) return;
       if (hidden(r)) showHidden.setSelected(true);
-      expanded.add(caseOf(id));
+      folded.remove(folderOf(r));
       if (filtering()) { filter.setText(""); statusFilter.setSelectedIndex(0); }
       rebuild();
       for (int i = 0; i < view.size(); i++) {
@@ -3376,14 +3484,14 @@ public class SimKit extends StarMacro {
         setIdentityKey(dir, caseId, "description", value);
         for (String[] r : byCase.get(caseId)) r[COL_DESC] = value;
         if (("case:" + caseId).equals(areaKey) && !value.equals(liveMd())) setLive(value);
-        afterSave("Saved: description of " + caseId);
+        afterSave("Saved: description of project " + caseId);
       } catch (Throwable t) {
-        say("NOT saved (description of " + caseId + "): " + reason(t), red);
+        say("NOT saved (description of project " + caseId + "): " + reason(t), red);
       }
     }
 
     void afterSave(String what) {
-      log.line("case tracker: " + Character.toLowerCase(what.charAt(0)) + what.substring(1));
+      log.line("tracker: " + Character.toLowerCase(what.charAt(0)) + what.substring(1));
       say(what, green);
     }
 
@@ -3417,26 +3525,29 @@ public class SimKit extends StarMacro {
       simBtn.setEnabled(sel.size() == 1 && !opening);
       showChips(sel);
       String key = null, text = "";
-      if (sel.isEmpty()) {
-        headline.setText("Select a run to see its details");
-        areaLabel.setText("Comments");
+      if (sel.isEmpty() && !byCase.isEmpty()) {   // the project: name, run count and its description
+        String cid = byCase.keySet().iterator().next();
+        Map<String, String> id = ids.getOrDefault(cid, new HashMap<>());
+        List<String> bits = new ArrayList<>();
+        bits.add(plural(byCase.get(cid).size(), "run", "runs"));
+        if (!id.getOrDefault("parent_case", "").isEmpty()) bits.add("from project " + id.get("parent_case"));
+        headline.setText("<html>Project " + html(cid) + "<br><font color='#6B7580'>" + html(String.join("  ·  ", bits))
+            + "  ·  select a run to see its details</font></html>");
+        areaLabel.setText("Description");
+        key = "case:" + cid;
+        text = description(cid);
+      } else if (sel.isEmpty()) {
+        headline.setText("No runs in this project");
+        areaLabel.setText("Description");
       } else if (sel.size() > 1) {
         headline.setText("<html>" + sel.size() + " rows selected&nbsp;&nbsp;<font color='#6B7580'>right-click: set their status, "
             + "copy their references</font></html>");
         areaLabel.setText("Comments");
-      } else if (sel.get(0).isCase()) {
+      } else if (sel.get(0).isFolder()) {   // a sub-folder heading
         Item it = sel.get(0);
-        Map<String, String> id = ids.getOrDefault(it.caseId, new HashMap<>());
-        List<String> bits = new ArrayList<>();
-        bits.add(byCase.get(it.caseId).size() + " run(s)");
-        if (!id.getOrDefault("parent_case", "").isEmpty()) bits.add("from case " + id.get("parent_case"));
-        if (!id.getOrDefault("mesh_level", "").isEmpty()) bits.add("mesh study " + id.getOrDefault("mesh_study", "")
-            + ": " + id.get("mesh_level") + (id.getOrDefault("mesh_cells", "").isEmpty() ? "" : ", " + id.get("mesh_cells") + " cells"));
-        headline.setText("<html>" + html(it.caseId) + "<br><font color='#6B7580'>" + html(String.join("  ·  ", bits))
-            + "</font></html>");
-        areaLabel.setText("Description");
-        key = it.key();
-        text = description(it.caseId);
+        headline.setText("<html>" + html(it.folder) + "<br><font color='#6B7580'>" + plural(folderRuns.getOrDefault(it.folder, 0), "run", "runs")
+            + "  ·  sub-folder of the project</font></html>");
+        areaLabel.setText("Comments");
       } else {
         String[] r = sel.get(0).r;
         Map<String, String> id = ids.getOrDefault(sel.get(0).caseId, new HashMap<>());
@@ -3467,12 +3578,12 @@ public class SimKit extends StarMacro {
       for (JButton b : fmtButtons) b.setEnabled(key != null);
     }
 
-    /** Status labels under the headline. A click sets that status on the selection, for a case row on all its versions. */
+    /** Status labels under the headline. A click sets that status on the selection, for a folder heading on all its runs. */
     void showChips(List<Item> sel) {
       chips.removeAll();
       if (!sel.isEmpty()) {
-        String cur = sel.size() == 1 && !sel.get(0).isCase() ? sel.get(0).r[COL_STATUS] : null;
-        JLabel lab = new JLabel(sel.size() == 1 && !sel.get(0).isCase() ? "Status" : "Status of all");
+        String cur = sel.size() == 1 && !sel.get(0).isFolder() ? sel.get(0).r[COL_STATUS] : null;
+        JLabel lab = new JLabel(sel.size() == 1 && !sel.get(0).isFolder() ? "Status" : "Status of all");
         lab.setForeground(grey);
         chips.add(lab);
         for (final String st : STATUSES) {
@@ -3820,7 +3931,7 @@ public class SimKit extends StarMacro {
     void copyLinks() {
       List<String> lines = new ArrayList<>();
       for (Item it : selected()) {
-        if (it.isCase()) lines.add(it.caseId + "  " + dir.resolve(it.caseId).toAbsolutePath().normalize());
+        if (it.isFolder()) lines.add(it.folder + "  " + dir.resolve(it.folder).toAbsolutePath().normalize());
         else lines.add(shown(it.r[COL_ID]) + "  " + fileOf(dir, it.r).toAbsolutePath().normalize());
       }
       if (lines.isEmpty()) return;
@@ -3842,11 +3953,11 @@ public class SimKit extends StarMacro {
       return f.getParent() == null ? dir : f.getParent();
     }
 
-    /** Sets a status on every selected version. A case row applies it to all its versions. */
+    /** Sets a status on every selected run. A folder heading applies it to all its runs. */
     void setStatusAll(String status) {
       List<String[]> vs = new ArrayList<>();
       for (Item it : selected()) {
-        if (it.isCase()) { for (String[] r : byCase.get(it.caseId)) if (!vs.contains(r)) vs.add(r); }
+        if (it.isFolder()) { for (String[] r : byCase.get(it.caseId)) if (folderOf(r).equals(it.folder) && !vs.contains(r)) vs.add(r); }
         else if (!vs.contains(it.r)) vs.add(it.r);
       }
       int n = 0;
@@ -3868,20 +3979,19 @@ public class SimKit extends StarMacro {
       showDetails();
     }
 
-    /** .sim file of the selected version, or of the latest version for a case row. */
+    /** .sim file of the selected run, or of the latest run of a selected folder heading. */
     Path selectedSim() {
       List<Item> sel = selected();
       if (sel.size() != 1) return null;
       String[] r = sel.get(0).r;
-      if (r == null) {
-        List<String[]> v = byCase.get(sel.get(0).caseId);
-        if (v == null || v.isEmpty()) return null;
-        r = v.get(v.size() - 1);
+      if (r == null) {   // a sub-folder heading: its latest run
+        for (String[] x : byCase.getOrDefault(sel.get(0).caseId, Collections.emptyList())) if (folderOf(x).equals(sel.get(0).folder)) r = x;
+        if (r == null) return null;
       }
       return fileOf(dir, r);
     }
 
-    /** Opens the selected version in a STAR-CCM+ tab. If it is already open with a tab, that tab comes to the front.
+    /** Opens the selected run in a STAR-CCM+ tab. If it is already open with a tab, that tab comes to the front.
      *  Otherwise the STAR-CCM+ Load Simulation dialog opens with the file filled in, with the process and host settings
      *  of File > Load. A copy loaded without a tab is closed first. Without the dialog, the path is copied for File > Load. */
     void openSelected() {
@@ -3943,21 +4053,21 @@ public class SimKit extends StarMacro {
     void openFolder() {
       List<Item> sel = selected();
       if (sel.isEmpty()) return;
-      Path fd = sel.get(0).isCase() ? dir : studyRunFolder(sel.get(0).r);
+      Path fd = sel.get(0).isFolder() ? dir.resolve(sel.get(0).folder) : studyRunFolder(sel.get(0).r);
       try { Ui.browse(fd.toUri().toString()); } catch (Throwable t) { say("Cannot open: " + reason(t), red); }
     }
 
     /** Items Hide acts on. The project row is excluded. */
     List<Item> hideable(List<Item> sel) {
       List<Item> out = new ArrayList<>();
-      for (Item it : sel) if (!it.isCase()) out.add(it);
+      for (Item it : sel) if (!it.isFolder()) out.add(it);
       return out;
     }
 
     /** True when every item is hidden, so the button unhides. */
     boolean unhideMode(List<Item> items) {
       if (items.isEmpty()) return false;
-      for (Item it : items) if (!(!it.isCase() && hidden(it.r))) return false;
+      for (Item it : items) if (!(!it.isFolder() && hidden(it.r))) return false;
       return true;
     }
 
@@ -3985,7 +4095,7 @@ public class SimKit extends StarMacro {
     String applyHidden(List<Item> items, boolean hide) throws IOException {
       List<String> names = new ArrayList<>();
       for (Item it : items) {
-        if (it.isCase()) {
+        if (it.isFolder()) {
           setHidden(dir, it.caseId, null, hide);
           names.add(it.caseId);
         } else {
@@ -4017,7 +4127,7 @@ public class SimKit extends StarMacro {
         }
         Fs.allow(st);
         dir = st;
-        expanded.clear();
+        folded.clear();
         reload();
         say("Showing the runs of " + dir.getFileName(), grey);
       } catch (Throwable t) {
@@ -4040,16 +4150,18 @@ public class SimKit extends StarMacro {
       javax.swing.JMenuItem openSim = new javax.swing.JMenuItem("Open in STAR-CCM+...");
       openSim.addActionListener(a -> openSelected());
       openSim.setEnabled(row >= 0 && !opening);
-      javax.swing.JMenuItem open = new javax.swing.JMenuItem("Open case folder");
+      javax.swing.JMenuItem open = new javax.swing.JMenuItem("Open folder");
       open.addActionListener(a -> openFolder());
       javax.swing.JMenuItem hide = new javax.swing.JMenuItem(hideBtn.getText(), hideBtn.getIcon());
       hide.addActionListener(a -> hideOrShow());
       open.setEnabled(row >= 0);
       hide.setEnabled(row >= 0 && hideBtn.isEnabled());
-      javax.swing.JMenuItem ex = new javax.swing.JMenuItem("Unfold all cases");
-      ex.addActionListener(a -> { expanded.addAll(byCase.keySet()); rebuild(); });
-      javax.swing.JMenuItem co = new javax.swing.JMenuItem("Fold all cases");
-      co.addActionListener(a -> { expanded.clear(); rebuild(); });
+      javax.swing.JMenuItem ex = new javax.swing.JMenuItem("Unfold all folders");
+      ex.addActionListener(a -> { folded.clear(); rebuild(); });
+      javax.swing.JMenuItem co = new javax.swing.JMenuItem("Fold all folders");
+      co.addActionListener(a -> { for (String f : folderRuns.keySet()) if (!f.isEmpty()) folded.add(f); rebuild(); });
+      ex.setEnabled(folderRuns.size() > 1 || !folderRuns.containsKey(""));
+      co.setEnabled(ex.isEnabled());
       javax.swing.JMenuItem copy = new javax.swing.JMenuItem("Copy reference (ID and path)   Ctrl+C");
       copy.addActionListener(a -> copyLinks());
       copy.setEnabled(row >= 0);
@@ -4061,7 +4173,7 @@ public class SimKit extends StarMacro {
         status.add(si);
       }
       status.setEnabled(row >= 0);
-      final boolean caseRow = row >= 0 && view.get(row).isCase();
+      final boolean caseRow = row >= 0 && view.get(row).isFolder();
       final String rowCase = row >= 0 ? view.get(row).caseId : null;
       final String runKey = row >= 0 && !caseRow ? view.get(row).r[COL_ID] : null;
       javax.swing.JMenuItem pin = new javax.swing.JMenuItem(runKey != null && pinned(runKey) ? "Remove star" : "Star");
@@ -4088,9 +4200,9 @@ public class SimKit extends StarMacro {
       if (sel) return selBg;
       Item it = view.get(row);
       if (row == hoverRow) return hoverBg;
-      if (it.isCase()) return caseBg;
+      if (it.isFolder()) return caseBg;
       int k = 0;
-      for (int i = row - 1; i >= 0 && !view.get(i).isCase(); i--) k++;
+      for (int i = row - 1; i >= 0 && !view.get(i).isFolder(); i--) k++;
       return k % 2 == 0 ? java.awt.Color.WHITE : stripe;
     }
 
@@ -4108,9 +4220,9 @@ public class SimKit extends StarMacro {
           + (more > 0 ? "&nbsp;&nbsp;<font color='#8A94A0'>+" + more + (more == 1 ? " line" : " lines") + "</font>" : "") + "</html>";
     }
 
-    /** Case rows are slightly taller than version rows. */
+    /** Folder headings are slightly taller than run rows. */
     void rowHeights() {
-      for (int i = 0; i < view.size(); i++) table.setRowHeight(i, view.get(i).isCase() ? 32 : 26);
+      for (int i = 0; i < view.size(); i++) table.setRowHeight(i, view.get(i).isFolder() ? 32 : 26);
     }
 
     final class Cells extends javax.swing.table.DefaultTableCellRenderer {
@@ -4124,25 +4236,18 @@ public class SimKit extends StarMacro {
         setIcon(null);
         setToolTipText(null);
         setHorizontalAlignment(LEFT);
-        setBorder(it.isCase() && row > 0 ? BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
+        setBorder(it.isFolder() && row > 0 ? BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
             new java.awt.Color(0xE3, 0xE6, 0xEA)), BorderFactory.createEmptyBorder(0, 6, 0, 6)) : BorderFactory.createEmptyBorder(0, 6, 0, 6));
         Font f = t.getFont();
         String s = v == null ? "" : String.valueOf(v);
-        if (it.isCase()) {
+        if (it.isFolder()) {
           setFont(f.deriveFont(Font.BOLD));
           if (col == T_ID) {
-            setIcon(starIcon(trackerIcon(expanded.contains(it.caseId) || filtering() ? 1 : 0), false, false));
-            setToolTipText("Fold / unfold");
+            setIcon(starIcon(trackerIcon(!folded.contains(it.folder) || filtering() ? 1 : 0), false, false));
+            setToolTipText(dir.resolve(it.folder).toString());
             setIconTextGap(6);
-          } else if (col == T_COMMENT && s.isEmpty()) {
-            setFont(f.deriveFont(Font.ITALIC));
-            setForeground(pale);
-            s = "no description (double-click to add)";
-          } else if (col == T_COMMENT) {
-            setToolTipText(tipHtml(s));
-            s = formatted(s, false);
           } else if (col == T_SAVED) {
-            int n = byCase.get(it.caseId).size();
+            int n = folderRuns.getOrDefault(it.folder, 0);
             setFont(f);
             setForeground(grey);
             s = n + (n == 1 ? " run" : " runs");
@@ -4192,14 +4297,14 @@ public class SimKit extends StarMacro {
       private static final long serialVersionUID = 1L;
       String text = "";
       java.awt.Color bg = java.awt.Color.WHITE;
-      boolean isCase;
+      boolean isFolder;
       @Override
       public java.awt.Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean foc, int row, int col) {
-        isCase = view.get(row).isCase();
-        text = isCase ? "" : v == null ? "" : String.valueOf(v);
+        isFolder = view.get(row).isFolder();
+        text = isFolder ? "" : v == null ? "" : String.valueOf(v);
         bg = rowBg(row, sel);
         setFont(t.getFont());
-        setToolTipText(view.get(row).isCase() ? null : "Click to change the status");
+        setToolTipText(view.get(row).isFolder() ? null : "Click to change the status");
         return this;
       }
       @Override protected void paintComponent(java.awt.Graphics g0) {
@@ -4212,7 +4317,7 @@ public class SimKit extends StarMacro {
         g.setFont(getFont());
         java.awt.Color[] c = statusColors(text);
         if (c == null) {
-          if (text.isEmpty() && !isCase) {
+          if (text.isEmpty() && !isFolder) {
             g.setColor(pale);
             g.drawString("—", 8, (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
           }
@@ -7508,7 +7613,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** One level of a mesh study (saved as a case of its own). */
+  /** One level of a mesh study, saved as a run of its own. */
   static final class MeshLevel {
     String name;
     double scale;
@@ -8652,7 +8757,7 @@ public class SimKit extends StarMacro {
       try { w.setAlwaysOnTop(false); } catch (Throwable t) { /* not supported by this window system */ }   // stays above STAR-CCM+ through its owner only
     }
 
-    /** Per-user remembered value (last cases folder); null if not available. */
+    /** Per-user remembered value, e.g. the last project folder; null if not available. */
     static String pref(String key) {
       try { return java.util.prefs.Preferences.userRoot().node("simkit").get(key, null); } catch (Throwable t) { return null; }
     }
@@ -8681,7 +8786,7 @@ public class SimKit extends StarMacro {
 
     static Path config(String file) { return inKit(CONFIG_DIR + "/" + file); }
 
-    /** Folders SimKit may write in: the cases folders of the cases it handles in this session. */
+    /** Folders SimKit may write in: the project folders it handles in this session. */
     static final List<Path> ALLOWED = new ArrayList<>();
 
     static void allow(Path dir) {
@@ -8697,7 +8802,7 @@ public class SimKit extends StarMacro {
     }
     static boolean same(Path a, Path b) { return key(a).equals(key(b)); }
 
-    /** Write guard: SimKit writes only inside a cases folder it is working on, and never inside the kit. */
+    /** Write guard: SimKit writes only inside a project folder it is working on, and never inside the kit. */
     static Path guard(Path p) throws IOException {
       if (under(p, kit()) || same(p, kit())) throw new IOException("refused to write inside the kit folder: " + p);
       for (Path a : ALLOWED) if (under(p, a) || same(p, a)) return p.toAbsolutePath().normalize();
