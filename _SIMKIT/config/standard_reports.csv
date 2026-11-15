@@ -9,6 +9,8 @@ name,group,type,field,surfaces,condition,meaning,criterion,mean,options
 # A standard report that exists is proposed again when there are new surfaces with its prefixes. Create adds them to it.
 # options (optional, words): debug = not ticked by default, the group can be removed as a set in Reports > Predefined;
 #   location = x, y, z of the extreme cell as collocated values of a maximum or minimum report (Output window).
+#   plot=<name>: the report goes in the plot "<group title> <name>" (folder of the group); log: logarithmic y axis.
+# REGIONS: the regions where the field exists; one report per continuum (<name>_<continuum>) when there are several.
 # field: a field function name, or <name>:magnitude for the magnitude of a vector.
 r_mdot_in,massBalance,mass flow,,IN,,mass flow entering (IN_ surfaces),,
 r_mdot_out,massBalance,mass flow,,OUT+OPEN,,mass flow leaving (OUT_ and OPEN_),,
@@ -25,12 +27,12 @@ r_Q_wall,heat,heat flow,,WALL+IF,energy,heat flow through the walls,,last 500
 r_yplus_wall_max,yplus,maximum,WallYplus,WALL+IF,,maximum wall y+,,
 r_yplus_wall_avg,yplus,area average,WallYplus,WALL+IF,,average wall y+,,
 r_Co_max,courant,maximum,CourantNumber,REGIONS,unsteady,maximum convective Courant number,,
-r_div_U_max,divergence,maximum,Velocity:magnitude,REGIONS,,"maximum velocity and its location: jets in bad cells, narrow gaps",,,debug location
-r_div_p_min,divergence,minimum,Pressure,REGIONS,,minimum pressure and its location: unphysical low-pressure pockets,,,debug location
-r_div_p_max,divergence,maximum,Pressure,REGIONS,,"maximum pressure and its location: spikes, checkerboarding, blocked flow paths",,,debug location
-r_div_p_abs_min,divergence,minimum,AbsolutePressure,REGIONS,,minimum absolute pressure and its location: near 0 before the equation of state fails,,,debug location
-r_div_T_max,divergence,maximum,Temperature,REGIONS,energy,maximum temperature and its location: cells at the upper temperature limit,,,debug location
-r_div_T_min,divergence,minimum,Temperature,REGIONS,energy,minimum temperature and its location: cells at the lower temperature limit,,,debug location
-r_div_mut_ratio_max,divergence,maximum,TurbulentViscosityRatio,REGIONS,,maximum turbulent viscosity ratio and its location: turbulence model blow-up,,,debug location
-r_div_Co_max,divergence,maximum,CourantNumber,REGIONS,,maximum Courant number and its location: cells over the stability limit,,,debug location
-r_div_p_out_min,divergence,minimum,Pressure,OUT+OPEN,,minimum pressure on outlets and openings and its location: backflow,,,debug location
+r_div_U_max,divergence,maximum,Velocity:magnitude,REGIONS,,"maximum velocity and its location: jets in bad cells, narrow gaps",,,debug location plot=velocity
+r_div_p_min,divergence,minimum,Pressure,REGIONS,,minimum pressure and its location: unphysical low-pressure pockets,,,debug location plot=pressure
+r_div_p_max,divergence,maximum,Pressure,REGIONS,,"maximum pressure and its location: spikes, checkerboarding, blocked flow paths",,,debug location plot=pressure
+r_div_p_abs_min,divergence,minimum,AbsolutePressure,REGIONS,,minimum absolute pressure and its location: near 0 before the equation of state fails,,,debug location plot=pressure
+r_div_T_max,divergence,maximum,Temperature,REGIONS,energy,maximum temperature and its location: cells at the upper temperature limit,,,debug location plot=temperature
+r_div_T_min,divergence,minimum,Temperature,REGIONS,energy,minimum temperature and its location: cells at the lower temperature limit,,,debug location plot=temperature
+r_div_mut_ratio_max,divergence,maximum,TurbulentViscosityRatio,REGIONS,,maximum turbulent viscosity ratio and its location: turbulence model blow-up,,,debug location plot=ratios log
+r_div_Co_max,divergence,maximum,CourantNumber,REGIONS,,maximum Courant number and its location: cells over the stability limit,,,debug location plot=ratios log
+r_div_p_out_min,divergence,minimum,Pressure,OUT+OPEN,,minimum pressure on outlets and openings and its location: backflow,,,debug location plot=pressure

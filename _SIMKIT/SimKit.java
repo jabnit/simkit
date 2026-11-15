@@ -4622,6 +4622,76 @@ public class SimKit extends StarMacro {
   }
 
   /** True for a solid region. */
+  /** A physics continuum with its regions and the models that decide where a field exists. */
+  static final class Cont {
+    Object c;
+    String name = "", token = "";
+    boolean fluid = true, energy = true, turb = true;
+    final List<Object> regions = new ArrayList<>();
+
+    /** Null when a field with this need exists in the continuum, else the reason. */
+    String lacks(String need) {
+      switch (need) {
+        case "fluid": return fluid ? null : "solid";
+        case "energy": return energy ? null : "no energy model";
+        case "turbulence": return !fluid ? "solid" : turb ? null : "laminar";
+        default: return null;
+      }
+    }
+
+    /** E.g. "fluid · energy · turbulence". */
+    String summary() {
+      return (fluid ? "fluid" : "solid") + (energy ? "  \u00B7  energy" : "") + (fluid && turb ? "  \u00B7  turbulence" : fluid ? "  \u00B7  laminar" : "");
+    }
+  }
+
+  /** What a field needs in a region: "fluid", "energy", "turbulence" or "" for any region. */
+  static String fieldNeeds(String field) {
+    String f = field.toLowerCase(Locale.ROOT).replace(" ", "");
+    if (f.contains("turbulen")) return "turbulence";
+    if (f.contains("temperature") || f.contains("heatflux") || f.contains("enthalpy")) return "energy";
+    if (f.contains("velocity") || f.contains("pressure") || f.contains("courant") || f.contains("yplus") || f.contains("shearstress")
+        || f.contains("mach") || f.contains("vorticity") || f.contains("massflux")) return "fluid";
+    return "";
+  }
+
+  /** Regions by physics continuum, in region order. Regions without continuum are left out. */
+  List<Cont> continua() {
+    Map<Object, Cont> by = new LinkedHashMap<>();
+    for (Region r : sim.getRegionManager().getRegions()) {
+      Object pc = null;
+      try { pc = r.getPhysicsContinuum(); } catch (Throwable t) { /* none */ }
+      if (pc == null) continue;
+      Cont k = by.get(pc);
+      if (k == null) {
+        k = new Cont();
+        k.c = pc;
+        k.name = nm(pc);
+        k.token = objToken(k.name);
+        k.fluid = !isSolid(r);
+        boolean en = false, tu = false;
+        try {
+          for (Object m : ((Continuum) pc).getModelManager().getObjects()) {
+            String c = cls(m);
+            en |= c.contains("Energy") || c.contains("Enthalpy") || c.equals("SegregatedFluidTemperatureModel");
+            tu |= c.contains("Turbulen") && !c.contains("Laminar");
+          }
+          k.energy = en;
+          k.turb = tu;
+        } catch (Throwable t) { /* models not readable: the field check decides */ }
+        by.put(pc, k);
+      }
+      k.regions.add(r);
+    }
+    return new ArrayList<>(by.values());
+  }
+
+  /** The continuum of a region, or null. */
+  static Cont contOf(List<Cont> conts, Object region) {
+    for (Cont k : conts) if (k.regions.contains(region)) return k;
+    return null;
+  }
+
   static boolean isSolid(Region r) {
     try { return r.getRegionType() instanceof SolidRegion; } catch (Throwable t) { return false; }
   }
@@ -5759,7 +5829,11 @@ public class SimKit extends StarMacro {
    *  "below <limit>" or "above <limit>". It is created off unless the text ends with " on".
    *  mean (optional) "last <n>" adds a report <name>_mean, the mean of the monitor over the last n samples.
    *  options (optional, words): debug = not ticked by default, the group can be removed as a set;
-   *  location = x, y, z of the extreme cell as collocated values of a maximum or minimum report. */
+   *  location = x, y, z of the extreme cell as collocated values of a maximum or minimum report;
+   *  plot=<name> = the report goes in the plot "<group title> <name>" instead of the plot of the group;
+   *  log = that plot has a logarithmic y axis.
+   *  A report on REGIONS is made on the regions where its field exists, one report per continuum when there are
+   *  several (name <name>_<continuum>). */
   static final String[] STD_COLS = {"name", "group", "type", "field", "surfaces", "condition", "meaning", "criterion", "mean", "options"};
 
   static final String[][] STANDARD_REPORTS = {
@@ -5778,15 +5852,22 @@ public class SimKit extends StarMacro {
       {"r_yplus_wall_max", "yplus", "maximum", "WallYplus", "WALL+IF", "", "maximum wall y+"},
       {"r_yplus_wall_avg", "yplus", "area average", "WallYplus", "WALL+IF", "", "average wall y+"},
       {"r_Co_max", "courant", "maximum", "CourantNumber", "REGIONS", "unsteady", "maximum convective Courant number"},
-      {"r_div_U_max", "divergence", "maximum", "Velocity:magnitude", "REGIONS", "", "maximum velocity and its location: jets in bad cells, narrow gaps", "", "", "debug location"},
-      {"r_div_p_min", "divergence", "minimum", "Pressure", "REGIONS", "", "minimum pressure and its location: unphysical low-pressure pockets", "", "", "debug location"},
-      {"r_div_p_max", "divergence", "maximum", "Pressure", "REGIONS", "", "maximum pressure and its location: spikes, checkerboarding, blocked flow paths", "", "", "debug location"},
-      {"r_div_p_abs_min", "divergence", "minimum", "AbsolutePressure", "REGIONS", "", "minimum absolute pressure and its location: near 0 before the equation of state fails", "", "", "debug location"},
-      {"r_div_T_max", "divergence", "maximum", "Temperature", "REGIONS", "energy", "maximum temperature and its location: cells at the upper temperature limit", "", "", "debug location"},
-      {"r_div_T_min", "divergence", "minimum", "Temperature", "REGIONS", "energy", "minimum temperature and its location: cells at the lower temperature limit", "", "", "debug location"},
-      {"r_div_mut_ratio_max", "divergence", "maximum", "TurbulentViscosityRatio", "REGIONS", "", "maximum turbulent viscosity ratio and its location: turbulence model blow-up", "", "", "debug location"},
-      {"r_div_Co_max", "divergence", "maximum", "CourantNumber", "REGIONS", "", "maximum Courant number and its location: cells over the stability limit", "", "", "debug location"},
-      {"r_div_p_out_min", "divergence", "minimum", "Pressure", "OUT+OPEN", "", "minimum pressure on outlets and openings and its location: backflow", "", "", "debug location"}};
+      {"r_div_U_max", "divergence", "maximum", "Velocity:magnitude", "REGIONS", "", "maximum velocity and its location: jets in bad cells, narrow gaps", "", "", "debug location plot=velocity"},
+      {"r_div_p_min", "divergence", "minimum", "Pressure", "REGIONS", "", "minimum pressure and its location: unphysical low-pressure pockets", "", "", "debug location plot=pressure"},
+      {"r_div_p_max", "divergence", "maximum", "Pressure", "REGIONS", "", "maximum pressure and its location: spikes, checkerboarding, blocked flow paths", "", "", "debug location plot=pressure"},
+      {"r_div_p_abs_min", "divergence", "minimum", "AbsolutePressure", "REGIONS", "", "minimum absolute pressure and its location: near 0 before the equation of state fails", "", "", "debug location plot=pressure"},
+      {"r_div_T_max", "divergence", "maximum", "Temperature", "REGIONS", "energy", "maximum temperature and its location: cells at the upper temperature limit", "", "", "debug location plot=temperature"},
+      {"r_div_T_min", "divergence", "minimum", "Temperature", "REGIONS", "energy", "minimum temperature and its location: cells at the lower temperature limit", "", "", "debug location plot=temperature"},
+      {"r_div_mut_ratio_max", "divergence", "maximum", "TurbulentViscosityRatio", "REGIONS", "", "maximum turbulent viscosity ratio and its location: turbulence model blow-up", "", "", "debug location plot=ratios log"},
+      {"r_div_Co_max", "divergence", "maximum", "CourantNumber", "REGIONS", "", "maximum Courant number and its location: cells over the stability limit", "", "", "debug location plot=ratios log"},
+      {"r_div_p_out_min", "divergence", "minimum", "Pressure", "OUT+OPEN", "", "minimum pressure on outlets and openings and its location: backflow", "", "", "debug location plot=pressure"}};
+
+  /** Value of an option word key=value of a standard report, or null. */
+  static String optVal(String[] r, String key) {
+    if (r.length <= 9 || r[9] == null) return null;
+    for (String w : r[9].trim().split("\\s+")) if (w.startsWith(key + "=")) return w.substring(key.length() + 1);
+    return null;
+  }
 
   /** True when the options column of a standard report holds the word. */
   static boolean hasOpt(String[] r, String word) {
@@ -5838,6 +5919,18 @@ public class SimKit extends StarMacro {
     boolean putBack;      // turned off by an empty surface list, on again when a surface is selected
     Object existing;      // the report in the simulation; Create adds the new surfaces to it
     int added;            // surfaces it does not have yet
+    final List<Cont> conts = new ArrayList<>();      // REGIONS: the continua where the field exists
+    final List<String[]> regionRows = new ArrayList<>();   // REGIONS: {continuum, summary, region, reason or ""}
+    boolean perCont;      // one report per continuum (more than one continuum)
+    int allRegions;
+
+    /** Names of the reports it makes, with the continua of each (null for all its regions). */
+    List<String> names() {
+      List<String> out = new ArrayList<>();
+      if (perCont) for (Cont k : conts) out.add(def[0] + "_" + k.token);
+      else out.add(def[0]);
+      return out;
+    }
   }
 
   /** The surfaces a report is computed on (empty if not readable). */
@@ -5861,6 +5954,7 @@ public class SimKit extends StarMacro {
     for (Object r : sim.getReportManager().getObjects()) { existing.add(nm(r)); existingObj.put(nm(r), r); }
     boolean unsteady = unsteadySolver() != null;
     boolean energy = fieldFunction("Temperature") != null;
+    List<Cont> conts = continua();
     List<StdReport> all = new ArrayList<>();
     Set<String> possible = new HashSet<>(existing);
     for (String[] r : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) {
@@ -5869,11 +5963,25 @@ public class SimKit extends StarMacro {
       StdReport x = new StdReport();
       x.def = r;
       boolean expr = r[2].equalsIgnoreCase("expression");
-      if (r[4].equals("REGIONS")) x.target.addAll(regions);
+      String need = fieldNeeds(r[3]);
+      if (r[4].equals("REGIONS")) {   // the regions where the field exists, by continuum
+        x.allRegions = regions.size();
+        for (Cont k : conts) {
+          String no = k.lacks(need);
+          for (Object g : k.regions) x.regionRows.add(new String[] {k.name, k.summary(), nm(g), no == null ? "" : no});
+          if (no == null) { x.conts.add(k); x.target.addAll(k.regions); }
+        }
+        if (conts.isEmpty()) x.target.addAll(regions);
+        x.perCont = x.conts.size() > 1;
+      }
       else if (!r[4].isEmpty()) for (String t : r[4].split("\\+")) x.target.addAll(bc.getOrDefault(t, Collections.emptyList()));
-      if (existing.contains(r[0])) {   // exists; new surfaces with its prefixes can be added
+      boolean splitDone = x.perCont;
+      for (String n0 : x.names()) splitDone &= existing.contains(n0);
+      if (existing.contains(r[0]) || splitDone) {   // exists (one report, or one per continuum); new surfaces with its prefixes can be added
         x.why = "already in the simulation";
         x.present = true;
+      }
+      if (existing.contains(r[0])) {
         if (!expr && !r[4].equals("REGIONS") && !r[4].isEmpty()) {
           List<Object> have = partsOf(existingObj.get(r[0]));
           Set<Object> union = new LinkedHashSet<>(have);
@@ -5888,6 +5996,9 @@ public class SimKit extends StarMacro {
           }
         }
       }
+      else if (x.present) { /* one report per continuum, all made */ }
+      else if (!expr && x.target.isEmpty() && r[4].equals("REGIONS")) x.why = need.equals("energy") ? "no region with energy" : need.equals("turbulence")
+          ? "no turbulent region" : need.equals("fluid") ? "no fluid region" : "no region";
       else if (!expr && x.target.isEmpty()) x.why = "no " + r[4].replace("+", "_ or ") + "_ surface";
       else if (r[5].equals("energy") && !energy) x.why = "no energy model";
       else if (r[5].equals("unsteady") && !unsteady) x.why = "steady simulation";
@@ -5912,7 +6023,8 @@ public class SimKit extends StarMacro {
   String stdApply(List<StdReport> all) {
     Set<String> existing = new HashSet<>();
     for (Object r : sim.getReportManager().getObjects()) existing.add(nm(r));
-    Map<String, List<Object>> groups = new LinkedHashMap<>();
+    Map<String, List<Object>> groups = new LinkedHashMap<>();   // group -> reports, for the folders
+    List<Object[]> curves = new ArrayList<>();                   // {report, plot key, continuum name or ""}
     Set<String> made = new LinkedHashSet<>(existing);
     Map<String, String[]> defs = new HashMap<>();
     int n = 0, upd = 0;
@@ -5935,47 +6047,91 @@ public class SimKit extends StarMacro {
         for (String q : r[5].substring(6).trim().split("\\s+")) ok &= made.contains(q);
         if (!ok) { log.line("  " + r[0] + ": skipped (the reports it uses were not created)"); continue; }
       }
-      try {
-        Object report = Reflect.invoke(sim.getReportManager(), "createReport", Reflect.cls(reportClass(r[2])));
-        ((NamedObject) report).setPresentationName(r[0]);
-        if (r[2].equalsIgnoreCase("expression")) {
-          Reflect.invoke(report, "setDefinition", r[3]);
-        } else {
-          if (!r[3].isEmpty()) Reflect.invoke(report, "setFieldFunction", objField(r[3]));
-          Reflect.invoke(Reflect.invoke(report, "getParts"), "setObjects", new NeoObjectVector(x.target.toArray()));
-          if (hasOpt(r, "location")) setLocation(report);
+      String pv = optVal(r, "plot");
+      String plotKey = r[1].isEmpty() ? "" : pv == null ? r[1] : r[1] + "/" + pv;
+      List<Object[]> todo = new ArrayList<>();   // {name, objects, continuum name or ""}
+      if (x.perCont) for (Cont k : x.conts) todo.add(new Object[] {r[0] + "_" + k.token, k.regions, k.name});
+      else todo.add(new Object[] {r[0], x.target, ""});
+      for (Object[] t : todo) {
+        String name = (String) t[0];
+        if (existing.contains(name)) continue;
+        try {
+          Object report = Reflect.invoke(sim.getReportManager(), "createReport", Reflect.cls(reportClass(r[2])));
+          ((NamedObject) report).setPresentationName(name);
+          if (r[2].equalsIgnoreCase("expression")) {
+            Reflect.invoke(report, "setDefinition", r[3]);
+          } else {
+            if (!r[3].isEmpty()) Reflect.invoke(report, "setFieldFunction", objField(r[3]));
+            Reflect.invoke(Reflect.invoke(report, "getParts"), "setObjects", new NeoObjectVector(((List<?>) t[1]).toArray()));
+            if (hasOpt(r, "location")) setLocation(report);
+          }
+          made.add(name);
+          defs.put(name, r);
+          n++;
+          log.line(String.format("  created %-22s %s", name, r[6]));
+          if (!r[1].isEmpty()) {
+            groups.computeIfAbsent(r[1], k -> new ArrayList<>()).add(report);
+            curves.add(new Object[] {report, plotKey, t[2]});
+          }
+        } catch (Throwable e) {
+          log.na("report " + name, e);
         }
-        made.add(r[0]);
-        n++;
-        log.line(String.format("  created %-22s %s", r[0], r[6]));
-        if (!r[1].isEmpty()) groups.computeIfAbsent(r[1], k -> new ArrayList<>()).add(report);
-      } catch (Throwable t) {
-        log.na("report " + r[0], t);
       }
+      made.add(r[0]);
+    }
+    // plots: one per group, or per plot=<name>; a plot over 6 curves with several continua is split by continuum
+    Map<String, Set<String>> contsOf = new HashMap<>();
+    Map<String, Integer> count = new HashMap<>();
+    for (Object[] c : curves) {
+      count.merge((String) c[1], 1, Integer::sum);
+      if (!((String) c[2]).isEmpty()) contsOf.computeIfAbsent((String) c[1], k -> new HashSet<>()).add((String) c[2]);
+    }
+    Map<String, List<Object>> plotReps = new LinkedHashMap<>();
+    for (Object[] c : curves) {
+      String k = (String) c[1];
+      boolean split = count.get(k) > 6 && contsOf.getOrDefault(k, Collections.emptySet()).size() > 1;
+      plotReps.computeIfAbsent(split && !((String) c[2]).isEmpty() ? k + "|" + c[2] : k, q -> new ArrayList<>()).add(c[0]);
     }
     List<Object> plots = new ArrayList<>();
+    Map<String, List<Object>> ownPlots = new LinkedHashMap<>();   // plots of plot=<name>, in a folder of their group
+    Map<String, List<Object>> groupMons = new LinkedHashMap<>(), plotGroup = new LinkedHashMap<>();
     int crit = 0, means = 0;
-    for (Map.Entry<String, List<Object>> g : groups.entrySet()) {
-      Object[] mp = monitorsAndPlot(g.getValue(), plotName(g.getKey()), "pl_" + g.getKey());
+    for (Map.Entry<String, List<Object>> pr : plotReps.entrySet()) {
+      String key = pr.getKey(), cont = key.contains("|") ? key.substring(key.indexOf('|') + 1) : "";
+      String base = key.contains("|") ? key.substring(0, key.indexOf('|')) : key;
+      String group = base.contains("/") ? base.substring(0, base.indexOf('/')) : base, pv = base.contains("/") ? base.substring(base.indexOf('/') + 1) : null;
+      String title = (pv == null ? plotName(group) : groupTitle(group) + " " + pv) + (cont.isEmpty() ? "" : " \u00B7 " + cont);
+      Object[] mp = monitorsAndPlot(pr.getValue(), title, pv == null ? "pl_" + group : null);
       List<Object> extra = new ArrayList<>();
+      boolean log10 = false;
       for (Object m : (List<?>) mp[0]) {
         String[] d;
         try { d = defs.get(nm(((ReportMonitor) m).getReport())); } catch (Throwable t) { d = null; }
         if (d == null) continue;
-        if (d.length > 7 && d[7] != null && !d[7].trim().isEmpty() && stoppingCriterion(m, d[0], d[7].trim())) crit++;
+        log10 |= hasOpt(d, "log");
+        String rn = nm(((ReportMonitor) m).getReport());
+        if (d.length > 7 && d[7] != null && !d[7].trim().isEmpty() && stoppingCriterion(m, rn, d[7].trim())) crit++;
         if (d.length > 8 && d[8] != null && !d[8].trim().isEmpty()) {
-          Object mean = meanReport(m, d[0], d[8].trim());
+          Object mean = meanReport(m, rn, d[8].trim());
           if (mean != null) { extra.add(mean); means++; }
         }
       }
-      g.getValue().addAll(extra);
-      // reports and monitors in one folder per group, all plots in one folder
-      String folder = groupTitle(g.getKey());
-      toFolder(sim.getReportManager(), folder, g.getValue());
-      toFolder(sim.getMonitorManager(), folder, (List<?>) mp[0]);
-      if (mp[1] != null) plots.add(mp[1]);
+      groups.get(group).addAll(extra);
+      groupMons.computeIfAbsent(group, q -> new ArrayList<>()).addAll((List<?>) mp[0]);
+      if (mp[1] != null && log10) logAxis(mp[1]);
+      if (mp[1] != null) {
+        if (pv == null) plots.add(mp[1]);
+        else ownPlots.computeIfAbsent(groupTitle(group), q -> new ArrayList<>()).add(mp[1]);
+        plotGroup.computeIfAbsent(group, q -> new ArrayList<>()).add(mp[1]);
+      }
     }
-    if (!plots.isEmpty()) toFolder(sim.getPlotManager(), "Standard reports", plots);
+    // reports, monitors and plots in the same folders: Predefined / <group>, as in the Reports window
+    for (Map.Entry<String, List<Object>> g : groups.entrySet()) {
+      toFolder(sim.getReportManager(), stdFolder(g.getKey()), g.getValue());
+      toFolder(sim.getMonitorManager(), stdFolder(g.getKey()), groupMons.getOrDefault(g.getKey(), Collections.emptyList()));
+    }
+    for (Map.Entry<String, List<Object>> g : ownPlots.entrySet()) plots.addAll(g.getValue());
+    for (Map.Entry<String, List<Object>> g : plotGroup.entrySet()) toFolder(sim.getPlotManager(), stdFolder(g.getKey()), g.getValue());
     if (gui && !plots.isEmpty()) Ui.collapseInTree(namesOf(plots));
     String out = n > 0 ? plural(n, "report", "reports") + " with monitors and " + plural(plots.size(), "plot", "plots") + " created" : "";
     if (upd > 0) out += (out.isEmpty() ? "" : ", ") + plural(upd, "report", "reports") + " updated";
@@ -5998,6 +6154,18 @@ public class SimKit extends StarMacro {
     }
   }
 
+  /** Logarithmic y axis on a monitor plot. */
+  void logAxis(Object plot) {
+    try {
+      Object xAxis = Reflect.tryCall(plot, "getXAxis");   // iterations or time stay linear
+      for (Object a : (Collection<?>) Reflect.invoke(Reflect.invoke(plot, "getAxisManager"), "getAxes")) {
+        if (a != xAxis) Reflect.invoke(a, "setLogarithmic", true);
+      }
+    } catch (Throwable t) {
+      log.na("log axis of " + nm(plot), t);
+    }
+  }
+
   /** Groups of the standard reports marked debug, in config order. */
   List<String> debugSets() {
     Set<String> out = new LinkedHashSet<>();
@@ -6007,42 +6175,97 @@ public class SimKit extends StarMacro {
     return new ArrayList<>(out);
   }
 
-  /** The reports of a debug set that are in the simulation. */
-  List<Object> setReports(String group) {
-    Set<String> names = new HashSet<>();
-    for (String[] r : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) {
-      if (r[0] != null && group.equals(r[1] == null ? "" : r[1].trim())) { names.add(r[0].trim()); names.add(r[0].trim() + "_mean"); }
-    }
+  /** The reports in the simulation of a standard report row: the report, its reports per continuum and its means. */
+  List<Object> rowReports(String name) {
     List<Object> out = new ArrayList<>();
-    for (Object o : sim.getReportManager().getObjects()) if (names.contains(nm(o))) out.add(o);
+    Set<String> others = new HashSet<>();   // other rows whose names start with this one, e.g. r_p_min and r_p_min_abs
+    for (String[] r : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) if (r[0] != null && !r[0].trim().equals(name)) others.add(r[0].trim());
+    for (Object o : sim.getReportManager().getObjects()) {
+      String n = nm(o);
+      if (!n.equals(name) && !n.startsWith(name + "_")) continue;
+      boolean other = false;
+      for (String q : others) other |= q.startsWith(name + "_") && (n.equals(q) || n.startsWith(q + "_"));
+      if (!other) out.add(o);
+    }
     return out;
   }
 
-  /** Removes a debug set: its reports with monitors and stopping criteria, its plot when no curve is left, and the
-   *  empty folders. Cannot be undone. */
-  String removeSet(String group) {
-    List<Object> reps = setReports(group);
-    if (reps.isEmpty()) return "No report of the " + groupTitle(group) + " set in the simulation.";
-    String out = deleteReports(reps);
+  /** The reports of a group of standard reports that are in the simulation. */
+  List<Object> setReports(String group) {
+    Set<Object> out = new LinkedHashSet<>();
+    for (String[] r : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) {
+      if (r[0] != null && group.equals(r[1] == null ? "" : r[1].trim())) out.addAll(rowReports(r[0].trim()));
+    }
+    return new ArrayList<>(out);
+  }
+
+  /** Reports that use one of the reports to delete and are not deleted with them: formulas with ${name} and mean
+   *  reports of their monitors. Each entry: {used report, user name}. */
+  List<Object[]> usersOf(List<Object> going) {
+    List<Object[]> out = new ArrayList<>();
+    Set<Object> g = Collections.newSetFromMap(new IdentityHashMap<>());
+    g.addAll(going);
+    for (Object o : sim.getReportManager().getObjects()) {
+      if (g.contains(o)) continue;
+      Object def = Reflect.tryCall(o, "getDefinition");
+      Object mon = Reflect.tryCall(o, "getMonitor");
+      Object of = mon == null ? null : Reflect.tryCall(mon, "getReport");
+      for (Object r : going) {
+        if ((def instanceof String && ((String) def).contains("${" + nm(r) + "}")) || of == r) out.add(new Object[] {r, nm(o)});
+      }
+    }
+    return out;
+  }
+
+  /** Reports of a delete in Predefined: the reports less those used by others. */
+  List<Object> deletable(List<Object> reps) {
+    List<Object> keep = new ArrayList<>(reps);
+    for (Object[] u : usersOf(reps)) keep.remove(u[0]);
+    return keep;
+  }
+
+  /** Deletes the reports of a group of standard reports (or of one row when row is set) with their monitors and
+   *  stopping criteria; reports used by others are kept. Then the plots of the group left without curves and the
+   *  empty folders of the group. Cannot be undone. */
+  String removeSet(String group, String row) {
+    List<Object> all = row == null ? setReports(group) : rowReports(row);
+    if (all.isEmpty()) return "No report of " + (row == null ? "the group " + groupTitle(group) : row) + " in the simulation.";
+    List<Object> reps = deletable(all);
+    String out = reps.isEmpty() ? "" : deleteReports(reps);
+    if (reps.size() < all.size()) out += (out.isEmpty() ? "" : " ") + plural(all.size() - reps.size(), "report", "reports") + " kept: used by other reports.";
     List<Object> plots = new ArrayList<>();
     for (Object p : sim.getPlotManager().getObjects()) {
-      if (p instanceof MonitorPlot && (nm(p).equals(plotName(group)) || nm(p).equals("pl_" + group)) && ((MonitorPlot) p).getObjects().isEmpty()) plots.add(p);
+      String pn = nm(p);
+      boolean mine = pn.equals(plotName(group)) || pn.equals("pl_" + group) || pn.startsWith(groupTitle(group) + " ");
+      if (p instanceof MonitorPlot && mine && ((MonitorPlot) p).getObjects().isEmpty()) plots.add(p);
     }
     if (!plots.isEmpty()) out += " " + deletePlots(plots);
-    for (Object m : new Object[] {sim.getReportManager(), sim.getMonitorManager()}) {
+    for (Object m : new Object[] {sim.getReportManager(), sim.getMonitorManager(), sim.getPlotManager()}) {
       try {
         star.base.neo.ClientServerObjectGroupManager gm = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(m, "getGroupsManager");
-        for (Object g : new ArrayList<Object>(gm.getObjects())) {
-          if (groupTitle(group).equals(nm(g)) && g instanceof star.base.neo.ClientServerObjectGroup
-              && ((star.base.neo.ClientServerObjectGroup) g).getObjects().isEmpty()) {
-            Reflect.invoke(gm, "removeObjects", (Object) new star.base.neo.ClientServerObject[] {(star.base.neo.ClientServerObject) g});
-          }
+        for (Object g : new ArrayList<Object>(gm.getObjects())) {   // Predefined / <group>, then Predefined when empty
+          if (!"Predefined".equals(nm(g)) || !(g instanceof star.base.neo.ClientServerObjectGroup)) continue;
+          star.base.neo.ClientServerObjectGroupManager sub = ((star.base.neo.ClientServerObjectGroup) g).getGroupsManager();
+          for (Object g2 : new ArrayList<Object>(sub.getObjects())) if (groupTitle(group).equals(nm(g2)) && emptyFolder(g2)) dropFolder(sub, g2);
+          if (emptyFolder(g)) dropFolder(gm, g);
         }
+        for (Object g : new ArrayList<Object>(gm.getObjects())) if (groupTitle(group).equals(nm(g)) && emptyFolder(g)) dropFolder(gm, g);
       } catch (Throwable t) {
         log.na("folder " + groupTitle(group), t);
       }
     }
     return out;
+  }
+
+  /** A folder of the tree with no object and no sub-folder. */
+  static boolean emptyFolder(Object g) {
+    if (!(g instanceof star.base.neo.ClientServerObjectGroup)) return false;
+    star.base.neo.ClientServerObjectGroup f = (star.base.neo.ClientServerObjectGroup) g;
+    return f.getObjects().isEmpty() && f.getGroupsManager().getObjects().isEmpty();
+  }
+
+  void dropFolder(star.base.neo.ClientServerObjectGroupManager gm, Object g) throws Exception {
+    Reflect.invoke(gm, "removeObjects", (Object) new star.base.neo.ClientServerObject[] {(star.base.neo.ClientServerObject) g});
   }
 
   /** Opens the Reports window. In batch, creates the standard reports that can be made. */
@@ -6137,7 +6360,7 @@ public class SimKit extends StarMacro {
 
   /** The Standard page of the Reports window, built on the Swing thread. 'changed' runs when a selection changes. */
   JPanel stdPage(final List<StdReport> all, final List<Object> every, final Runnable changed,
-      final java.util.function.Consumer<String> remove) {
+      final java.util.function.Consumer<Object> remove) {   // remove: a group key, or a StdReport row
     final List<Object> rows = new ArrayList<>();   // group key (String) or StdReport
     final Map<String, List<StdReport>> byGroup = new LinkedHashMap<>();
     final Set<String> folded = new HashSet<>();
@@ -6168,7 +6391,10 @@ public class SimKit extends StarMacro {
     };
     final java.util.function.Function<StdReport, String> detail = x -> {
       if (x.def[2].equalsIgnoreCase("expression")) return "Formula";
-      if (x.def[4].equals("REGIONS")) return "All regions";
+      if (x.def[4].equals("REGIONS")) {
+        if (x.perCont) return x.conts.size() + " continua  \u00B7  " + plural(x.conts.size(), "report", "reports");
+        return x.target.size() >= x.allRegions ? "All regions" : plural(x.target.size(), "region", "regions");
+      }
       if (x.existing != null) return "+" + x.added + (x.added == 1 ? " surface" : " surfaces");
       int n = x.target.size();
       return n + (n == 1 ? " surface" : " surfaces") + (edited.apply(x) ? ", edited" : "");
@@ -6212,7 +6438,7 @@ public class SimKit extends StarMacro {
         setBackground(head ? Ui.GROUP_BG : t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
         setForeground(head ? (c == 1 ? new java.awt.Color(0x2B, 0x35, 0x42) : Ui.MUTED) : off ? Ui.FAINT : c == 1 && !x.present ? java.awt.Color.BLACK : Ui.MUTED);
         setFont(t.getFont().deriveFont(Font.PLAIN));
-        setToolTipText(c == 2 && !head ? Ui.cap(x.def[6]) : head && isSet.test((String) o) ? "Right-click to remove the set." : null);
+        setToolTipText(c == 2 && !head ? Ui.cap(x.def[6]) : null);
         return this;
       }
     };
@@ -6278,6 +6504,55 @@ public class SimKit extends StarMacro {
     allB.setToolTipText("Select all surfaces.");
     none.setToolTipText("Clear all surfaces.");
     final StdReport[] cur = {null};
+    final JPanel regList = new JPanel();
+    regList.setLayout(new javax.swing.BoxLayout(regList, javax.swing.BoxLayout.Y_AXIS));
+    regList.setBackground(java.awt.Color.WHITE);
+    final javax.swing.JToggleButton oneRep = Ui.chip("One report"), perRep = Ui.chip("One per continuum");
+    javax.swing.ButtonGroup splitGroup = new javax.swing.ButtonGroup();
+    splitGroup.add(oneRep);
+    splitGroup.add(perRep);
+    oneRep.setToolTipText("One report on all the regions where the field exists.");
+    perRep.setToolTipText("One report per continuum, named <report>_<continuum>.");
+    final JLabel makes = Ui.muted(" ");
+    final JPanel splitRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+    splitRow.add(oneRep);
+    splitRow.add(perRep);
+    // regions grouped by continuum: a tick where the field exists, else grey with the reason
+    final java.util.function.Consumer<StdReport> fillRegions = x -> {
+      regList.removeAll();
+      String lastC = null;
+      for (String[] rr : x.regionRows) {
+        if (!rr[0].equals(lastC)) {
+          JPanel h = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
+          h.setBackground(java.awt.Color.WHITE);
+          h.setBorder(BorderFactory.createEmptyBorder(lastC == null ? 2 : 10, 0, 2, 0));
+          JLabel cn = new JLabel(rr[0]);
+          cn.setFont(cn.getFont().deriveFont(Font.BOLD));
+          h.add(cn);
+          h.add(Ui.muted(rr[1]));
+          h.setAlignmentX(0f);
+          h.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, h.getPreferredSize().height));
+          regList.add(h);
+          lastC = rr[0];
+        }
+        boolean on = rr[3].isEmpty();
+        JLabel l = new JLabel("<html>" + (on ? "\u2713&nbsp;&nbsp;" : "&nbsp;&nbsp;&nbsp;&nbsp;") + Html.esc(rr[2])
+            + (on ? "" : "&nbsp;&nbsp;<font color='#9AA4B0'>" + Html.esc(rr[3]) + "</font>") + "</html>");
+        l.setForeground(on ? java.awt.Color.BLACK : Ui.FAINT);
+        l.setBorder(BorderFactory.createEmptyBorder(2, 22, 2, 0));
+        l.setAlignmentX(0f);
+        regList.add(l);
+      }
+      if (x.regionRows.isEmpty()) regList.add(Ui.muted("Computed on all regions."));
+      splitRow.setVisible(x.conts.size() > 1 && !x.present);
+      oneRep.setSelected(!x.perCont);
+      perRep.setSelected(x.perCont);
+      List<String> esc = new ArrayList<>();
+      for (String n0 : x.names()) esc.add(Html.esc(n0));
+      makes.setText(x.present ? " " : "<html>Creates " + (esc.size() > 1 ? "<br>" : "") + String.join("<br>", esc) + "</html>");
+      regList.revalidate();
+      regList.repaint();
+    };
     final Runnable[] fill = {null};
     final java.awt.CardLayout cards = new java.awt.CardLayout();
     final JPanel body2 = new JPanel(cards);
@@ -6317,8 +6592,8 @@ public class SimKit extends StarMacro {
               + "<br><br>A formula report has no surfaces to select.</div></html>");
           cards.show(body2, "text");
         } else if (x.def[4].equals("REGIONS")) {
-          textLbl.setText("Computed on all regions.");
-          cards.show(body2, "text");
+          fillRegions.accept(x);
+          cards.show(body2, "regions");
         } else {
           cards.show(body2, "surf");
           String q = search.getText().trim().toLowerCase(Locale.ROOT);
@@ -6450,7 +6725,9 @@ public class SimKit extends StarMacro {
       @Override public void mousePressed(java.awt.event.MouseEvent e) { atPress[0] = cur[0]; }
     });
     for (java.awt.event.MouseListener l : own) table.addMouseListener(l);
-    final java.util.function.Consumer<String> askRemove = g -> { if (isSet.test(g) && present.applyAsInt(g) > 0) remove.accept(g); };
+    final java.util.function.Consumer<Object> askRemove = o -> {
+      if (o instanceof String ? present.applyAsInt((String) o) > 0 : ((StdReport) o).present) remove.accept(o);
+    };
     table.addMouseListener(new java.awt.event.MouseAdapter() {
       @Override public void mousePressed(java.awt.event.MouseEvent e) { if (!menu(e)) click(e); }
       @Override public void mouseReleased(java.awt.event.MouseEvent e) { menu(e); }
@@ -6479,16 +6756,15 @@ public class SimKit extends StarMacro {
         if (!e.isPopupTrigger()) return false;
         int r = table.rowAtPoint(e.getPoint());
         if (r < 0) return true;
-        Object o = rows.get(r);
-        final String g = o instanceof String ? (String) o : ((StdReport) o).def[1];
-        if (!isSet.test(g)) return true;
+        final Object o = rows.get(r);
         if (!(o instanceof String)) table.setRowSelectionInterval(r, r);
         javax.swing.JPopupMenu m = new javax.swing.JPopupMenu();
-        int n = present.applyAsInt(g);
-        javax.swing.JMenuItem rm = new javax.swing.JMenuItem("Remove " + groupTitle(g) + " set\u2026   Delete");
-        rm.setEnabled(n > 0);
-        rm.setToolTipText(n > 0 ? null : "No report of the set in the simulation.");
-        rm.addActionListener(a -> askRemove.accept(g));
+        boolean can = o instanceof String ? present.applyAsInt((String) o) > 0 : ((StdReport) o).present;
+        javax.swing.JMenuItem rm = new javax.swing.JMenuItem(o instanceof String ? "Delete all reports of " + groupTitle((String) o) + "\u2026"
+            : "Delete report\u2026   Delete");
+        rm.setEnabled(can);
+        rm.setToolTipText(can ? null : "Not in the simulation.");
+        rm.addActionListener(a -> askRemove.accept(o));
         m.add(rm);
         m.show(table, e.getX(), e.getY());
         return true;
@@ -6497,7 +6773,7 @@ public class SimKit extends StarMacro {
     table.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke("DELETE"), "simkit.removeSet");
     table.getActionMap().put("simkit.removeSet", new javax.swing.AbstractAction() {
       private static final long serialVersionUID = 1L;
-      @Override public void actionPerformed(java.awt.event.ActionEvent e) { if (cur[0] != null) askRemove.accept(cur[0].def[1]); }
+      @Override public void actionPerformed(java.awt.event.ActionEvent e) { if (cur[0] != null) askRemove.accept(cur[0]); }
     });
     table.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke("SPACE"), "simkit.toggle");
     table.getActionMap().put("simkit.toggle", new javax.swing.AbstractAction() {
@@ -6533,6 +6809,29 @@ public class SimKit extends StarMacro {
     textLbl.setVerticalAlignment(javax.swing.SwingConstants.TOP);
     textPane.add(textLbl, BorderLayout.NORTH);
     body2.add(surfPane, "surf");
+    for (javax.swing.JToggleButton b : new javax.swing.JToggleButton[] {oneRep, perRep}) {
+      b.addActionListener(e -> {
+        StdReport x = cur[0];
+        if (x == null) return;
+        x.perCont = perRep.isSelected();
+        fillRegions.accept(x);
+        refreshRow.run();
+        changed.run();
+      });
+    }
+    JPanel regHead = new JPanel();
+    regHead.setLayout(new javax.swing.BoxLayout(regHead, javax.swing.BoxLayout.Y_AXIS));
+    JLabel rl = new JLabel("Regions");
+    rl.setFont(rl.getFont().deriveFont(Font.BOLD));
+    for (javax.swing.JComponent k : new javax.swing.JComponent[] {rl, splitRow, makes}) {
+      k.setAlignmentX(0f);
+      regHead.add(k);
+      regHead.add(javax.swing.Box.createVerticalStrut(4));
+    }
+    JPanel regPane = new JPanel(new BorderLayout(0, 2));
+    regPane.add(regHead, BorderLayout.NORTH);
+    regPane.add(plainScroll(regList, 290, 200), BorderLayout.CENTER);
+    body2.add(regPane, "regions");
     body2.add(textPane, "text");
     JPanel head = new JPanel();
     head.setLayout(new javax.swing.BoxLayout(head, javax.swing.BoxLayout.Y_AXIS));
@@ -6552,7 +6851,7 @@ public class SimKit extends StarMacro {
     center.add(right, BorderLayout.EAST);
     JPanel body = new JPanel(new BorderLayout(0, 8));
     body.add(center, BorderLayout.CENTER);
-    body.add(Ui.muted("<html>Each report gets a monitor; each group gets one plot. Reports and monitors are stored in one folder per group. "
+    body.add(Ui.muted("<html>Each report gets a monitor; each group gets one plot. Reports, monitors and plots are stored in folders Predefined / &lt;group&gt;. "
         + "Reports with a location write the x, y, z of the extreme cell to the Output window.<br>List: config/standard_reports.csv.</html>"), BorderLayout.SOUTH);
     for (int i = 0; i < rows.size(); i++) {   // select the first report that can be created
       if (rows.get(i) instanceof StdReport && ((StdReport) rows.get(i)).why == null) { table.setRowSelectionInterval(i, i); break; }
@@ -6632,7 +6931,7 @@ public class SimKit extends StarMacro {
     return s.trim().replaceAll("[\\s./\\\\:]+", "-").replaceAll("^-+|-+$", "");
   }
 
-  /** A quantity on the Per object page. ff is null offline. */
+  /** A quantity on the By object page. ff is null offline. */
   static final class ObjQty {
     String key, code, label, ffName;
     Object ff;
@@ -6644,6 +6943,7 @@ public class SimKit extends StarMacro {
     Object o;
     String name, region = "", kind = "";   // kind: prefix (WALL ...), "region", "interface", "derived" or ""
     String sub = "";                       // derived parts: the type, e.g. "Plane section"
+    Cont cont;                             // continuum of the region, or null
     boolean region() { return kind.equals("region"); }
     boolean pick;
   }
@@ -6728,11 +7028,13 @@ public class SimKit extends StarMacro {
   List<ObjTarget> objTargets() {
     List<ObjTarget> out = new ArrayList<>();
     Map<String, Integer> seen = new HashMap<>();
+    List<Cont> conts = continua();
     for (Region r : sim.getRegionManager().getRegions()) {
       for (Boundary b : r.getBoundaryManager().getBoundaries()) {
         if (isInterfaceBoundary(b)) continue;
         ObjTarget x = new ObjTarget();
         x.o = b;
+        x.cont = contOf(conts, r);
         String n = nm(b);
         x.name = objToken(n.substring(n.lastIndexOf('.') + 1));
         x.region = nm(r);
@@ -6749,6 +7051,7 @@ public class SimKit extends StarMacro {
       x.name = objToken(nm(r));
       x.region = nm(r);
       x.kind = "region";
+      x.cont = contOf(conts, r);
       out.add(x);
     }
     for (Region r : sim.getRegionManager().getRegions()) {   // interface boundaries made by STAR-CCM+
@@ -6759,6 +7062,7 @@ public class SimKit extends StarMacro {
         x.name = objToken(nm(b).replaceAll("[\\[\\]()]", " ").trim()) + "_" + objToken(nm(r));
         x.region = nm(r);
         x.kind = "interface";
+        x.cont = contOf(conts, r);
         out.add(x);
       }
     }
@@ -6835,7 +7139,12 @@ public class SimKit extends StarMacro {
           boolean reg = false, bnd = false;
           List<String> pn = new ArrayList<>();
           ObjRow r = new ObjRow();
-          for (ObjTarget x : set) { reg |= x.region(); bnd |= !x.region(); pn.add(x.name); r.parts.add(x.o); }
+          String need = fieldNeeds(q.ffName == null ? "" : q.ffName), lack = null;
+          for (ObjTarget x : set) {   // objects whose continuum does not have the field are left out
+            String no = x.cont == null ? null : x.cont.lacks(need);
+            if (no != null) { lack = x.cont.name + ": " + no; continue; }
+            reg |= x.region(); bnd |= !x.region(); pn.add(x.name); r.parts.add(x.o);
+          }
           String obj = combine ? objToken(label == null || label.trim().isEmpty() ? "group" : label) : set.get(0).name;
           String sc = n.stat(s);
           r.name = n.name(q.code, sc, obj);
@@ -6844,7 +7153,8 @@ public class SimKit extends StarMacro {
           if (plotMode.equals("quantity")) { r.plotKey = q.code + "_" + sc; r.plotTitle = q.code + "_" + sc; }
           else if (plotMode.equals("object")) { r.plotKey = obj; r.plotTitle = obj; }
           String sig = objSig(r.cls, q.ffName, pn);
-          if (reg && bnd) { r.action = "n/a"; r.note = "boundaries and regions in one report"; }
+          if (r.parts.isEmpty()) { r.action = "n/a"; r.note = lack == null ? "no object" : lack; }
+          else if (reg && bnd) { r.action = "n/a"; r.note = "boundaries and regions in one report"; }
           else if (!statFits(s, reg)) { r.action = "n/a"; r.note = s + (reg ? ": boundaries only" : ": regions only"); }
           else if (st.names.contains(r.name) || seen.contains(r.name)) { r.action = "exists"; r.note = "name in use"; }
           else if (st.sigs.containsKey(sig)) { r.action = "exists"; r.note = "same report: " + st.sigs.get(sig); }
@@ -6880,7 +7190,7 @@ public class SimKit extends StarMacro {
   }
 
   /** Creates and renames the ticked rows. Each new report gets a monitor, plots follow the plot key, and the new
-   *  objects go to the folders "Per object". */
+   *  objects go to the folders "By object". */
   String objApply(List<ObjRow> rows, String plotMode) {
     int made = 0, ren = 0, bad = 0;
     Map<String, List<Object>> groups = new LinkedHashMap<>();
@@ -6919,9 +7229,9 @@ public class SimKit extends StarMacro {
       if (mp[1] != null) plots.add(mp[1]);
     }
     if (!reports.isEmpty()) {
-      toFolder(sim.getReportManager(), "Per object", reports);
-      toFolder(sim.getMonitorManager(), "Per object", monitors);
-      if (!plots.isEmpty()) toFolder(sim.getPlotManager(), "Per object", plots);
+      toFolder(sim.getReportManager(), "By object", reports);
+      toFolder(sim.getMonitorManager(), "By object", monitors);
+      if (!plots.isEmpty()) toFolder(sim.getPlotManager(), "By object", plots);
       if (gui && !plots.isEmpty()) Ui.collapseInTree(namesOf(plots));
     }
     String s = (made > 0 ? made + (made == 1 ? " report" : " reports") + " with monitors" + (plots.isEmpty() ? "" : " and " + plots.size()
@@ -7074,15 +7384,13 @@ public class SimKit extends StarMacro {
       x.onTip = String.join(", ", pn);
       if (gm != null && r instanceof star.base.neo.ClientServerObject) {
         try {
-          java.util.Optional<star.base.neo.ClientServerObjectGroup> g = gm.findGroup((star.base.neo.ClientServerObject) r);
-          if (g.isPresent()) x.folder = nm(g.get());
+          x.folder = folderPath(gm, r);
         } catch (Throwable t) { /* no folder */ }
       }
       x.rename = ren.get(r);
       out.add(x);
     }
-    out.sort((a, b) -> a.folder.equals(b.folder) ? a.name.compareToIgnoreCase(b.name)
-        : a.folder.isEmpty() ? 1 : b.folder.isEmpty() ? -1 : a.folder.compareToIgnoreCase(b.folder));
+    out.sort(java.util.Comparator.comparing(a -> treeKey(a.folder, a.name)));
     return out;
   }
 
@@ -7092,6 +7400,38 @@ public class SimKit extends StarMacro {
   static final class SelTarget {
     Object o;
     String name = "", region = "", group = "", kind = "";   // kind: boundary, interface, region, derived
+    Cont cont;                                              // continuum of the region, or null
+  }
+
+  /** Folder of an object in the tree of its manager, nested folders joined by "/"; "" at the top. */
+  static String folderPath(star.base.neo.ClientServerObjectGroupManager gm, Object o) {
+    try {
+      String p = findIn(gm.getObjects(), "", o, 0);
+      return p == null ? "" : p;
+    } catch (Throwable t) {
+      return "";
+    }
+  }
+
+  /** Path of the deepest folder holding o, searched from the top folders down. */
+  static String findIn(Collection<?> groups, String prefix, Object o, int depth) {
+    if (depth > 20) return null;
+    for (Object g : groups) {
+      if (!(g instanceof star.base.neo.ClientServerObjectGroup)) continue;
+      star.base.neo.ClientServerObjectGroup f = (star.base.neo.ClientServerObjectGroup) g;
+      String p = prefix + nm(f).replace("/", "\u2215");
+      String sub = findIn(f.getGroupsManager().getObjects(), p + "/", o, depth + 1);
+      if (sub != null) return sub;
+      if (f.getObjects().contains(o)) return p;
+    }
+    return null;
+  }
+
+  /** Sort key of a tree row: in each folder, sub-folders first, then the objects by name. */
+  static String treeKey(String folder, String name) {
+    StringBuilder b = new StringBuilder();
+    if (!folder.isEmpty()) for (String f : folder.split("/")) b.append('0').append(f.toLowerCase(Locale.ROOT)).append('\u0001');
+    return b.append('1').append(name.toLowerCase(Locale.ROOT)).toString();
   }
 
   /** A report of the simulation for the In this simulation page. */
@@ -7101,8 +7441,10 @@ public class SimKit extends StarMacro {
     List<Object> parts = new ArrayList<>();
     final List<String> plots = new ArrayList<>();
     final List<String> usedBy = new ArrayList<>();   // reports and field functions that use it (formula or mean)
+    String need = "";                                 // what its field needs in a region (fieldNeeds)
     boolean query, formula, hasParts;
     int criteria;                                     // stopping criteria on its monitor
+    String head;                                      // a folder heading row of the table: the folder path
 
     /** A report with an objects list that is empty: shown in amber. */
     boolean empty() { return hasParts && !query && parts.isEmpty(); }
@@ -7111,7 +7453,8 @@ public class SimKit extends StarMacro {
   /** A monitor plot with its curves (monitors), in order. */
   static final class PlotInfo {
     Object plot;
-    String name = "";
+    String name = "", folder = "";
+    String head;                                      // a folder heading row of the table: the folder path
     final List<Object> monitors = new ArrayList<>();
     final List<String> curves = new ArrayList<>();
   }
@@ -7124,12 +7467,14 @@ public class SimKit extends StarMacro {
   /** Objects for the selector: boundaries by type prefix, interface boundaries, regions, derived parts by type. */
   List<SelTarget> selTargets() {
     List<SelTarget> out = new ArrayList<>();
+    List<Cont> conts = continua();
     for (Region r : sim.getRegionManager().getRegions()) {
       for (Boundary b : r.getBoundaryManager().getBoundaries()) {
         SelTarget x = new SelTarget();
         x.o = b;
         x.name = nm(b);
         x.region = nm(r);
+        x.cont = contOf(conts, r);
         if (isInterfaceBoundary(b)) { x.kind = "interface"; x.group = "Interfaces"; }
         else { String t = bcToken(nm(b)); x.kind = "boundary"; x.group = t == null ? "Other surfaces" : t; }
         out.add(x);
@@ -7141,7 +7486,8 @@ public class SimKit extends StarMacro {
       x.name = nm(r);
       x.region = nm(r);
       x.kind = "region";
-      x.group = "Regions";
+      x.cont = contOf(conts, r);
+      x.group = conts.size() > 1 && x.cont != null ? "Regions/" + x.cont.name : "Regions";   // a sub-group per continuum
       out.add(x);
     }
     try {
@@ -7167,11 +7513,14 @@ public class SimKit extends StarMacro {
       if (rep != null && !mon.containsKey(rep)) mon.put(rep, m);
     }
     Map<Object, List<String>> plotsOf = new IdentityHashMap<>();
+    star.base.neo.ClientServerObjectGroupManager pgm = null;
+    try { pgm = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(sim.getPlotManager(), "getGroupsManager"); } catch (Throwable t) { /* no folders */ }
     for (Object p : sim.getPlotManager().getObjects()) {
       if (!(p instanceof MonitorPlot) || "ResidualPlot".equals(cls(p))) continue;
       PlotInfo pi = new PlotInfo();
       pi.plot = p;
       pi.name = nm(p);
+      if (pgm != null) pi.folder = folderPath(pgm, p);
       for (Object m : ((MonitorPlot) p).getObjects()) {
         pi.monitors.add(m);
         pi.curves.add(nm(m));
@@ -7180,6 +7529,7 @@ public class SimKit extends StarMacro {
       }
       d.plotList.add(pi);
     }
+    d.plotList.sort(java.util.Comparator.comparing(a -> treeKey(a.folder, a.name)));
     Map<Object, Integer> crit = new IdentityHashMap<>();
     try {
       for (Object c : sim.getSolverStoppingCriterionManager().getObjects()) {
@@ -7206,6 +7556,8 @@ public class SimKit extends StarMacro {
       x.type = v.type;
       x.field = v.field;
       x.folder = v.folder;
+      Object rff = Reflect.tryCall(v.report, "getFieldFunction");
+      x.need = rff == null ? "" : fieldNeeds(ffName(rff));
       x.formula = Reflect.tryCall(v.report, "getDefinition") instanceof String;
       x.parts = x.formula ? new ArrayList<>() : partsOf(v.report);
       try { x.query = !x.formula && Boolean.TRUE.equals(Reflect.invoke(Reflect.invoke(v.report, "getParts"), "hasQuery")); }
@@ -7435,6 +7787,17 @@ public class SimKit extends StarMacro {
 
   /** Reason an object does not fit a report type, or null: volume average takes regions only, area and mass-flow
    *  average and surface integral take surfaces only. */
+  /** notFit, and an object whose continuum does not have the field of one of the reports. */
+  static String notFit(String type, Set<String> needs, SelTarget x) {
+    String why = notFit(type, x);
+    if (why != null || x.cont == null) return why;
+    for (String n : needs) {
+      String no = x.cont.lacks(n);
+      if (no != null) return x.cont.name + ": " + no;
+    }
+    return null;
+  }
+
   static String notFit(String type, SelTarget x) {
     boolean reg = x.kind.equals("region");
     if (type.equals("volume average") && !reg) return "Volume average: regions only";
@@ -7736,8 +8099,9 @@ public class SimKit extends StarMacro {
   Page managePage(final ReportsData[] data, final Runnable changed) {
     final Page p = new Page();
     final boolean[] plotsView = {false};
-    final List<RepInfo> repRows = new ArrayList<>();
+    final List<RepInfo> repRows = new ArrayList<>();   // with folder heading rows (head set) when the tree has folders
     final List<PlotInfo> plotRows = new ArrayList<>();
+    final Set<String> foldedR = new HashSet<>(), foldedP = new HashSet<>();
     final JTextField find = Ui.hintField("", "Filter reports", 16);
     final javax.swing.JToggleButton onlyEmpty = Ui.chip("No objects");
     onlyEmpty.setForeground(Ui.AMBER);
@@ -7758,6 +8122,7 @@ public class SimKit extends StarMacro {
       @Override public String getColumnName(int c) { return new String[] {"Report", "Type", "Field", "Objects", "Plots"}[c]; }
       @Override public Object getValueAt(int r, int c) {
         RepInfo x = repRows.get(r);
+        if (x.head != null) return c == 0 ? Ui.groupText(x.head.substring(x.head.lastIndexOf('/') + 1), x.head.contains("/"), x.name, foldedR.contains(x.head)) : "";
         switch (c) {
           case 0: return x.name;
           case 1: return x.type;
@@ -7773,13 +8138,15 @@ public class SimKit extends StarMacro {
     rt.putClientProperty("simkit.empty", "No reports in this simulation. Create them in By object or Predefined.");
     int[] rw = {200, 110, 120, 110, 110};
     for (int i = 0; i < rw.length; i++) rt.getColumnModel().getColumn(i).setPreferredWidth(rw[i]);
-    final javax.swing.table.TableCellRenderer rText = textCell((r, c) -> c == 0 ? java.awt.Color.BLACK : Ui.MUTED);
+    final javax.swing.table.TableCellRenderer rText0 = textCell((r, c) -> c == 0 ? java.awt.Color.BLACK : Ui.MUTED);
+    final javax.swing.table.TableCellRenderer rText = (t, v, s0, f, r, c) -> treeCell(rText0.getTableCellRendererComponent(t, v, s0, f, r, c),
+        repRows.get(r).head, repRows.get(r).folder, c, r, t.isRowSelected(r));
     rt.setDefaultRenderer(Object.class, rText);
     final Ui.PillCell emptyPill = new Ui.PillCell();
     emptyPill.setFont(rt.getFont());
     rt.getColumnModel().getColumn(3).setCellRenderer((t, v, s0, f, r, c) -> {   // an empty report: amber pill
       RepInfo x = repRows.get(r);
-      if (!x.empty()) return rText.getTableCellRendererComponent(t, v, s0, f, r, c);
+      if (x.head != null || !x.empty()) return rText.getTableCellRendererComponent(t, v, s0, f, r, c);
       emptyPill.setBackground(t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
       emptyPill.setToolTipText("The report has no objects: tick objects on the right, or delete it.");
       return emptyPill.set("No objects", Ui.PILL_AMBER, null, null);
@@ -7790,14 +8157,20 @@ public class SimKit extends StarMacro {
       @Override public int getRowCount() { return plotRows.size(); }
       @Override public int getColumnCount() { return 2; }
       @Override public String getColumnName(int c) { return c == 0 ? "Plot" : "Curves"; }
-      @Override public Object getValueAt(int r, int c) { return c == 0 ? plotRows.get(r).name : String.valueOf(plotRows.get(r).curves.size()); }
+      @Override public Object getValueAt(int r, int c) {
+        PlotInfo x = plotRows.get(r);
+        if (x.head != null) return c == 0 ? Ui.groupText(x.head.substring(x.head.lastIndexOf('/') + 1), x.head.contains("/"), x.name, foldedP.contains(x.head)) : "";
+        return c == 0 ? x.name : String.valueOf(x.curves.size());
+      }
     };
     final JTable pt = plainTable(pm);
     pt.setSelectionMode(javax.swing.ListSelectionModel.SINGLE_SELECTION);
     pt.putClientProperty("simkit.empty", "No plots.");
     pt.getColumnModel().getColumn(0).setPreferredWidth(420);
     pt.getColumnModel().getColumn(1).setPreferredWidth(80);
-    pt.setDefaultRenderer(Object.class, textCell((r, c) -> c == 0 ? java.awt.Color.BLACK : Ui.MUTED));
+    final javax.swing.table.TableCellRenderer pText0 = textCell((r, c) -> c == 0 ? java.awt.Color.BLACK : Ui.MUTED);
+    pt.setDefaultRenderer(Object.class, (t, v, s0, f, r, c) -> treeCell(pText0.getTableCellRendererComponent(t, v, s0, f, r, c),
+        plotRows.get(r).head, plotRows.get(r).folder, c, r, t.isRowSelected(r)));
     final java.awt.CardLayout leftCards = new java.awt.CardLayout(), rightCards = new java.awt.CardLayout();
     final JPanel left = new JPanel(leftCards), right = new JPanel(rightCards);
     left.add(plainScroll(rt, 560, 360), "reports");
@@ -7829,7 +8202,7 @@ public class SimKit extends StarMacro {
     final PlotInfo[] plotPicked = {null};
     final Runnable showRep = () -> {
       picked.clear();
-      for (int r : rt.getSelectedRows()) picked.add(repRows.get(r));
+      for (int r : rt.getSelectedRows()) if (repRows.get(r).head == null) picked.add(repRows.get(r));
       Map<Object, Integer> st = new IdentityHashMap<>();
       boolean canEdit = !picked.isEmpty();
       String type = null;
@@ -7840,7 +8213,9 @@ public class SimKit extends StarMacro {
       }
       for (Map.Entry<Object, Integer> e : st.entrySet()) e.setValue(e.getValue() == picked.size() ? 2 : 1);
       final String ty = type == null ? "" : type;
-      sel.why = x -> notFit(ty, x);
+      final Set<String> needs = new HashSet<>();
+      for (RepInfo x : picked) if (!x.need.isEmpty()) needs.add(x.need);
+      sel.why = x -> notFit(ty, needs, x);
       sel.set(data[0].targets, st, canEdit);
       head.setText(picked.isEmpty() ? "Select a report on the left" : picked.size() == 1 ? picked.get(0).name : plural(picked.size(), "report", "reports") + " selected");
       String n0 = "";
@@ -7855,7 +8230,7 @@ public class SimKit extends StarMacro {
     };
     final Runnable showPlot = () -> {
       int r = pt.getSelectedRow();
-      plotPicked[0] = r < 0 ? null : plotRows.get(r);
+      plotPicked[0] = r < 0 || plotRows.get(r).head != null ? null : plotRows.get(r);
       curves.clear();
       curvesStart.clear();
       if (plotPicked[0] != null) { for (Object m : plotPicked[0].monitors) curves.addElement(m); curvesStart.addAll(plotPicked[0].monitors); }
@@ -7947,7 +8322,7 @@ public class SimKit extends StarMacro {
         void menu(java.awt.event.MouseEvent e) {
           if (!e.isPopupTrigger()) return;
           int r = tb.rowAtPoint(e.getPoint());
-          if (r < 0) return;
+          if (r < 0 || (tb == rt ? repRows.get(r).head : plotRows.get(r).head) != null) return;
           if (!tb.isRowSelected(r)) tb.setRowSelectionInterval(r, r);
           javax.swing.JPopupMenu m = new javax.swing.JPopupMenu();
           javax.swing.JMenuItem d = new javax.swing.JMenuItem(tb == rt ? (tb.getSelectedRowCount() == 1 ? "Delete report\u2026" : "Delete "
@@ -7998,18 +8373,57 @@ public class SimKit extends StarMacro {
       onlyEmpty.setText("No objects (" + nEmpty + ")");
       onlyEmpty.setVisible(nEmpty > 0 && !plotsView[0]);
       if (nEmpty == 0) onlyEmpty.setSelected(false);
+      List<RepInfo> rs = new ArrayList<>();
       for (RepInfo x : data[0].reps) {
         if (onlyEmpty.isSelected() && !x.empty()) continue;
-        if (q.isEmpty() || (x.name + " " + x.type + " " + x.field).toLowerCase(Locale.ROOT).contains(q)) repRows.add(x);
+        if (q.isEmpty() || (x.name + " " + x.type + " " + x.field).toLowerCase(Locale.ROOT).contains(q)) rs.add(x);
+      }
+      // the folders of the tree as headings; a search or a filter shows them unfolded
+      boolean open = !q.isEmpty() || onlyEmpty.isSelected();
+      for (Object[] t : treeRows(rs, x -> ((RepInfo) x).folder, open ? Collections.emptySet() : foldedR, n0 -> plural(n0, "report", "reports"))) {
+        if (t[1] != null) { RepInfo h = new RepInfo(); h.head = (String) t[1]; h.name = (String) t[2]; h.folder = h.head; repRows.add(h); }
+        else repRows.add((RepInfo) t[0]);
       }
       plotRows.clear();
-      for (PlotInfo x : data[0].plotList) if (q.isEmpty() || x.name.toLowerCase(Locale.ROOT).contains(q)) plotRows.add(x);
+      List<PlotInfo> ps = new ArrayList<>();
+      for (PlotInfo x : data[0].plotList) if (q.isEmpty() || x.name.toLowerCase(Locale.ROOT).contains(q)) ps.add(x);
+      for (Object[] t : treeRows(ps, x -> ((PlotInfo) x).folder, q.isEmpty() ? foldedP : Collections.emptySet(), n0 -> plural(n0, "plot", "plots"))) {
+        if (t[1] != null) { PlotInfo h = new PlotInfo(); h.head = (String) t[1]; h.name = (String) t[2]; h.folder = h.head; plotRows.add(h); }
+        else plotRows.add((PlotInfo) t[0]);
+      }
       rm.fireTableDataChanged();
       pm.fireTableDataChanged();
+      for (int i = 0; i < repRows.size(); i++) rt.setRowHeight(i, repRows.get(i).head == null ? 24 : repRows.get(i).head.contains("/") ? Ui.SUB_H : Ui.GROUP_H);
+      for (int i = 0; i < plotRows.size(); i++) pt.setRowHeight(i, plotRows.get(i).head == null ? 24 : plotRows.get(i).head.contains("/") ? Ui.SUB_H : Ui.GROUP_H);
       for (int i = 0; i < repRows.size(); i++) if (keepR.contains(repRows.get(i).name)) rt.addRowSelectionInterval(i, i);
       for (int i = 0; i < plotRows.size(); i++) if (plotRows.get(i).name.equals(keepP)) pt.setRowSelectionInterval(i, i);
       if (plotsView[0]) showPlot.run(); else showRep.run();
     };
+    // a click on a folder heading folds it; the selection made before the click is kept
+    for (final JTable tb : new JTable[] {rt, pt}) {
+      final java.awt.event.MouseListener[] own = tb.getMouseListeners();
+      final Set<String> before = new HashSet<>();
+      for (java.awt.event.MouseListener l : own) tb.removeMouseListener(l);
+      tb.addMouseListener(new java.awt.event.MouseAdapter() {
+        @Override public void mousePressed(java.awt.event.MouseEvent e) {
+          before.clear();
+          for (RepInfo x : picked) before.add(x.name);
+          if (plotPicked[0] != null) before.add(plotPicked[0].name);
+          int r = tb.rowAtPoint(e.getPoint());
+          String h = r < 0 ? null : tb == rt ? repRows.get(r).head : plotRows.get(r).head;
+          if (h == null || !javax.swing.SwingUtilities.isLeftMouseButton(e)) return;
+          Set<String> f = tb == rt ? foldedR : foldedP;
+          if (!f.remove(h)) f.add(h);
+          e.consume();
+          javax.swing.SwingUtilities.invokeLater(() -> {
+            fillRows.run();
+            for (int i = 0; i < repRows.size(); i++) if (tb == rt && repRows.get(i).head == null && before.contains(repRows.get(i).name)) rt.addRowSelectionInterval(i, i);
+            for (int i = 0; i < plotRows.size(); i++) if (tb == pt && plotRows.get(i).head == null && before.contains(plotRows.get(i).name)) pt.setRowSelectionInterval(i, i);
+          });
+        }
+      });
+      for (java.awt.event.MouseListener l : own) tb.addMouseListener(l);
+    }
     find.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
       @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { fillRows.run(); }
       @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { fillRows.run(); }
@@ -8261,6 +8675,51 @@ public class SimKit extends StarMacro {
   }
 
   /** A text cell renderer for the Reports tables, with the background of the row selection. */
+  /** Rows of a list in the folders of the tree: {object, null, null} or a heading {null, folder path, count text}.
+   *  Objects are sorted folder by folder (treeKey). No heading when no object is in a folder. A folded folder hides
+   *  its objects and sub-folders. */
+  static List<Object[]> treeRows(List<?> objs, java.util.function.Function<Object, String> folderOf, Set<String> folded,
+      java.util.function.IntFunction<String> count) {
+    List<Object[]> out = new ArrayList<>();
+    Map<String, Integer> n = new HashMap<>();
+    for (Object o : objs) {
+      String f = folderOf.apply(o);
+      for (String p = f; !p.isEmpty(); p = p.contains("/") ? p.substring(0, p.lastIndexOf('/')) : "") n.merge(p, 1, Integer::sum);
+    }
+    Set<String> shown = new HashSet<>();
+    for (Object o : objs) {
+      String f = folderOf.apply(o);
+      boolean hidden = false;
+      String[] parts = f.isEmpty() ? new String[0] : f.split("/");
+      String p = "";
+      for (String part : parts) {
+        p = p.isEmpty() ? part : p + "/" + part;
+        if (hidden) break;
+        if (shown.add(p)) out.add(new Object[] {null, p, count.apply(n.get(p))});
+        hidden = folded.contains(p);
+      }
+      if (!hidden) out.add(new Object[] {o, null, null});
+    }
+    return out;
+  }
+
+  /** Style of a cell of a tree table: a heading band per folder level, objects indented under their folder. */
+  static java.awt.Component treeCell(java.awt.Component k, String head, String folder, int c, int r, boolean sel) {
+    int depth = folder == null || folder.isEmpty() ? 0 : folder.split("/").length;
+    if (head != null) {
+      boolean sub = head.contains("/");
+      k.setBackground(sel ? Ui.SEL : sub ? Ui.SUB_BG : Ui.GROUP_BG);
+      k.setForeground(new java.awt.Color(0x2B, 0x35, 0x42));
+      if (k instanceof javax.swing.JComponent) {
+        ((javax.swing.JComponent) k).setBorder(Ui.groupBorder(sub, r, c == 0 ? 8 + 14 * (depth - 1) : 8));
+        ((javax.swing.JComponent) k).setToolTipText(c == 0 ? head.replace("/", " / ") : null);
+      }
+      return k;
+    }
+    if (c == 0 && depth > 0 && k instanceof javax.swing.JComponent) ((javax.swing.JComponent) k).setBorder(BorderFactory.createEmptyBorder(0, 8 + 14 * depth, 0, 8));
+    return k;
+  }
+
   static javax.swing.table.DefaultTableCellRenderer textCell(final java.util.function.BiFunction<Integer, Integer, java.awt.Color> fg) {
     return new javax.swing.table.DefaultTableCellRenderer() {
       private static final long serialVersionUID = 1L;
@@ -8423,11 +8882,19 @@ public class SimKit extends StarMacro {
     final Page p = new Page();
     final Runnable build = () -> {
       p.panel.removeAll();
-      p.panel.add(stdPage(data[0].std, data[0].every, changed, g -> {
-        int n = setReports(g).size();
-        String text = "Deletes the " + plural(n, "report", "reports") + " of the " + groupTitle(g) + " set with their monitors, "
-            + "stopping criteria and the plot " + plotName(g) + ".\nThis cannot be undone.";
-        if (confirmDelete("Remove " + groupTitle(g) + " set", text, n > 0)) p.exec.accept(() -> removeSet(g));
+      p.panel.add(stdPage(data[0].std, data[0].every, changed, o -> {
+        boolean grp = o instanceof String;
+        final String g = grp ? (String) o : ((StdReport) o).def[1], row = grp ? null : ((StdReport) o).def[0];
+        List<Object> all = grp ? setReports(g) : rowReports(row);
+        List<Object> go = deletable(all);
+        List<String> kept = new ArrayList<>();
+        for (Object[] u : usersOf(all)) kept.add(nm(u[0]) + " (used by " + u[1] + ")");
+        String what = go.size() == 1 && !grp ? "the report " + nm(go.get(0)) : plural(go.size(), "report", "reports") + (grp ? " of " + groupTitle(g) : "");
+        String text = go.isEmpty() ? "All these reports are used by other reports and are kept:\n" + String.join(", ", kept)
+            : "Deletes " + what + " with " + (go.size() == 1 ? "its monitor" : "their monitors") + " and stopping criteria; the curves are taken out of the plots"
+            + (grp ? ", and the plots of the group left without curves are deleted" : "") + "."
+            + (kept.isEmpty() ? "" : "\nKept, used by other reports: " + String.join(", ", kept) + ".") + "\nThis cannot be undone.";
+        if (confirmDelete(grp ? "Delete reports of " + groupTitle(g) : "Delete " + row, text, !go.isEmpty())) p.exec.accept(() -> removeSet(g, row));
       }), BorderLayout.CENTER);
       p.focus = TableFinder.table(p.panel);
       p.panel.revalidate();
@@ -8467,7 +8934,7 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** The Per object page of the Reports window: quantities, statistics, objects and the reports to create. */
+  /** The By object page of the Reports window: quantities, statistics, objects and the reports to create. */
   Page objPage(final ReportsData[] data, final ObjNames names, final List<ObjQty> qs, final List<ObjQty> others,
       final List<ObjTarget> objs, final Runnable changed) {
     final Page p = new Page();
@@ -8546,13 +9013,18 @@ public class SimKit extends StarMacro {
     Set<String> bRegions = new HashSet<>();
     for (ObjTarget x : objs) if (!x.region()) bRegions.add(x.region);
     final boolean byRegion = bRegions.size() > 1;
+    Set<String> contNames = new HashSet<>();
+    for (ObjTarget x : objs) if (x.region() && x.cont != null) contNames.add(x.cont.name);
+    final boolean byCont = contNames.size() > 1;
     final java.util.function.Function<ObjTarget, String> groupOf = x -> x.kind.equals("derived") ? "Derived parts/" + x.sub
+        : x.region() && byCont && x.cont != null ? "Regions/" + x.cont.name
         : x.region() || !byRegion ? kindOf.apply(x) : kindOf.apply(x) + "  ·  " + x.region;
     // a key "A/B" is the sub-group B of A; the heading A holds all its sub-groups
     final java.util.function.ToIntFunction<ObjTarget> rank = x -> x.region() ? 3 : x.kind.equals("derived") ? 4 : x.kind.equals("interface") ? 2
         : x.kind.isEmpty() ? 1 : 0;
     final List<ObjTarget> ordered = new ArrayList<>(objs);
-    ordered.sort(java.util.Comparator.comparingInt(rank).thenComparing(kindOf::apply).thenComparing(x -> x.sub).thenComparing(x -> x.region));
+    ordered.sort(java.util.Comparator.comparingInt(rank).thenComparing(kindOf::apply).thenComparing(x -> x.sub)
+        .thenComparing(x -> x.region() && x.cont != null ? x.cont.name : "").thenComparing(x -> x.region));
     final Map<String, List<ObjTarget>> oGroups = new LinkedHashMap<>();
     for (ObjTarget x : ordered) oGroups.computeIfAbsent(groupOf.apply(x), k -> new ArrayList<>()).add(x);
     final Set<String> oFolded = new HashSet<>();
@@ -8977,7 +9449,7 @@ public class SimKit extends StarMacro {
     bottom.add(rhAll, BorderLayout.NORTH);
     bottom.add(plainScroll(pt, 940, 5 * pt.getRowHeight() + pt.getRowHeight() + 6), BorderLayout.CENTER);
     bottom.add(Ui.muted("<html>Names follow " + Html.esc(names.pattern) + " (config/report_names.csv). Reports, monitors and plots are stored in "
-        + "folders \"Per object\". An existing plot gets the new curves.</html>"), BorderLayout.SOUTH);
+        + "folders \"By object\". An existing plot gets the new curves.</html>"), BorderLayout.SOUTH);
     p.panel.setLayout(new BorderLayout(0, 16));
     p.panel.add(top, BorderLayout.NORTH);
     p.panel.add(bottom, BorderLayout.CENTER);
@@ -9022,8 +9494,8 @@ public class SimKit extends StarMacro {
     return null;
   }
 
-  /** Puts the objects in a folder of their node in the tree. Objects already in a folder stay there.
-   *  The log reports the outcome. */
+  /** Puts the objects in a folder of their node in the tree; "A/B" is the sub-folder B of A. Objects already in a
+   *  folder stay there. The log reports the outcome. */
   void toFolder(Object manager, String folder, List<?> objs) {
     try {
       final star.base.neo.ClientServerObjectGroupManager gm = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(manager, "getGroupsManager");
@@ -9034,22 +9506,31 @@ public class SimKit extends StarMacro {
         }
       }
       if (loose.isEmpty()) return;
-      star.base.neo.ClientServerObjectGroup have = null;
-      for (Object g0 : gm.getObjects()) if (folder.equals(nm(g0)) && g0 instanceof star.base.neo.ClientServerObjectGroup) have = (star.base.neo.ClientServerObjectGroup) g0;
-      String how;
-      if (have != null) {   // reuse the folder; a new group of the same name would become "Standard reports 2"
-        have.addObjects(loose);
-        how = "added";
-      } else {
-        gm.groupObjects(folder, loose);
-        how = "new";
+      star.base.neo.ClientServerObjectGroupManager at = gm;
+      String how = "added";
+      for (String part : folder.split("/")) {   // each level: reuse the folder of that name, a new one would get " 2"
+        star.base.neo.ClientServerObjectGroup have = null;
+        for (Object g0 : at.getObjects()) if (part.equals(nm(g0)) && g0 instanceof star.base.neo.ClientServerObjectGroup) have = (star.base.neo.ClientServerObjectGroup) g0;
+        if (have != null) have.addObjects(loose);
+        else {
+          at.groupObjects(part, loose);
+          how = "new";
+          for (Object g0 : at.getObjects()) if (part.equals(nm(g0)) && g0 instanceof star.base.neo.ClientServerObjectGroup) have = (star.base.neo.ClientServerObjectGroup) g0;
+        }
+        if (have == null) break;
+        at = have.getGroupsManager();
       }
-      java.util.Optional<star.base.neo.ClientServerObjectGroup> g = gm.findGroup(loose.get(0));
-      log.line("  folder \"" + folder + "\" (" + nm(manager) + "): " + (g.isPresent() ? loose.size() + " object(s) in " + nm(g.get()) + " (" + how + ")"
+      String got = folderPath(gm, loose.get(0));
+      log.line("  folder \"" + folder + "\" (" + nm(manager) + "): " + (!got.isEmpty() ? loose.size() + " object(s) in " + got + " (" + how + ")"
           : "NOT made (the objects stay where they are)"));
     } catch (Throwable t) {
       log.na("folder " + folder, t);
     }
+  }
+
+  /** Folder of the Predefined reports of a group in the tree: the tab name, then the group. */
+  static String stdFolder(String group) {
+    return "Predefined/" + groupTitle(group).replace("/", "-");
   }
 
   /** Creates one monitor per report and one plot of all of them. Returns {monitors, plot or null}. A monitor plot
@@ -10107,6 +10588,7 @@ public class SimKit extends StarMacro {
             Collections.emptySet(), Collections.singletonList(ib)) + " objects " + namesList(partsOf(mr)));
       }
     } catch (Throwable t) { log.na("cht: report on interface", t); }
+    testDivergence();
     log.line("cht: done (the simulation is not saved)");
   }
 
@@ -10283,11 +10765,13 @@ public class SimKit extends StarMacro {
   /** Batch test of the Divergence set: create the reports that fit, read the location of one, remove the set. */
   void testDivergence() {
     try {
+      for (Cont k : continua()) log.line("div: continuum " + k.name + " (" + k.summary().replace("·", "/") + "), regions " + namesList(k.regions));
       List<StdReport> all = stdPlan();
       int n = 0;
       for (StdReport x : all) {
         if (!x.def[1].equals("divergence")) continue;
-        log.line("div: " + x.def[0] + " | on " + x.on + " | " + (x.why == null ? "can be made" : x.why));
+        log.line("div: " + x.def[0] + " | on " + x.on + " | " + (x.why == null ? "can be made" : x.why) + " | makes " + x.names()
+            + " | regions " + namesList(x.target));
         if (x.why == null) { x.on = true; n++; }
         else x.on = false;
       }
@@ -10308,11 +10792,33 @@ public class SimKit extends StarMacro {
         } catch (Throwable t) { v = " value n/a (" + reason(t) + ")"; }
         log.line("div:   " + nm(r) + " collocated " + names + v);
       }
+      for (Object p : sim.getPlotManager().getObjects()) {
+        if (!nm(p).startsWith("Divergence")) continue;
+        List<String> ax = new ArrayList<>();
+        try { for (Object a : (Collection<?>) Reflect.invoke(Reflect.invoke(p, "getAxisManager"), "getAxes")) ax.add(nm(a) + " log " + Reflect.tryCall(a, "getLogarithmic")); }
+        catch (Throwable t) { ax.add("axes n/a"); }
+        log.line("div: plot " + nm(p) + " curves " + ((MonitorPlot) p).getObjects().size() + " axes " + ax);
+      }
+      try {
+        star.base.neo.ClientServerObjectGroupManager rg = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(sim.getReportManager(), "getGroupsManager");
+        star.base.neo.ClientServerObjectGroupManager pg = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(sim.getPlotManager(), "getGroupsManager");
+        List<Object> rs = setReports("divergence");
+        log.line("div: folder of " + nm(rs.get(0)) + ": " + folderPath(rg, rs.get(0)));
+        for (Object p : sim.getPlotManager().getObjects()) if (nm(p).startsWith("Divergence")) log.line("div: folder of plot " + nm(p) + ": " + folderPath(pg, p));
+      } catch (Throwable t) { log.na("div: folders", t); }
       log.line("div: sets " + debugSets());
-      log.line("div: remove -> " + removeSet("divergence"));
+      log.line("div: delete row r_div_T_max -> " + removeSet("divergence", "r_div_T_max") + " left " + namesList(rowReports("r_div_T_max")));
+      log.line("div: remove -> " + removeSet("divergence", null));
       int left = setReports("divergence").size(), plots = 0;
       for (Object p : sim.getPlotManager().getObjects()) if (nm(p).equals(plotName("divergence"))) plots++;
       log.line("div: after remove " + left + " reports, " + plots + " plots");
+      List<String> top = new ArrayList<>();
+      for (Object m : new Object[] {sim.getReportManager(), sim.getPlotManager()}) {
+        for (Object g : ((star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(m, "getGroupsManager")).getObjects()) {
+          top.add(nm(m) + ":" + nm(g) + (g instanceof star.base.neo.ClientServerObjectGroup ? "[" + namesList(new ArrayList<>(((star.base.neo.ClientServerObjectGroup) g).getGroupsManager().getObjects())) + "]" : ""));
+        }
+      }
+      log.line("div: folders after remove " + top);
     } catch (Throwable t) { log.na("div: divergence set", t); }
   }
 

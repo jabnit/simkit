@@ -775,3 +775,31 @@ C. RESULTS SO FAR
   heading or on a report of the set -> "Remove <set> set...   Delete" (disabled when none of its reports exists);
   Delete key on a report of the set. The line under the table (Select all / Remove...) is removed. Offline render
   (DivShot): tick of the Divergence heading, fold of Pressure and Temperature. Context menu not rendered.
+  Reports: regions and continua. continua(): regions by physics continuum, fluid/solid from the region type, energy
+  (model class with Energy, Enthalpy or SegregatedFluidTemperatureModel) and turbulence (class with Turbulen, not
+  Laminar) from the model manager. fieldNeeds(field): fluid (velocity, pressure, Courant, y+, shear stress, Mach,
+  vorticity, mass flux), energy (temperature, heat flux, enthalpy), turbulence (turbulent ...), or any region.
+  Predefined: a REGIONS report is made on the regions where its field exists; over several continua one report per
+  continuum <name>_<continuum> (switch One report | One per continuum in the right pane, regions listed by continuum,
+  grey with the reason where the field does not exist); status "All regions", "n regions" or "n continua · n reports".
+  plot=<name> and log options: Divergence curves in plots Divergence velocity / pressure / temperature / ratios (log y
+  axis, Axis.setLogarithmic on the non-bottom axes), in a plot folder Divergence; a plot over 6 curves with several
+  continua is split by continuum. Delete in Predefined: right-click a present report (or Delete key) -> its reports
+  (per continuum, _mean) with monitors and stopping criteria; right-click a heading -> all reports of the group, the
+  plots of the group left without curves, empty folders; reports used by formulas or mean reports are kept (usersOf).
+  Existing: Regions sub-group per continuum; objects grey when their continuum lacks the field of the selected
+  reports (notFit with needs). By object: Regions sub-group per continuum; a quantity on an object without the field
+  is left out (n/a "<continuum>: <reason>" when no object is left). Batch: testDivergence also runs in chttest (fluid
+  PH_COLD + solid PH_SOLID): continua, names per report, plot axes, delete of one row, remove of the group.
+  Log y axis: plot.getAxisManager().getAxes(), every axis but getXAxis() set logarithmic (SKT117: Divergence ratios
+  Left Axis log true).
+  Reports > Existing: reports and plots in the folders of the tree (folderPath: nested groups by findGroup on the
+  group, joined by "/"), sorted per folder with sub-folders first (treeKey); a heading row per folder level (band
+  and line as the other headings, count, fold on click, selection kept); no heading for objects outside folders; flat
+  list when there is no folder. A search or the No objects filter shows the folders unfolded. Headings have no
+  context menu and are not edited. Render: DivShot (nested Predefined / group, By object, top-level report).
+  Folders made by SimKit follow the Reports window: Predefined / <group> for reports, monitors and plots of the
+  Predefined tab (toFolder with a path, nested groups through ClientServerObjectGroup.getGroupsManager), By object
+  for the By object tab (was Per object; existing Per object folders are kept). Delete of a group removes the empty
+  Predefined / <group> folders, then Predefined when empty. Batch: div: folder of reports and plots, folders after
+  remove.
