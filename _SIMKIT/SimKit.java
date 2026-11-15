@@ -99,7 +99,7 @@ public class SimKit extends StarMacro {
     NAMES("Names", "Prefixes, rules, default names",
         "Type prefixes on boundaries and part surfaces, report and plot names, default names. Proposes names and renames the ticked objects."),
     REPORTS("Reports", "Existing, by object, predefined",
-        "Edit, rename and delete the reports and plots of the simulation; create reports by object (quantities x statistics); create the predefined team reports (mass balance, p, T, wall heat, y+, Courant)"),
+        "Edit, rename and delete the reports and plots of the simulation; create reports by object (quantities x statistics); create the predefined team reports (mass balance, p, T, wall heat, y+, Courant, divergence set)"),
     MESH("Mesh study", "Mesh levels", "Coarse / medium / fine levels as runs, for a mesh sensitivity check (GCI)"),
     CALC("Calculators", "y+, Re, time step, GCI ...", "Boundary values, y+ and prism layers, time step, dimensionless numbers, GCI");
 
@@ -5757,8 +5757,10 @@ public class SimKit extends StarMacro {
    *  condition is empty, energy, unsteady or "needs <report> ...".
    *  criterion (optional) is a stopping criterion on the monitor: "asymptotic <width> <samples>",
    *  "below <limit>" or "above <limit>". It is created off unless the text ends with " on".
-   *  mean (optional) "last <n>" adds a report <name>_mean, the mean of the monitor over the last n samples. */
-  static final String[] STD_COLS = {"name", "group", "type", "field", "surfaces", "condition", "meaning", "criterion", "mean"};
+   *  mean (optional) "last <n>" adds a report <name>_mean, the mean of the monitor over the last n samples.
+   *  options (optional, words): debug = not ticked by default, the group can be removed as a set;
+   *  location = x, y, z of the extreme cell as collocated values of a maximum or minimum report. */
+  static final String[] STD_COLS = {"name", "group", "type", "field", "surfaces", "condition", "meaning", "criterion", "mean", "options"};
 
   static final String[][] STANDARD_REPORTS = {
       {"r_mdot_in", "massBalance", "mass flow", "", "IN", "", "mass flow entering (IN_ surfaces)"},
@@ -5775,7 +5777,21 @@ public class SimKit extends StarMacro {
       {"r_Q_wall", "heat", "heat flow", "", "WALL+IF", "energy", "heat flow through the walls", "", "last 500"},
       {"r_yplus_wall_max", "yplus", "maximum", "WallYplus", "WALL+IF", "", "maximum wall y+"},
       {"r_yplus_wall_avg", "yplus", "area average", "WallYplus", "WALL+IF", "", "average wall y+"},
-      {"r_Co_max", "courant", "maximum", "CourantNumber", "REGIONS", "unsteady", "maximum convective Courant number"}};
+      {"r_Co_max", "courant", "maximum", "CourantNumber", "REGIONS", "unsteady", "maximum convective Courant number"},
+      {"r_div_U_max", "divergence", "maximum", "Velocity:magnitude", "REGIONS", "", "maximum velocity and its location: jets in bad cells, narrow gaps", "", "", "debug location"},
+      {"r_div_p_min", "divergence", "minimum", "Pressure", "REGIONS", "", "minimum pressure and its location: unphysical low-pressure pockets", "", "", "debug location"},
+      {"r_div_p_max", "divergence", "maximum", "Pressure", "REGIONS", "", "maximum pressure and its location: spikes, checkerboarding, blocked flow paths", "", "", "debug location"},
+      {"r_div_p_abs_min", "divergence", "minimum", "AbsolutePressure", "REGIONS", "", "minimum absolute pressure and its location: near 0 before the equation of state fails", "", "", "debug location"},
+      {"r_div_T_max", "divergence", "maximum", "Temperature", "REGIONS", "energy", "maximum temperature and its location: cells at the upper temperature limit", "", "", "debug location"},
+      {"r_div_T_min", "divergence", "minimum", "Temperature", "REGIONS", "energy", "minimum temperature and its location: cells at the lower temperature limit", "", "", "debug location"},
+      {"r_div_mut_ratio_max", "divergence", "maximum", "TurbulentViscosityRatio", "REGIONS", "", "maximum turbulent viscosity ratio and its location: turbulence model blow-up", "", "", "debug location"},
+      {"r_div_Co_max", "divergence", "maximum", "CourantNumber", "REGIONS", "", "maximum Courant number and its location: cells over the stability limit", "", "", "debug location"},
+      {"r_div_p_out_min", "divergence", "minimum", "Pressure", "OUT+OPEN", "", "minimum pressure on outlets and openings and its location: backflow", "", "", "debug location"}};
+
+  /** True when the options column of a standard report holds the word. */
+  static boolean hasOpt(String[] r, String word) {
+    return r.length > 9 && r[9] != null && Arrays.asList(r[9].trim().toLowerCase(Locale.ROOT).split("\\s+")).contains(word);
+  }
 
   /** Report types by their plain name (a full class name works too). */
   static String reportClass(String type) {
@@ -5805,6 +5821,7 @@ public class SimKit extends StarMacro {
       case "heat": return "Walls: heat";
       case "yplus": return "Walls: y+";
       case "courant": return "Unsteady";
+      case "divergence": return "Divergence";
       default: return g;
     }
   }
@@ -5874,7 +5891,7 @@ public class SimKit extends StarMacro {
       else if (!expr && x.target.isEmpty()) x.why = "no " + r[4].replace("+", "_ or ") + "_ surface";
       else if (r[5].equals("energy") && !energy) x.why = "no energy model";
       else if (r[5].equals("unsteady") && !unsteady) x.why = "steady simulation";
-      else if (!expr && !r[3].isEmpty() && fieldFunction(r[3]) == null) x.why = r[3] + " not available";
+      else if (!expr && !r[3].isEmpty() && objField(r[3]) == null) x.why = r[3].replace(":magnitude", " magnitude") + " not available";
       else if (Reflect.cls(reportClass(r[2])) == null) x.why = "report type not available";
       if (x.why == null && r[0].equals("r_mdot_net") && (bc.getOrDefault("IN", Collections.emptyList()).isEmpty()
           || (bc.getOrDefault("OUT", Collections.emptyList()).isEmpty() && bc.getOrDefault("OPEN", Collections.emptyList()).isEmpty()))) {
@@ -5883,7 +5900,7 @@ public class SimKit extends StarMacro {
       if (x.why == null && r[5].startsWith("needs ")) {
         for (String n : r[5].substring(6).trim().split("\\s+")) if (!possible.contains(n)) x.why = "needs " + n;
       }
-      x.on = x.why == null;
+      x.on = x.why == null && !hasOpt(r, "debug");
       if (x.why == null) possible.add(r[0]);
       all.add(x);
     }
@@ -5924,8 +5941,9 @@ public class SimKit extends StarMacro {
         if (r[2].equalsIgnoreCase("expression")) {
           Reflect.invoke(report, "setDefinition", r[3]);
         } else {
-          if (!r[3].isEmpty()) Reflect.invoke(report, "setFieldFunction", fieldFunction(r[3]));
+          if (!r[3].isEmpty()) Reflect.invoke(report, "setFieldFunction", objField(r[3]));
           Reflect.invoke(Reflect.invoke(report, "getParts"), "setObjects", new NeoObjectVector(x.target.toArray()));
+          if (hasOpt(r, "location")) setLocation(report);
         }
         made.add(r[0]);
         n++;
@@ -5964,6 +5982,67 @@ public class SimKit extends StarMacro {
     if (crit > 0) out += ", " + plural(crit, "stopping criterion", "stopping criteria");
     if (means > 0) out += ", " + plural(means, "mean report", "mean reports");
     return (out.isEmpty() ? "Nothing created" : Ui.cap(out)) + ".";
+  }
+
+  /** Adds the x, y, z components of Position as collocated field functions of a maximum or minimum report.
+   *  The values at the extreme cell are written to the Output window with the report value. */
+  void setLocation(Object report) {
+    try {
+      FieldFunction pos = (FieldFunction) fieldFunction("Position");
+      if (pos == null) { log.line("  " + nm(report) + ": no Position field function, location not set"); return; }
+      List<FieldFunction> xyz = new ArrayList<>();
+      for (int i = 0; i < 3; i++) xyz.add(pos.getComponentFunction(i));
+      Reflect.invoke(report, "setCollocatedFieldFunctions", xyz);
+    } catch (Throwable t) {
+      log.na("location of " + nm(report), t);
+    }
+  }
+
+  /** Groups of the standard reports marked debug, in config order. */
+  List<String> debugSets() {
+    Set<String> out = new LinkedHashSet<>();
+    for (String[] r : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) {
+      if (r[0] != null && !r[0].trim().isEmpty() && hasOpt(r, "debug") && r[1] != null) out.add(r[1].trim());
+    }
+    return new ArrayList<>(out);
+  }
+
+  /** The reports of a debug set that are in the simulation. */
+  List<Object> setReports(String group) {
+    Set<String> names = new HashSet<>();
+    for (String[] r : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) {
+      if (r[0] != null && group.equals(r[1] == null ? "" : r[1].trim())) { names.add(r[0].trim()); names.add(r[0].trim() + "_mean"); }
+    }
+    List<Object> out = new ArrayList<>();
+    for (Object o : sim.getReportManager().getObjects()) if (names.contains(nm(o))) out.add(o);
+    return out;
+  }
+
+  /** Removes a debug set: its reports with monitors and stopping criteria, its plot when no curve is left, and the
+   *  empty folders. Cannot be undone. */
+  String removeSet(String group) {
+    List<Object> reps = setReports(group);
+    if (reps.isEmpty()) return "No report of the " + groupTitle(group) + " set in the simulation.";
+    String out = deleteReports(reps);
+    List<Object> plots = new ArrayList<>();
+    for (Object p : sim.getPlotManager().getObjects()) {
+      if (p instanceof MonitorPlot && (nm(p).equals(plotName(group)) || nm(p).equals("pl_" + group)) && ((MonitorPlot) p).getObjects().isEmpty()) plots.add(p);
+    }
+    if (!plots.isEmpty()) out += " " + deletePlots(plots);
+    for (Object m : new Object[] {sim.getReportManager(), sim.getMonitorManager()}) {
+      try {
+        star.base.neo.ClientServerObjectGroupManager gm = (star.base.neo.ClientServerObjectGroupManager) Reflect.invoke(m, "getGroupsManager");
+        for (Object g : new ArrayList<Object>(gm.getObjects())) {
+          if (groupTitle(group).equals(nm(g)) && g instanceof star.base.neo.ClientServerObjectGroup
+              && ((star.base.neo.ClientServerObjectGroup) g).getObjects().isEmpty()) {
+            Reflect.invoke(gm, "removeObjects", (Object) new star.base.neo.ClientServerObject[] {(star.base.neo.ClientServerObject) g});
+          }
+        }
+      } catch (Throwable t) {
+        log.na("folder " + groupTitle(group), t);
+      }
+    }
+    return out;
   }
 
   /** Opens the Reports window. In batch, creates the standard reports that can be made. */
@@ -6057,18 +6136,36 @@ public class SimKit extends StarMacro {
   }
 
   /** The Standard page of the Reports window, built on the Swing thread. 'changed' runs when a selection changes. */
-  JPanel stdPage(final List<StdReport> all, final List<Object> every, final Runnable changed) {
-    final List<Object> rows = new ArrayList<>();   // group title (String) or StdReport
-    String last = null;
+  JPanel stdPage(final List<StdReport> all, final List<Object> every, final Runnable changed,
+      final java.util.function.Consumer<String> remove) {
+    final List<Object> rows = new ArrayList<>();   // group key (String) or StdReport
+    final Map<String, List<StdReport>> byGroup = new LinkedHashMap<>();
+    final Set<String> folded = new HashSet<>();
     for (StdReport x : all) {
       if (x.deflt == null) x.deflt = new ArrayList<>(x.target);
-      if (!x.def[1].equals(last)) { rows.add(groupTitle(x.def[1])); last = x.def[1]; }
-      rows.add(x);
+      byGroup.computeIfAbsent(x.def[1], k -> new ArrayList<>()).add(x);
     }
+    final Runnable fillRows = () -> {
+      rows.clear();
+      for (Map.Entry<String, List<StdReport>> g : byGroup.entrySet()) {
+        rows.add(g.getKey());
+        if (!folded.contains(g.getKey())) rows.addAll(g.getValue());
+      }
+    };
+    fillRows.run();
+    // a debug set: its rows have the option debug; it can be removed as a whole
+    final java.util.function.Predicate<String> isSet = g -> { for (StdReport x : byGroup.get(g)) if (hasOpt(x.def, "debug")) return true; return false; };
+    final java.util.function.ToIntFunction<String> present = g -> { int n = 0; for (StdReport x : byGroup.get(g)) if (x.present) n++; return n; };
     final java.util.function.Function<StdReport, Boolean> surf = x -> x.why == null && !x.def[2].equalsIgnoreCase("expression") && !x.def[4].equals("REGIONS");
     final java.util.function.Function<StdReport, Boolean> noSurf = x -> surf.apply(x) && x.target.isEmpty();
     final java.util.function.Function<StdReport, Boolean> edited = x -> !new HashSet<>(x.target).equals(new HashSet<>(x.deflt));
     final java.util.function.Function<StdReport, Boolean> editable = x -> x.why == null && !noSurf.apply(x);
+    // heading tick: 0 none, 1 some, 2 all of the reports that can be ticked; -1 when none can be ticked
+    final java.util.function.ToIntFunction<String> groupState = g -> {
+      int e = 0, k = 0;
+      for (StdReport x : byGroup.get(g)) if (!x.present && editable.apply(x)) { e++; if (x.on) k++; }
+      return e == 0 ? -1 : k == 0 ? 0 : k == e ? 2 : 1;
+    };
     final java.util.function.Function<StdReport, String> detail = x -> {
       if (x.def[2].equalsIgnoreCase("expression")) return "Formula";
       if (x.def[4].equals("REGIONS")) return "All regions";
@@ -6085,7 +6182,12 @@ public class SimKit extends StarMacro {
       @Override public boolean isCellEditable(int r, int c) { return c == 0 && rows.get(r) instanceof StdReport && editable.apply((StdReport) rows.get(r)); }
       @Override public Object getValueAt(int r, int c) {
         Object o = rows.get(r);
-        if (o instanceof String) return c == 1 ? o : c == 0 ? null : "";
+        if (o instanceof String) {
+          String g = (String) o;
+          if (c == 0) return null;
+          if (c == 1) return Ui.groupText(groupTitle(g), false, "", folded.contains(g));
+          return c == 2 ? present.applyAsInt(g) + " of " + byGroup.get(g).size() + " in the simulation" + (isSet.test(g) ? "  \u00B7  debug set" : "") : "";
+        }
         StdReport x = (StdReport) o;
         return c == 0 ? (Object) (x.why == null && x.on) : c == 1 ? x.def[0] : c == 2 ? Ui.cap(x.def[6]) : "";
       }
@@ -6106,20 +6208,23 @@ public class SimKit extends StarMacro {
         boolean head = o instanceof String;
         StdReport x = head ? null : (StdReport) o;
         boolean off = !head && x.why != null && !x.present;
-        setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
-        setBackground(head ? Ui.BAND : t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
-        setForeground(head ? Ui.MUTED : off ? Ui.FAINT : c == 1 && !x.present ? java.awt.Color.BLACK : Ui.MUTED);
-        setFont(t.getFont().deriveFont(head ? Font.BOLD : Font.PLAIN));
-        setToolTipText(c == 2 && !head ? Ui.cap(x.def[6]) : null);
+        setBorder(head ? Ui.groupBorder(false, r, 8) : BorderFactory.createEmptyBorder(0, 8, 0, 8));
+        setBackground(head ? Ui.GROUP_BG : t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+        setForeground(head ? (c == 1 ? new java.awt.Color(0x2B, 0x35, 0x42) : Ui.MUTED) : off ? Ui.FAINT : c == 1 && !x.present ? java.awt.Color.BLACK : Ui.MUTED);
+        setFont(t.getFont().deriveFont(Font.PLAIN));
+        setToolTipText(c == 2 && !head ? Ui.cap(x.def[6]) : head && isSet.test((String) o) ? "Right-click to remove the set." : null);
         return this;
       }
     };
     table.setDefaultRenderer(String.class, text);
     final Ui.PillCell pill = new Ui.PillCell();
     pill.setFont(table.getFont());
+    final JLabel headCell = new JLabel();
+    headCell.setOpaque(true);
+    headCell.setBackground(Ui.GROUP_BG);
     table.getColumnModel().getColumn(3).setCellRenderer((t, v, sel, foc, r, c) -> {
       Object o = rows.get(r);
-      if (o instanceof String) { pill.setBackground(Ui.BAND); return pill.set(null, null, null, null); }
+      if (o instanceof String) { headCell.setBorder(Ui.groupBorder(false, r, 0)); return headCell; }
       StdReport x = (StdReport) o;
       pill.setBackground(t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
       if (x.present && x.empty) return pill.set("No objects", Ui.PILL_AMBER, "edit in Existing", Ui.MUTED);
@@ -6130,16 +6235,23 @@ public class SimKit extends StarMacro {
       if (x.existing != null) return pill.set("Update", Ui.PILL_AMBER, (x.empty ? "no objects, " : "") + detail.apply(x), x.empty ? Ui.AMBER : Ui.MUTED);
       return pill.set("Create", Ui.PILL_BLUE, detail.apply(x), edited.apply(x) ? Ui.BLUE : Ui.MUTED);
     });
-    final JLabel doneMark = Ui.doneCell(), band = new JLabel();
+    final JLabel doneMark = Ui.doneCell();
     doneMark.setToolTipText("Already in the simulation.");
-    band.setOpaque(true);
-    band.setBackground(Ui.BAND);
+    final ObjSelector.Tick headTick = new ObjSelector.Tick();
+    headTick.setBackground(Ui.GROUP_BG);
     final javax.swing.table.TableCellRenderer boxes = table.getDefaultRenderer(Boolean.class);
     final JLabel blank = new JLabel();
     blank.setOpaque(true);
     table.setDefaultRenderer(Boolean.class, (t, v, sel, foc, r, c) -> {
       Object o = rows.get(r);
-      if (o instanceof String) return band;
+      if (o instanceof String) {
+        int st = groupState.applyAsInt((String) o);
+        headTick.state = Math.max(st, 0);
+        headTick.off = st < 0;
+        headTick.setBorder(Ui.groupBorder(false, r, 0));
+        headTick.setToolTipText(st < 0 ? null : "Tick or untick the reports of the group.");
+        return headTick;
+      }
       StdReport x = (StdReport) o;
       java.awt.Color bg = t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE;
       if (x.present) { doneMark.setBackground(bg); return doneMark; }
@@ -6327,6 +6439,66 @@ public class SimKit extends StarMacro {
       search.setText("");
       fill[0].run();
     });
+    final Runnable heights = () -> {   // headings taller than the report rows, as in the other tabs
+      for (int i = 0; i < rows.size(); i++) table.setRowHeight(i, rows.get(i) instanceof String ? Ui.GROUP_H : 24);
+    };
+    heights.run();
+    final Object[] atPress = {null};   // the report selected when the mouse is pressed, read before the table changes it
+    java.awt.event.MouseListener[] own = table.getMouseListeners();
+    for (java.awt.event.MouseListener l : own) table.removeMouseListener(l);
+    table.addMouseListener(new java.awt.event.MouseAdapter() {
+      @Override public void mousePressed(java.awt.event.MouseEvent e) { atPress[0] = cur[0]; }
+    });
+    for (java.awt.event.MouseListener l : own) table.addMouseListener(l);
+    final java.util.function.Consumer<String> askRemove = g -> { if (isSet.test(g) && present.applyAsInt(g) > 0) remove.accept(g); };
+    table.addMouseListener(new java.awt.event.MouseAdapter() {
+      @Override public void mousePressed(java.awt.event.MouseEvent e) { if (!menu(e)) click(e); }
+      @Override public void mouseReleased(java.awt.event.MouseEvent e) { menu(e); }
+      void click(java.awt.event.MouseEvent e) {
+        int r = table.rowAtPoint(e.getPoint());
+        if (r < 0 || !javax.swing.SwingUtilities.isLeftMouseButton(e) || !(rows.get(r) instanceof String)) return;
+        String g = (String) rows.get(r);
+        Object keep = atPress[0];   // the table moves the selection off a heading to the next row: put it back
+        if (table.columnAtPoint(e.getPoint()) == 0) {   // the box ticks the group, the rest of the heading folds it
+          int st = groupState.applyAsInt(g);
+          if (st < 0) return;
+          for (StdReport x : byGroup.get(g)) if (!x.present && editable.apply(x)) { x.on = st != 2; x.putBack = false; }
+          model.fireTableDataChanged();
+          changed.run();
+        } else {
+          if (!folded.remove(g)) folded.add(g);
+          fillRows.run();
+          model.fireTableDataChanged();
+        }
+        heights.run();
+        int i = rows.indexOf(keep);
+        if (i >= 0) table.setRowSelectionInterval(i, i);
+        else table.clearSelection();
+      }
+      boolean menu(java.awt.event.MouseEvent e) {
+        if (!e.isPopupTrigger()) return false;
+        int r = table.rowAtPoint(e.getPoint());
+        if (r < 0) return true;
+        Object o = rows.get(r);
+        final String g = o instanceof String ? (String) o : ((StdReport) o).def[1];
+        if (!isSet.test(g)) return true;
+        if (!(o instanceof String)) table.setRowSelectionInterval(r, r);
+        javax.swing.JPopupMenu m = new javax.swing.JPopupMenu();
+        int n = present.applyAsInt(g);
+        javax.swing.JMenuItem rm = new javax.swing.JMenuItem("Remove " + groupTitle(g) + " set\u2026   Delete");
+        rm.setEnabled(n > 0);
+        rm.setToolTipText(n > 0 ? null : "No report of the set in the simulation.");
+        rm.addActionListener(a -> askRemove.accept(g));
+        m.add(rm);
+        m.show(table, e.getX(), e.getY());
+        return true;
+      }
+    });
+    table.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke("DELETE"), "simkit.removeSet");
+    table.getActionMap().put("simkit.removeSet", new javax.swing.AbstractAction() {
+      private static final long serialVersionUID = 1L;
+      @Override public void actionPerformed(java.awt.event.ActionEvent e) { if (cur[0] != null) askRemove.accept(cur[0].def[1]); }
+    });
     table.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke("SPACE"), "simkit.toggle");
     table.getActionMap().put("simkit.toggle", new javax.swing.AbstractAction() {
       private static final long serialVersionUID = 1L;
@@ -6380,8 +6552,8 @@ public class SimKit extends StarMacro {
     center.add(right, BorderLayout.EAST);
     JPanel body = new JPanel(new BorderLayout(0, 8));
     body.add(center, BorderLayout.CENTER);
-    body.add(Ui.muted("<html>Each report gets a monitor; each group gets one plot. Reports and monitors are stored in one folder per group."
-        + "<br>List: config/standard_reports.csv.</html>"), BorderLayout.SOUTH);
+    body.add(Ui.muted("<html>Each report gets a monitor; each group gets one plot. Reports and monitors are stored in one folder per group. "
+        + "Reports with a location write the x, y, z of the extreme cell to the Output window.<br>List: config/standard_reports.csv.</html>"), BorderLayout.SOUTH);
     for (int i = 0; i < rows.size(); i++) {   // select the first report that can be created
       if (rows.get(i) instanceof StdReport && ((StdReport) rows.get(i)).why == null) { table.setRowSelectionInterval(i, i); break; }
     }
@@ -8251,7 +8423,12 @@ public class SimKit extends StarMacro {
     final Page p = new Page();
     final Runnable build = () -> {
       p.panel.removeAll();
-      p.panel.add(stdPage(data[0].std, data[0].every, changed), BorderLayout.CENTER);
+      p.panel.add(stdPage(data[0].std, data[0].every, changed, g -> {
+        int n = setReports(g).size();
+        String text = "Deletes the " + plural(n, "report", "reports") + " of the " + groupTitle(g) + " set with their monitors, "
+            + "stopping criteria and the plot " + plotName(g) + ".\nThis cannot be undone.";
+        if (confirmDelete("Remove " + groupTitle(g) + " set", text, n > 0)) p.exec.accept(() -> removeSet(g));
+      }), BorderLayout.CENTER);
       p.focus = TableFinder.table(p.panel);
       p.panel.revalidate();
       p.panel.repaint();
@@ -10099,7 +10276,44 @@ public class SimKit extends StarMacro {
       }
     } catch (Throwable t) { log.na("obj: Reports window data", t); }
     testManage();
+    testDivergence();
     log.line("obj: done (the simulation is not saved)");
+  }
+
+  /** Batch test of the Divergence set: create the reports that fit, read the location of one, remove the set. */
+  void testDivergence() {
+    try {
+      List<StdReport> all = stdPlan();
+      int n = 0;
+      for (StdReport x : all) {
+        if (!x.def[1].equals("divergence")) continue;
+        log.line("div: " + x.def[0] + " | on " + x.on + " | " + (x.why == null ? "can be made" : x.why));
+        if (x.why == null) { x.on = true; n++; }
+        else x.on = false;
+      }
+      for (StdReport x : all) if (!x.def[1].equals("divergence")) x.on = false;
+      log.line("div: create " + n + " -> " + stdApply(all));
+      for (Object r : setReports("divergence")) {
+        Object ffs = Reflect.tryCall(r, "getCollocatedFieldFunctions");
+        List<String> names = new ArrayList<>();
+        if (ffs instanceof Collection) for (Object f : (Collection<?>) ffs) names.add(ffName(f));
+        String v = "";
+        try {
+          Object val = Reflect.invoke(r, "getReportMonitorValue");
+          v = " value " + val;
+          if (ffs instanceof List && !((List<?>) ffs).isEmpty()) {
+            v += " at (" + Reflect.invoke(r, "getCollocatedValue", ((List<?>) ffs).get(0)) + ", " + Reflect.invoke(r, "getCollocatedValue", ((List<?>) ffs).get(1))
+                + ", " + Reflect.invoke(r, "getCollocatedValue", ((List<?>) ffs).get(2)) + ")";
+          }
+        } catch (Throwable t) { v = " value n/a (" + reason(t) + ")"; }
+        log.line("div:   " + nm(r) + " collocated " + names + v);
+      }
+      log.line("div: sets " + debugSets());
+      log.line("div: remove -> " + removeSet("divergence"));
+      int left = setReports("divergence").size(), plots = 0;
+      for (Object p : sim.getPlotManager().getObjects()) if (nm(p).equals(plotName("divergence"))) plots++;
+      log.line("div: after remove " + left + " reports, " + plots + " plots");
+    } catch (Throwable t) { log.na("div: divergence set", t); }
   }
 
   /** Batch test of the In this simulation page actions: objects of a report (remove one, add a plane section and an

@@ -761,3 +761,17 @@ C. RESULTS SO FAR
   with a chart icon, bold name and status "New plot · n curves" or "Existing plot · +n curves" (green); "No plot
   (monitors only)" with Plots None; report rows indented; caption "Each report gets a monitor. Its curve goes in the
   plot above it."
+  Reports > Predefined: Divergence set (group "divergence", 9 rows r_div_*): max/min reports on the regions and min
+  pressure on OUT+OPEN. options column of standard_reports.csv: "debug" (not ticked by default; line under the table
+  with Select all and Remove...), "location" (Position x, y, z as collocated field functions of a MaxReport or
+  MinReport, setCollocatedFieldFunctions). Field "Velocity:magnitude" resolved by objField. Remove: deleteReports on
+  the set, plot "Divergence" deleted when it has no curve left, empty folders "Divergence" removed. Batch objtest
+  (testDivergence): create the reports that fit, collocated list and values of each, remove, count left.
+  Not tried in the GUI: Output window text of the collocated values; monitor with Value Type Collocated Value.
+  Reports > Predefined: group headings in the style of the other tabs (GROUP_BG band, capitals, 30 px), a tri-state
+  box (ObjSelector.Tick) that ticks the reports of the group that can be created, "k of n in the simulation" in the
+  Description column ("· debug set" for debug groups), a click on the rest of the heading folds the group; the
+  selected report stays selected (the report selected at the mouse press is put back). Debug sets: right-click on the
+  heading or on a report of the set -> "Remove <set> set...   Delete" (disabled when none of its reports exists);
+  Delete key on a report of the set. The line under the table (Select all / Remove...) is removed. Offline render
+  (DivShot): tick of the Divergence heading, fold of Pressure and Temperature. Context menu not rendered.
