@@ -818,3 +818,9 @@ C. RESULTS SO FAR
   Batch: del: folder Predefined/Mass balance deleted in one go, empty folder removed, r_mdot_in_air kept.
   STAR-CCM+ 2402 (Linux): PlotManager.deletePlots takes a Vector<StarPlot> (a List in 21.04): deletePlots passes a
   Vector, and setLocation passes the collocated field functions in a Vector. Checked on Linux: Reports compiles.
+  STAR-CCM+ 2402 (Linux) crashes after deleting all reports in Existing and creating Predefined again: server
+  SIGSEGV on GetProperties when the emptied plot "Mass balance" got new monitors; GUI NPE in SingleView.selectNodes
+  with the plot open and selected. Changes: a plot window is closed before its curves change or it is deleted, and
+  opened again when it keeps curves (closePlot, setCurves; ViewObject.isOpen/close/open); deleteReports deletes the
+  plots it leaves without curves; monitorsAndPlot replaces an existing plot without curves by a new one. Batch: cyc:
+  create all, delete reports, delete plots, create again; delete reports only, plots left, create again.

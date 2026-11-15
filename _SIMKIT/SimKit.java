@@ -7642,13 +7642,13 @@ public class SimKit extends StarMacro {
       final List<Object> old = new ArrayList<>(p.getObjects());
       List<Monitor> now = new ArrayList<>();
       for (Object m : monitors) now.add((Monitor) m);
-      p.setObjects(now);   // STAR-CCM+ keeps its own order of the curves
+      setCurves(p, now);   // STAR-CCM+ keeps its own order of the curves
       log.line("  curves of " + nm(p) + ": " + namesList(old) + " -> " + namesList(monitors));
       lastUndoText = "curves of " + nm(p);
       lastUndo = () -> {
         List<Monitor> back = new ArrayList<>();
         for (Object m : old) back.add((Monitor) m);
-        p.setObjects(back);
+        setCurves(p, back);
       };
       return "Curves of " + nm(p) + " set: " + plural(monitors.size(), "curve", "curves") + ".";
     } catch (Throwable t) {
@@ -7661,6 +7661,7 @@ public class SimKit extends StarMacro {
    *  the plots first. Cannot be undone. */
   String deleteReports(List<Object> reports) {
     int nr = 0, nm = 0, nc = 0, bad = 0;
+    Set<Object> emptied = Collections.newSetFromMap(new IdentityHashMap<>());   // plots that lose all their curves
     for (Object r : deleteOrder(reports)) {
       try {
         List<Monitor> mons = new ArrayList<>();
@@ -7675,7 +7676,8 @@ public class SimKit extends StarMacro {
             if (!(p instanceof MonitorPlot) || !((MonitorPlot) p).getObjects().contains(m)) continue;
             List<Monitor> keep = new ArrayList<>(((MonitorPlot) p).getObjects());
             keep.remove(m);
-            ((MonitorPlot) p).setObjects(keep);
+            setCurves((MonitorPlot) p, keep);
+            if (keep.isEmpty()) emptied.add(p);
           }
           sim.getMonitorManager().removeObjects(m);
           nm++;
@@ -7690,8 +7692,13 @@ public class SimKit extends StarMacro {
       }
     }
     lastUndo = null;   // an earlier change may refer to what was deleted
+    // a plot left without curves is deleted: STAR-CCM+ 2402 crashes when such a plot gets new monitors
+    String pl = "";
+    List<Object> gone = new ArrayList<>();
+    for (Object p : emptied) if (((MonitorPlot) p).getObjects().isEmpty()) gone.add(p);
+    if (!gone.isEmpty()) pl = " " + deletePlots(gone);
     return plural(nr, "report", "reports") + " deleted" + (nm > 0 ? ", " + plural(nm, "monitor", "monitors") : "")
-        + (nc > 0 ? ", " + plural(nc, "stopping criterion", "stopping criteria") : "") + "." + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
+        + (nc > 0 ? ", " + plural(nc, "stopping criterion", "stopping criteria") : "") + "." + pl + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
   }
 
   /** The reports in an order STAR-CCM+ accepts for deletion: a report that uses another one of the list (formula with
@@ -7745,9 +7752,25 @@ public class SimKit extends StarMacro {
   }
 
   /** Deletes monitor plots. Their monitors and reports are kept. Cannot be undone. */
+  /** Closes the window of a plot when it is open. STAR-CCM+ 2402 fails when an open plot changes its curves or is
+   *  deleted from a macro. Returns true when it was open. */
+  static boolean closePlot(Object plot) {
+    try {
+      if (Boolean.TRUE.equals(Reflect.invoke(plot, "isOpen"))) { Reflect.invoke(plot, "close"); return true; }
+    } catch (Throwable t) { /* not a view object */ }
+    return false;
+  }
+
+  /** Sets the curves of a plot with its window closed; an open plot with curves left opens again. */
+  static void setCurves(MonitorPlot p, List<? extends Monitor> curves) {
+    boolean open = closePlot(p);
+    p.setObjects(new ArrayList<Monitor>(curves));
+    if (open && !curves.isEmpty()) Reflect.tryCall(p, "open");
+  }
+
   String deletePlots(List<Object> plots) {
     java.util.Vector<StarPlot> ps = new java.util.Vector<>();   // Vector: deletePlots takes a Vector in 2402, a List in 21.04
-    for (Object p : plots) ps.add((StarPlot) p);
+    for (Object p : plots) { closePlot(p); ps.add((StarPlot) p); }
     try {
       List<String> names = new ArrayList<>();
       for (StarPlot p : ps) names.add(nm(p));
@@ -7803,7 +7826,7 @@ public class SimKit extends StarMacro {
           before.put(have, new ArrayList<Object>(all));
           int k = 0;
           for (Monitor m : g.getValue()) if (!all.contains(m)) { all.add(m); k++; }
-          have.setObjects(all);
+          setCurves(have, all);
           added += k;
           log.line("  plot " + nm(have) + ": +" + k + " curve(s)");
         } else {
@@ -7821,9 +7844,9 @@ public class SimKit extends StarMacro {
         for (Map.Entry<Object, List<Object>> e : before.entrySet()) {
           List<Monitor> back = new ArrayList<>();
           for (Object m : e.getValue()) back.add((Monitor) m);
-          ((MonitorPlot) e.getKey()).setObjects(back);
+          setCurves((MonitorPlot) e.getKey(), back);
         }
-        for (Object p : created) ((MonitorPlot) p).setObjects(new ArrayList<Monitor>());
+        for (Object p : created) setCurves((MonitorPlot) p, new ArrayList<Monitor>());
       };
     }
     if (gui && !created.isEmpty()) Ui.collapseInTree(namesOf(created));
@@ -8335,7 +8358,7 @@ public class SimKit extends StarMacro {
       String what = plural(go.size(), "report", "reports") + (mons > 0 ? ", " + plural(mons, "monitor", "monitors") : "")
           + (crits > 0 ? ", " + plural(crits, "stopping criterion", "stopping criteria") : "");
       String text = (go.isEmpty() ? "Nothing to delete." : "Deletes " + what + "." + (plots.isEmpty() ? "" : " The curves are taken out of "
-          + (plots.size() == 1 ? "the plot " : plots.size() + " plots: ") + String.join(", ", plots) + "."))
+          + (plots.size() == 1 ? "the plot " : plots.size() + " plots: ") + String.join(", ", plots) + "; a plot left without curves is deleted."))
           + (kept.isEmpty() ? "" : "\nKept, because other reports or field functions use them: " + String.join("; ", kept) + ".")
           + (go.isEmpty() ? "" : "\nThis cannot be undone.");
       String title = folder != null ? "Delete reports in " + folder.replace("/", " / ") : go.isEmpty() ? "Delete reports" : "Delete " + plural(go.size(), "report", "reports");
@@ -9646,11 +9669,19 @@ public class SimKit extends StarMacro {
       if (plot.equals(nm(p))) have = (MonitorPlot) p;
       else if (have == null && legacy != null && legacy.equals(nm(p))) have = (MonitorPlot) p;
     }
+    if (have != null && have.getObjects().isEmpty()) {   // no curve left: a new plot, as an emptied plot crashes 2402
+      try {
+        closePlot(have);
+        sim.getPlotManager().deletePlots(new java.util.Vector<StarPlot>(Collections.singletonList((StarPlot) have)));
+        log.line("  empty plot " + plot + " replaced");
+        have = null;
+      } catch (Throwable t) { log.na("empty plot " + plot, t); }
+    }
     if (have != null) {
       try {
         List<Monitor> all = new ArrayList<>(have.getObjects());
         for (Monitor m : monitors) if (!all.contains(m)) all.add(m);
-        have.setObjects(all);
+        setCurves(have, all);
         if (!plot.equals(nm(have)) && !planTaken) have.setPresentationName(plot);
         log.line("  monitors added to plot " + nm(have) + " (" + monitors.size() + " report(s))");
         return new Object[] {monitors, have};
@@ -10919,6 +10950,28 @@ public class SimKit extends StarMacro {
         for (Object g0 : rg.getObjects()) if ("Predefined".equals(nm(g0))) for (Object g2 : ((star.base.neo.ClientServerObjectGroup) g0).getGroupsManager().getObjects()) sub.add(nm(g2));
         log.line("del: after folder delete " + left + ", Predefined sub-folders " + sub);
       } catch (Throwable t) { log.na("del: folder delete", t); }
+      try {   // full cycle: create all, delete all reports, delete all plots, create all again
+        List<StdReport> one = stdPlan();
+        for (StdReport x : one) x.on = x.why == null;
+        log.line("cyc: create -> " + stdApply(one));
+        log.line("cyc: delete reports -> " + deleteReports(new ArrayList<Object>(sim.getReportManager().getObjects())));
+        List<Object> pl = new ArrayList<>();
+        for (Object p : sim.getPlotManager().getObjects()) if (p instanceof MonitorPlot && !"ResidualPlot".equals(cls(p))) pl.add(p);
+        log.line("cyc: delete plots -> " + deletePlots(pl));
+        List<String> mons = new ArrayList<>();
+        for (Object m : sim.getMonitorManager().getObjects()) if (m instanceof ReportMonitor) mons.add(nm(m));
+        log.line("cyc: left " + sim.getReportManager().getObjects().size() + " reports, report monitors " + mons + ", " + sim.getPlotManager().getObjects().size() + " plots");
+        one = stdPlan();
+        for (StdReport x : one) x.on = x.why == null;
+        log.line("cyc: create again -> " + stdApply(one));
+        log.line("cyc: delete reports only -> " + deleteReports(new ArrayList<Object>(sim.getReportManager().getObjects())));
+        List<String> left = new ArrayList<>();
+        for (Object p : sim.getPlotManager().getObjects()) left.add(nm(p));
+        log.line("cyc: plots left " + left);
+        one = stdPlan();
+        for (StdReport x : one) x.on = x.why == null;
+        log.line("cyc: create after reports only -> " + stdApply(one));
+      } catch (Throwable t) { log.na("cyc: full cycle", t); }
       log.line("div: sets " + debugSets());
       log.line("div: delete row r_div_T_max -> " + removeSet("divergence", "r_div_T_max") + " left " + namesList(rowReports("r_div_T_max")));
       log.line("div: remove -> " + removeSet("divergence", null));
