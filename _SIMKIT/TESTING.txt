@@ -749,3 +749,6 @@ C. RESULTS SO FAR
   reports (or plots) and without / or \; a report's expressions (${old}) and monitor "<old> Monitor" follow
   (objRenameRefs); Undo last change renames back. Batch objtest: report used by a formula renamed, formula follows,
   Undo.
+  Reports: derived parts are one group "Derived parts" with a sub-group per type (Plane section, Point part ...) in In
+  this simulation and in Per object; the main heading ticks and folds all of them. Tab order: In this simulation, Per
+  object, Standard (a simulation without reports opens on Standard).

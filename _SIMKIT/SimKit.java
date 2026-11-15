@@ -6470,7 +6470,8 @@ public class SimKit extends StarMacro {
   /** A boundary or region that reports can be computed on. name is its part of the report name. */
   static final class ObjTarget {
     Object o;
-    String name, region = "", kind = "";   // kind: prefix (WALL ...), "region", or ""
+    String name, region = "", kind = "";   // kind: prefix (WALL ...), "region", "interface", "derived" or ""
+    String sub = "";                       // derived parts: the type, e.g. "Plane section"
     boolean region() { return kind.equals("region"); }
     boolean pick;
   }
@@ -6595,6 +6596,7 @@ public class SimKit extends StarMacro {
         x.o = p;
         x.name = objToken(nm(p));
         x.kind = "derived";
+        x.sub = derivedType(p);
         out.add(x);
       }
     } catch (Throwable t) { log.na("derived parts", t); }
@@ -6942,6 +6944,11 @@ public class SimKit extends StarMacro {
     final List<String> curves = new ArrayList<>();
   }
 
+  /** Type of a derived part for its sub-group, e.g. PlaneSection -> "Plane section". */
+  static String derivedType(Object p) {
+    return Ui.cap(cls(p).replaceAll("([a-z])([A-Z])", "$1 $2").toLowerCase(Locale.ROOT));
+  }
+
   /** Objects for the selector: boundaries by type prefix, interface boundaries, regions, derived parts by type. */
   List<SelTarget> selTargets() {
     List<SelTarget> out = new ArrayList<>();
@@ -6971,7 +6978,7 @@ public class SimKit extends StarMacro {
         x.o = p;
         x.name = nm(p);
         x.kind = "derived";
-        x.group = "Derived parts: " + cls(p).replaceAll("([a-z])([A-Z])", "$1 $2").toLowerCase(Locale.ROOT);
+        x.group = "Derived parts/" + derivedType(p);   // "/": a sub-group of Derived parts
         out.add(x);
       }
     } catch (Throwable t) { log.na("derived parts", t); }
@@ -7295,8 +7302,9 @@ public class SimKit extends StarMacro {
             if (c == 0) return groupState((String) o);
             if (c == 2) return "";
             int k = 0, n = 0;
-            for (SelTarget x : groups.get(o)) { n++; if (now.getOrDefault(x.o, 0) == 2) k++; }
-            return "<html><b>" + (folded.contains(o) ? "▸ " : "▾ ") + Html.esc((String) o) + "</b>&nbsp;&nbsp;<font color='#6B7580'>"
+            for (SelTarget x : members((String) o)) { n++; if (now.getOrDefault(x.o, 0) == 2) k++; }
+            String key = (String) o, label = key.substring(key.lastIndexOf('/') + 1);
+            return "<html><b>" + (folded.contains(o) ? "▸ " : "▾ ") + Html.esc(label) + "</b>&nbsp;&nbsp;<font color='#6B7580'>"
                 + k + " of " + n + "</font></html>";
           }
           SelTarget x = (SelTarget) o;
@@ -7325,7 +7333,8 @@ public class SimKit extends StarMacro {
         String w = o instanceof SelTarget ? why.apply((SelTarget) o) : null;
         text.setBackground(t.isRowSelected(r) ? Ui.SEL : o instanceof String ? HEAD : java.awt.Color.WHITE);
         text.setForeground(w != null ? Ui.FAINT : c2 == 2 ? Ui.MUTED : java.awt.Color.BLACK);
-        text.setBorder(BorderFactory.createEmptyBorder(0, o instanceof String || c2 == 2 ? 4 : 16, 0, 4));
+        int indent = o instanceof String ? (((String) o).contains("/") ? 16 : 4) : c2 == 2 ? 4 : ((SelTarget) o).group.contains("/") ? 28 : 16;
+        text.setBorder(BorderFactory.createEmptyBorder(0, indent, 0, 4));
         text.setToolTipText(w);
         return text;
       });
@@ -7443,9 +7452,17 @@ public class SimKit extends StarMacro {
 
     int stateOf(Object o) { return o instanceof String ? groupState((String) o) : now.getOrDefault(((SelTarget) o).o, 0); }
 
+    /** Objects of a heading. A group key "A/B" is the sub-group B of A; the heading A holds all its sub-groups. */
+    List<SelTarget> members(String key) {
+      if (groups.containsKey(key)) return groups.get(key);
+      List<SelTarget> out = new ArrayList<>();
+      for (Map.Entry<String, List<SelTarget>> g : groups.entrySet()) if (g.getKey().startsWith(key + "/")) out.addAll(g.getValue());
+      return out;
+    }
+
     int groupState(String g) {
       boolean any = false, allOn = true;
-      for (SelTarget x : groups.get(g)) {
+      for (SelTarget x : members(g)) {
         if (why.apply(x) != null) continue;
         int s = now.getOrDefault(x.o, 0);
         any |= s > 0;
@@ -7455,7 +7472,7 @@ public class SimKit extends StarMacro {
     }
 
     void setRow(Object o, boolean on) {
-      if (o instanceof String) { for (SelTarget x : groups.get(o)) if (why.apply(x) == null) now.put(x.o, on ? 2 : 0); }
+      if (o instanceof String) { for (SelTarget x : members((String) o)) if (why.apply(x) == null) now.put(x.o, on ? 2 : 0); }
       else if (why.apply((SelTarget) o) == null) now.put(((SelTarget) o).o, on ? 2 : 0);
     }
 
@@ -7495,6 +7512,8 @@ public class SimKit extends StarMacro {
       String[] terms = filter.getText().trim().toLowerCase(Locale.ROOT).split("\\s+");
       boolean q = !filter.getText().trim().isEmpty();
       view.clear();
+      boolean open = q || onlySel.isSelected();
+      Set<String> parents = new HashSet<>();
       for (Map.Entry<String, List<SelTarget>> g : groups.entrySet()) {
         List<SelTarget> hit = new ArrayList<>();
         for (SelTarget x : g.getValue()) {
@@ -7502,8 +7521,14 @@ public class SimKit extends StarMacro {
           if (matches(x, terms)) hit.add(x);
         }
         if (hit.isEmpty()) continue;
+        int slash = g.getKey().indexOf('/');
+        if (slash > 0) {   // a sub-group: its parent heading first, once; a folded parent hides its sub-groups
+          String parent = g.getKey().substring(0, slash);
+          if (parents.add(parent)) view.add(parent);
+          if (!open && folded.contains(parent)) continue;
+        }
         view.add(g.getKey());
-        if (q || onlySel.isSelected() || !folded.contains(g.getKey())) view.addAll(hit);
+        if (open || !folded.contains(g.getKey())) view.addAll(hit);
       }
       model.fireTableDataChanged();
       counts();
@@ -8116,11 +8141,11 @@ public class SimKit extends StarMacro {
     final Page std = stdPageOf(data, changed);
     final Page obj = objPage(data, names, qs, others, objs, changed);
     final Page man = managePage(data, changed);
-    final Page[] pages = {man, std, obj};
-    final String[] titles = {"In this simulation", "Standard", "Per object"};
+    final Page[] pages = {man, obj, std};
+    final String[] titles = {"In this simulation", "Per object", "Standard"};
     final String[] idle = {"Apply", "Create reports", "Create reports"};
-    final String[] idleTip = {"Change the objects of a report or the curves of a plot.", "Select a report to create.",
-        "Select a quantity, a statistic and an object."};
+    final String[] idleTip = {"Change the objects of a report or the curves of a plot.", "Select a quantity, a statistic and an object.",
+        "Select a report to create."};
     final JLabel renameNote = new JLabel(" ");
     renameNote.setForeground(Ui.AMBER);
     final JButton renameLink = Ui.link("Fix in Names\u2026");
@@ -8188,7 +8213,7 @@ public class SimKit extends StarMacro {
       w.start();
     });
     for (Page pg : pages) pg.exec = job -> run.get(0).accept(job);
-    if (data[0].reps.isEmpty()) cur[0] = 1;   // a simulation without reports opens on Standard
+    if (data[0].reps.isEmpty()) cur[0] = 2;   // a simulation without reports opens on Standard
     go.addActionListener(e -> {
       final java.util.function.Supplier<String> job = pages[cur[0]].job.get();
       if (job != null) run.get(0).accept(job);
@@ -8338,16 +8363,24 @@ public class SimKit extends StarMacro {
     Set<String> bRegions = new HashSet<>();
     for (ObjTarget x : objs) if (!x.region()) bRegions.add(x.region);
     final boolean byRegion = bRegions.size() > 1;
-    final java.util.function.Function<ObjTarget, String> groupOf = x -> x.region() || !byRegion ? kindOf.apply(x) : kindOf.apply(x) + "  ·  " + x.region;
+    final java.util.function.Function<ObjTarget, String> groupOf = x -> x.kind.equals("derived") ? "Derived parts/" + x.sub
+        : x.region() || !byRegion ? kindOf.apply(x) : kindOf.apply(x) + "  ·  " + x.region;
+    // a key "A/B" is the sub-group B of A; the heading A holds all its sub-groups
     final java.util.function.ToIntFunction<ObjTarget> rank = x -> x.region() ? 3 : x.kind.equals("derived") ? 4 : x.kind.equals("interface") ? 2
         : x.kind.isEmpty() ? 1 : 0;
     final List<ObjTarget> ordered = new ArrayList<>(objs);
-    ordered.sort(java.util.Comparator.comparingInt(rank).thenComparing(kindOf::apply).thenComparing(x -> x.region));
+    ordered.sort(java.util.Comparator.comparingInt(rank).thenComparing(kindOf::apply).thenComparing(x -> x.sub).thenComparing(x -> x.region));
     final Map<String, List<ObjTarget>> oGroups = new LinkedHashMap<>();
     for (ObjTarget x : ordered) oGroups.computeIfAbsent(groupOf.apply(x), k -> new ArrayList<>()).add(x);
     final Set<String> oFolded = new HashSet<>();
     for (Map.Entry<String, List<ObjTarget>> g : oGroups.entrySet()) if (g.getValue().size() > 15) oFolded.add(g.getKey());
     final List<Object> oView = new ArrayList<>();   // String for a group heading, else ObjTarget
+    final java.util.function.Function<String, List<ObjTarget>> oMembers = key -> {
+      if (oGroups.containsKey(key)) return oGroups.get(key);
+      List<ObjTarget> out = new ArrayList<>();
+      for (Map.Entry<String, List<ObjTarget>> g : oGroups.entrySet()) if (g.getKey().startsWith(key + "/")) out.addAll(g.getValue());
+      return out;
+    };
     final JTextField search = Ui.hintField("", "Search objects", 16);
     final javax.swing.table.AbstractTableModel om = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
@@ -8359,12 +8392,13 @@ public class SimKit extends StarMacro {
       @Override public Object getValueAt(int r, int c) {
         Object o = oView.get(r);
         if (o instanceof String) {
-          List<ObjTarget> g = oGroups.get(o);
+          List<ObjTarget> g = oMembers.apply((String) o);
           int k = 0;
           for (ObjTarget x : g) if (x.pick) k++;
           if (c == 0) return k == g.size();
           if (c == 2) return "";
-          return "<html><b>" + (oFolded.contains(o) ? "▸ " : "▾ ") + Html.esc((String) o) + "</b>&nbsp;&nbsp;<font color='#6B7580'>"
+          String key = (String) o, label = key.substring(key.lastIndexOf('/') + 1);
+          return "<html><b>" + (oFolded.contains(o) ? "▸ " : "▾ ") + Html.esc(label) + "</b>&nbsp;&nbsp;<font color='#6B7580'>"
               + k + " of " + g.size() + " selected</font></html>";
         }
         ObjTarget x = (ObjTarget) o;
@@ -8373,7 +8407,7 @@ public class SimKit extends StarMacro {
       @Override public void setValueAt(Object v, int r, int c) {
         Object o = oView.get(r);
         boolean pick = Boolean.TRUE.equals(v);
-        if (o instanceof String) for (ObjTarget x : oGroups.get(o)) x.pick = pick;
+        if (o instanceof String) for (ObjTarget x : oMembers.apply((String) o)) x.pick = pick;
         else ((ObjTarget) o).pick = pick;
         fireTableRowsUpdated(0, oView.size() - 1);
         refresh[0].run();
@@ -8390,7 +8424,9 @@ public class SimKit extends StarMacro {
     ot.setDefaultRenderer(String.class, (tb, v, sel, foc, r, c) -> {
       java.awt.Component k = oText.getTableCellRendererComponent(tb, v, sel, foc, r, c);
       if (oView.get(r) instanceof String && !tb.isRowSelected(r)) k.setBackground(headBg);
-      if (k instanceof JLabel) ((JLabel) k).setBorder(BorderFactory.createEmptyBorder(0, oView.get(r) instanceof String ? 4 : 18, 0, 6));
+      Object o = oView.get(r);
+      int indent = o instanceof String ? (((String) o).contains("/") ? 16 : 4) : ((ObjTarget) o).kind.equals("derived") ? 30 : 18;
+      if (k instanceof JLabel) ((JLabel) k).setBorder(BorderFactory.createEmptyBorder(0, indent, 0, 6));
       return k;
     });
     final javax.swing.table.TableCellRenderer oboxes = ot.getDefaultRenderer(Boolean.class);
@@ -8403,10 +8439,17 @@ public class SimKit extends StarMacro {
     final Runnable filter = () -> {
       String q = search.getText().trim().toLowerCase(Locale.ROOT);
       oView.clear();
+      Set<String> parents = new HashSet<>();
       for (Map.Entry<String, List<ObjTarget>> g : oGroups.entrySet()) {
         List<ObjTarget> hit = new ArrayList<>();
         for (ObjTarget x : g.getValue()) if (q.isEmpty() || x.name.toLowerCase(Locale.ROOT).contains(q) || x.region.toLowerCase(Locale.ROOT).contains(q)) hit.add(x);
         if (hit.isEmpty()) continue;
+        int slash = g.getKey().indexOf('/');
+        if (slash > 0) {   // a sub-group: its parent heading first, once; a folded parent hides its sub-groups
+          String parent = g.getKey().substring(0, slash);
+          if (parents.add(parent)) oView.add(parent);
+          if (q.isEmpty() && oFolded.contains(parent)) continue;
+        }
         oView.add(g.getKey());
         if (!q.isEmpty() || !oFolded.contains(g.getKey())) oView.addAll(hit);
       }
