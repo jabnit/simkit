@@ -6145,7 +6145,7 @@ public class SimKit extends StarMacro {
     try {
       FieldFunction pos = (FieldFunction) fieldFunction("Position");
       if (pos == null) { log.line("  " + nm(report) + ": no Position field function, location not set"); return; }
-      List<FieldFunction> xyz = new ArrayList<>();
+      java.util.Vector<FieldFunction> xyz = new java.util.Vector<>();   // accepted as List (21.04) and Vector (2402)
       for (int i = 0; i < 3; i++) xyz.add(pos.getComponentFunction(i));
       Reflect.invoke(report, "setCollocatedFieldFunctions", xyz);
     } catch (Throwable t) {
@@ -7746,7 +7746,7 @@ public class SimKit extends StarMacro {
 
   /** Deletes monitor plots. Their monitors and reports are kept. Cannot be undone. */
   String deletePlots(List<Object> plots) {
-    List<StarPlot> ps = new ArrayList<>();
+    java.util.Vector<StarPlot> ps = new java.util.Vector<>();   // Vector: deletePlots takes a Vector in 2402, a List in 21.04
     for (Object p : plots) ps.add((StarPlot) p);
     try {
       List<String> names = new ArrayList<>();
