@@ -98,7 +98,7 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       the tracker shows ISO-00n.v02 "based on ISO-00n.v01".
       Open v01 again and click Save as new, Enter -> ISO-00n.v03 "based on ISO-00n.v01". Ctrl+S keeps saving the open file.
    4b. Standard reports: the list shows only what fits (IN_/OUT_/OPEN_/WALL_ surfaces present, energy on,
-      unsteady); untick one, OK -> reports r_..., one monitor each, plots pl_massBalance, pl_pressure, ...
+      unsteady); untick one, OK -> reports r_..., one monitor each, plots Mass balance, Pressure, ...
       Click it again -> "nothing to add ... already exists" (nothing duplicated or changed).
    4c. Mesh study > Parametrize only: on a sim whose base size (or a custom control size) is absolute: the list shows each
       absolute size with "-> ${p_mesh_...} * ${p_meshScale}"; relative sizes are listed as following the base
@@ -644,3 +644,18 @@ C. RESULTS SO FAR
   the choice (liquid density for US gal/h; standard temperature, pressure and molar mass for SCFM). Grid convergence
   (GCI) is in the Mesh group after y+ and prism layers; the Verification group is removed. Rendered offline: 1 US gal/h
   at 800 kg/m3 gives 8.4120e-4 kg/s; 1 SCFM of air (60 degF, 14.696 psi, 28.965 kg/kmol) gives 5.7703e-4 kg/s.
+  Names, reports and plots (2026-11-15). Categories Boundaries, Part surfaces, Reports and plots, Other objects. Reports:
+  the rule of config/report_names.csv for one statistic on one object, else the r_ prefix (r_ + name with blanks as -);
+  standard reports and their _mean reports are not checked. Monitors of a report: "<report> Monitor". Plots: no pl_
+  prefix (pl_<group> -> the standard plot name, pl_x -> x), a default-named plot of one report monitor gets the report
+  name without r_. Other objects: default names of scenes, derived parts, user field functions, parts and regions, no
+  proposal. Rows with a proposal are ticked at opening; a proposal equal to an existing name of the same kind, or to
+  another proposal, is "name in use" and not ticked. Rename: reports first, ${old} -> ${new} in expressions and the
+  "<old> Monitor" monitor follow; a monitor row takes the new report name. Keep name / Release name: user tag
+  "SimKit keep name" (TagManager addTags / removeTags); kept rows are not issues. Keys: Space ticks, F2 edits the new
+  name, Ctrl+A ticks all shown, Ctrl+F filter. Main window: count under Names ("n names to fix"), computed in a
+  background thread when the window opens and after each tool, with the log muted; off for the session if it fails or
+  takes more than 5 s. Reports window: the Rename dialog is replaced by "Fix in Names...", which closes Reports and
+  opens Names on Reports and plots. Plots: standard report plots are named Mass balance, Convergence, Pressure,
+  Temperature, Walls heat, Walls y+, Unsteady; per object {q}_{s} or the object name; an existing plot with the new
+  name or the former pl_ name gets the new monitors (MonitorPlot.setObjects) and a pl_ name is changed.

@@ -95,10 +95,10 @@ public class SimKit extends StarMacro {
     CLUSTER("Run on cluster", "Submit with bsub",
         "Saves the file and submits it with the team's bsub command (config/cluster.csv), in a terminal. Linux only"),
     TRACKER("Tracker", "Runs, status, comments", "Runs of the project: status, comments, based on, family tree"),
-    NAMES("Names", "Prefixes, default names",
-        "Type prefixes (IN_, OUT_, WALL_ ...) on boundaries and part surfaces, default names, prefix vs boundary type; renames on request"),
+    NAMES("Names", "Prefixes, rules, default names",
+        "Type prefixes on boundaries and part surfaces, report and plot names, default names. Proposes names and renames the ticked objects."),
     REPORTS("Reports", "Standard, per object",
-        "All reports of the simulation (rename to the rule); the team's standard reports (mass balance, p, T, wall heat, y+, Courant); reports per object (quantities x statistics on boundaries or regions), with monitors and plots"),
+        "The team's standard reports (mass balance, p, T, wall heat, y+, Courant); reports per object (quantities x statistics on boundaries or regions), with monitors and plots"),
     MESH("Mesh study", "Mesh levels", "Coarse / medium / fine levels as runs, for a mesh sensitivity check (GCI)"),
     CALC("Calculators", "y+, Re, time step, GCI ...", "Boundary values, y+ and prism layers, time step, dimensionless numbers, GCI");
 
@@ -201,7 +201,7 @@ public class SimKit extends StarMacro {
           log.line("saved " + c.simFile);
           break;
         }
-        case "names": logNames(); break;
+        case "names": logNames(); testNames(); break;   // testNames works in memory, not saved
         case "chttest": testCht(); break;   // solid region and interface built in memory, not saved
         case "cadnames": logCad(); break;   // logs the 3D-CAD bodies and their check
         case "cadtest": testCad(); break;   // model built in memory, not saved
@@ -345,6 +345,7 @@ public class SimKit extends StarMacro {
     });
     System.getProperties().put(WINDOW_KEY, d);
     d.setVisible(true);
+    refreshNamesCount();
   }
 
   /** Builds the main window without showing it. */
@@ -396,6 +397,7 @@ public class SimKit extends StarMacro {
         wire(b, id);
         col.add(b);
         JLabel sub = new JLabel(id.sub);
+        if (id == Tool.NAMES) namesSub = sub;
         sub.setFont(sub.getFont().deriveFont(Font.PLAIN, 11f));
         sub.setForeground(java.awt.Color.GRAY);
         sub.setAlignmentX(0f);
@@ -461,6 +463,40 @@ public class SimKit extends StarMacro {
     toolButtons.add(b);
   }
 
+  JLabel namesSub;                      // sub-label of the Names button, shows the count of names to fix
+  volatile boolean namesCounting, namesCountOff;
+
+  /** Counts the names to fix in a background thread and shows the count under the Names button. Skipped while a
+   *  tool runs. A count that fails or takes more than 5 s turns the count off for this session. */
+  void refreshNamesCount() {
+    if (namesSub == null || namesCountOff || namesCounting || busy || !gui) return;
+    namesCounting = true;
+    Thread w = new Thread(() -> {
+      long t0 = System.currentTimeMillis();
+      int n;
+      log.mute.set(Boolean.TRUE);
+      try {
+        n = 0;
+        for (NameRow x : nameRows()) if (x.problem) n++;
+      } catch (Throwable t) {
+        n = -1;
+      } finally {
+        log.mute.set(Boolean.FALSE);
+      }
+      final int k = n;
+      final boolean slow = System.currentTimeMillis() - t0 > 5000;
+      javax.swing.SwingUtilities.invokeLater(() -> {
+        namesCounting = false;
+        if (k < 0 || slow) namesCountOff = true;
+        boolean show = k > 0 && !slow;
+        namesSub.setText(show ? plural(k, "name to fix", "names to fix") : Tool.NAMES.sub);
+        namesSub.setForeground(show ? Ui.AMBER : java.awt.Color.GRAY);
+      });
+    }, "SimKit name count");
+    w.setDaemon(true);
+    w.start();
+  }
+
   /** Runs a tool in a background thread so STAR-CCM+ stays responsive. One tool at a time. */
   void startTool(Tool id) {
     if (busy) return;
@@ -476,6 +512,7 @@ public class SimKit extends StarMacro {
           for (JButton b : toolButtons) b.setEnabled(true);
           refreshHeader();
           showStatus();
+          refreshNamesCount();
         });
       }
     }, "SimKit " + id.title);
@@ -4309,6 +4346,38 @@ public class SimKit extends StarMacro {
     return out;
   }
 
+  /** User tag that excludes an object from the Names checks. It is stored in the simulation file. */
+  static final String KEEP_TAG = "SimKit keep name";
+
+  UserTag keepTag(boolean create) {
+    TagManager tm = sim.get(TagManager.class);
+    for (Object t : tm.getObjects()) if (t instanceof UserTag && KEEP_TAG.equals(nm(t))) return (UserTag) t;
+    if (!create) return null;
+    UserTag t = tm.createNewUserTag(KEEP_TAG);
+    if (!KEEP_TAG.equals(nm(t))) t.setPresentationName(KEEP_TAG);
+    return t;
+  }
+
+  boolean isKept(Object o, UserTag tag) {
+    if (tag == null || !(o instanceof ClientServerObject)) return false;
+    try { return sim.get(TagManager.class).getTags((ClientServerObject) o).contains(tag); } catch (Throwable t) { return false; }
+  }
+
+  /** Adds or removes the Keep name tag. Returns false when the object takes no tag. */
+  boolean setKept(Object o, boolean on) {
+    try {
+      UserTag tag = keepTag(on);
+      if (tag == null) return !on;
+      List<Tag> one = Collections.singletonList((Tag) tag);
+      if (on) sim.get(TagManager.class).addTags((ClientServerObject) o, one);
+      else sim.get(TagManager.class).removeTags((ClientServerObject) o, one);
+      return true;
+    } catch (Throwable t) {
+      log.na((on ? "keep name of " : "release name of ") + nm(o), t);
+      return false;
+    }
+  }
+
   /** Default STAR-CCM+ names ("Report 3", "Plane Section 2", "Body 1", "Surface 12", "Default"). */
   static final Pattern DEFAULT_NAME = Pattern.compile("^(Default|Body|Surface|Part|Region|Interface|Report|Plot|Scene|Monitor|"
       + "Plane Section|Line Probe|Point Probe|Isosurface|Threshold|Block|Cylinder|Sphere|Cone)( [0-9]+)?$"
@@ -4322,15 +4391,18 @@ public class SimKit extends StarMacro {
     String kind, path, name, state, proposed = "", typeClass = "";
     String group = "", issue = "";   // region, part or object type, and a short issue ("" when ok)
     String token = "";               // prefix of a boundary whose prefix does not match its type, for Set type
-    int cat;                         // 0 boundaries, 1 part surfaces, 2 default names
-    boolean pick, problem;
+    int cat;                         // index in NAME_CATS
+    boolean pick, problem, kept;
+    Object report;                   // monitor rows: the report the monitor follows
   }
 
-  static final String[] NAME_CATS = {"Boundaries", "Part surfaces", "Default names"};
+  static final String[] NAME_CATS = {"Boundaries", "Part surfaces", "Reports and plots", "Other objects"};
+  static final int CAT_REPORTS = 2, CAT_OTHER = 3;
   static final String[] NAME_CAT_HELP = {
       "The name prefix must match the boundary type (Set type changes the type, Rename the name). IF_ boundaries must be in an interface.",
       "Boundary names are created from part surface names. Rename before assigning parts to regions.",
-      "Plots, reports and scenes display these names."};
+      "Reports follow config/report_names.csv. Monitors follow their report. Plots have no prefix.",
+      "Default names. Enter a name in New name."};
 
   /** The name part a prefix goes on: the last dot-separated part of a boundary name ("Body 1.Surface 12" -> "Surface 12"). */
   static String lastPart(String n) { return n.substring(n.lastIndexOf('.') + 1); }
@@ -4344,7 +4416,8 @@ public class SimKit extends StarMacro {
     return head + p + "_" + last.trim().replaceAll("\\s+", "_");
   }
 
-  /** Collects the Names rows: boundaries, part surfaces and other objects with default names. Read-only. */
+  /** Collects the Names rows: boundaries, part surfaces, reports, monitors, plots and other objects with default
+   *  names. Rows with a proposed name are ticked. Read-only. */
   List<NameRow> nameRows() {
     loadPrefixes();
     List<NameRow> out = new ArrayList<>();
@@ -4388,7 +4461,7 @@ public class SimKit extends StarMacro {
     try {
       for (Object o : sim.get(SimulationPartManager.class).getParts()) {
         if (!(o instanceof GeometryPart)) continue;
-        if (isDefaultName(nm(o))) out.add(defaultRow(o, "part", "Parts / " + nm(o)));
+        if (isDefaultName(nm(o))) out.add(defaultRow(o, "part", "Parts / " + nm(o), CAT_OTHER));
         try {
           for (Object ps : ((GeometryPart) o).getPartSurfaces()) {
             NameRow x = new NameRow();
@@ -4407,25 +4480,145 @@ public class SimKit extends StarMacro {
         } catch (Throwable t) { log.na("part surfaces of " + nm(o), t); }
       }
     } catch (Throwable t) { log.na("geometry parts", t); }
-    try { for (Region r : sim.getRegionManager().getRegions()) if (isDefaultName(nm(r))) out.add(defaultRow(r, "region", "Regions / " + nm(r))); }
+    try { for (Region r : sim.getRegionManager().getRegions()) if (isDefaultName(nm(r))) out.add(defaultRow(r, "region", "Regions / " + nm(r), CAT_OTHER)); }
     catch (Throwable t) { log.na("regions", t); }
-    Object[][] more = {{"report", null}, {"monitor", null}, {"plot", null}, {"scene", null}, {"derived part", null}};
-    try { more[0][1] = sim.getReportManager().getObjects(); } catch (Throwable t) { log.na("reports", t); }
-    try { more[1][1] = sim.getMonitorManager().getObjects(); } catch (Throwable t) { log.na("monitors", t); }
-    try { more[2][1] = sim.getPlotManager().getObjects(); } catch (Throwable t) { log.na("plots", t); }
-    try { more[3][1] = sim.getSceneManager().getScenes(); } catch (Throwable t) { log.na("scenes", t); }
-    try { more[4][1] = sim.getPartManager().getObjects(); } catch (Throwable t) { log.na("derived parts", t); }
+    Map<String, Set<String>> taken = new HashMap<>();
+    reportRows(out, taken);
+    Object[][] more = {{"scene", null}, {"derived part", null}, {"field function", null}};
+    try { more[0][1] = sim.getSceneManager().getScenes(); } catch (Throwable t) { log.na("scenes", t); }
+    try { more[1][1] = sim.getPartManager().getObjects(); } catch (Throwable t) { log.na("derived parts", t); }
+    try {
+      List<Object> ffs = new ArrayList<>();
+      for (Object f : sim.getFieldFunctionManager().getObjects()) if (f instanceof UserFieldFunction) ffs.add(f);
+      more[2][1] = ffs;
+    } catch (Throwable t) { log.na("field functions", t); }
     for (Object[] m : more) {
       if (!(m[1] instanceof Collection)) continue;
-      for (Object o : (Collection<?>) m[1]) {
-        if (m[0].equals("plot") && "ResidualPlot".equals(cls(o))) continue;
-        if (isDefaultName(nm(o))) out.add(defaultRow(o, (String) m[0], m[0] + " / " + nm(o)));
-      }
+      for (Object o : (Collection<?>) m[1]) if (isDefaultName(nm(o))) out.add(defaultRow(o, (String) m[0], m[0] + " / " + nm(o), CAT_OTHER));
     }
+    UserTag keep = null;
+    try { keep = keepTag(false); } catch (Throwable t) { /* no tags */ }
+    for (NameRow x : out) {
+      if (!isKept(x.o, keep)) continue;
+      x.kept = true;
+      x.problem = false;
+      x.issue = "kept";
+      x.state = "kept: tag '" + KEEP_TAG + "'";
+      x.proposed = "";
+      x.token = "";
+    }
+    nameClashes(out, taken);
+    for (NameRow x : out) x.pick = x.problem && !x.proposed.isEmpty() && !x.proposed.equals(x.name) && !"name in use".equals(x.issue);
     return out;
   }
 
-  NameRow defaultRow(Object o, String kind, String path) {
+  /** Report, monitor and plot rows. Reports follow the pattern of config/report_names.csv, monitors are named
+   *  "<report> Monitor", plots have no pl_ prefix. Standard reports and their _mean reports are not checked. */
+  void reportRows(List<NameRow> out, Map<String, Set<String>> taken) {
+    Set<String> std = new HashSet<>();
+    for (String[] d : STANDARD_REPORTS) std.add(d[0]);
+    try { for (String[] d : config("standard_reports.csv", STD_COLS, STANDARD_REPORTS)) if (d[0] != null) std.add(d[0].trim()); }
+    catch (Throwable t) { /* built-in list only */ }
+    Map<Object, String> rule = new HashMap<>();
+    String pre = "r_";
+    try {
+      ObjNames n = objNames();
+      int b = n.pattern.indexOf('{');
+      pre = b < 0 ? "" : n.pattern.substring(0, b);
+      for (ObjRow r : objState(n, objQuantities(n), objTargets()).renames) rule.put(r.report, r.name);
+    } catch (Throwable t) { log.na("report naming rule", t); }
+    try {
+      for (Object r : sim.getReportManager().getObjects()) {
+        String name = nm(r);
+        taken.computeIfAbsent("report", k -> new HashSet<>()).add(name);
+        if (std.contains(name) || name.endsWith("_mean") && std.contains(name.substring(0, name.length() - 5))) continue;
+        NameRow x = defaultRow(r, "report", "Reports / " + name, CAT_REPORTS);
+        x.group = "Reports";
+        x.state = reportDetail(r);
+        if (rule.containsKey(r)) {
+          x.issue = "not the rule";
+          x.proposed = rule.get(r);
+        } else if (isDefaultName(name)) {
+          x.issue = "default name";
+        } else if (!pre.isEmpty() && !name.startsWith(pre)) {
+          x.issue = "no " + pre + " prefix";
+          x.proposed = pre + objToken(name);
+        } else {
+          x.issue = "";
+          x.problem = false;
+        }
+        out.add(x);
+      }
+    } catch (Throwable t) { log.na("reports", t); }
+    try {
+      for (Object m : sim.getMonitorManager().getObjects()) {
+        Object rep = m instanceof ReportMonitor ? Reflect.tryCall(m, "getReport") : null;
+        String name = nm(m);
+        taken.computeIfAbsent("monitor", k -> new HashSet<>()).add(name);
+        if (rep == null) {
+          if (isDefaultName(name)) { NameRow x = defaultRow(m, "monitor", "Monitors / " + name, CAT_REPORTS); x.group = "Monitors"; out.add(x); }
+          continue;
+        }
+        String want = nm(rep) + " Monitor";
+        if (name.equals(want)) continue;
+        NameRow x = defaultRow(m, "monitor", "Monitors / " + name, CAT_REPORTS);
+        x.group = "Monitors";
+        x.issue = "not the report name";
+        x.state = "monitor of " + nm(rep);
+        x.proposed = want;
+        x.report = rep;
+        out.add(x);
+      }
+    } catch (Throwable t) { log.na("monitors", t); }
+    try {
+      for (Object p : sim.getPlotManager().getObjects()) {
+        String name = nm(p);
+        taken.computeIfAbsent("plot", k -> new HashSet<>()).add(name);
+        if ("ResidualPlot".equals(cls(p))) continue;
+        NameRow x = defaultRow(p, "plot", "Plots / " + name, CAT_REPORTS);
+        x.group = "Plots";
+        if (name.startsWith("pl_")) {
+          x.issue = "pl_ prefix";
+          String key = name.substring(3);
+          x.proposed = plotName(key);
+        } else if (isDefaultName(name)) {
+          Collection<?> ms = p instanceof MonitorPlot ? ((MonitorPlot) p).getObjects() : Collections.emptyList();
+          if (ms.size() == 1) {
+            Object rep = Reflect.tryCall(ms.iterator().next(), "getReport");
+            if (rep != null) x.proposed = nm(rep).replaceFirst("^r_", "");
+          }
+        } else {
+          continue;
+        }
+        out.add(x);
+      }
+    } catch (Throwable t) { log.na("plots", t); }
+  }
+
+  /** Type, field and objects of a report, for the tooltip of its row. */
+  static String reportDetail(Object r) {
+    String c = cls(r).replaceFirst("Report$", "");
+    Object ff = Reflect.tryCall(r, "getFieldFunction");
+    List<String> parts = new ArrayList<>();
+    try { for (Object p : partsOf(r)) parts.add(nm(p)); } catch (Throwable t) { /* no parts */ }
+    return c + (ff == null ? "" : " of " + nm(ff)) + (parts.isEmpty() ? "" : " on " + Fmt.cut(String.join(", ", parts), 80));
+  }
+
+  /** Marks a proposal that equals the name of another object of the same kind (taken, by kind) or another
+   *  proposal as "name in use". Boundaries and part surfaces are not checked. */
+  static void nameClashes(List<NameRow> rows, Map<String, Set<String>> taken) {
+    Map<String, Set<String>> wanted = new HashMap<>();
+    for (NameRow x : rows) {
+      if (x.proposed.isEmpty() || x.proposed.equals(x.name) || x.cat < CAT_REPORTS) continue;
+      String k = x.kind;
+      if (taken.getOrDefault(k, Collections.emptySet()).contains(x.proposed) || !wanted.computeIfAbsent(k, z -> new HashSet<>()).add(x.proposed)) {
+        x.issue = "name in use";
+        x.state = "'" + x.proposed + "' is the name of another " + x.kind + ". Enter another name.";
+      }
+    }
+  }
+
+  NameRow defaultRow(Object o, String kind, String path, int cat) {
     NameRow x = new NameRow();
     x.o = o;
     x.kind = kind;
@@ -4433,10 +4626,39 @@ public class SimKit extends StarMacro {
     x.path = path;
     x.state = "default name";
     x.issue = "default name";
-    x.cat = 2;
+    x.cat = cat;
     x.group = kind.substring(0, 1).toUpperCase(Locale.ROOT) + kind.substring(1) + "s";
     x.problem = true;
     return x;
+  }
+
+  /** Batch test of the report, monitor and plot rows and of Keep name, on objects made in memory. */
+  void testNames() {
+    try {
+      ExpressionReport ex = sim.getReportManager().createReport(ExpressionReport.class);
+      ex.setPresentationName("x names expr");
+      ex.setDefinition("1.0");
+      Monitor m = ex.createMonitor();
+      ((NamedObject) m).setPresentationName("x names monitor");
+      MonitorPlot p = sim.getPlotManager().createMonitorPlot(Collections.singletonList(m), "pl_T_max");
+      if (!"pl_T_max".equals(nm(p))) p.setPresentationName("pl_T_max");
+      for (NameRow x : nameRows()) {
+        if (x.cat < CAT_REPORTS || !x.problem && !x.kept) continue;
+        log.line("names: " + NAME_CATS[x.cat] + " / " + x.group + ": " + x.name + " [" + x.issue + "]"
+            + (x.proposed.isEmpty() ? "" : " -> " + x.proposed) + (x.pick ? " (ticked)" : ""));
+      }
+      log.line("names: keep " + nm(ex) + ": " + setKept(ex, true));
+      for (NameRow x : nameRows()) if (x.o == ex) log.line("names: after keep: " + x.name + " [" + x.issue + "] problem " + x.problem);
+      log.line("names: release " + nm(ex) + ": " + setKept(ex, false));
+      for (NameRow x : nameRows()) if (x.o == ex) log.line("names: after release: " + x.name + " [" + x.issue + "]");
+      ExpressionReport ex2 = sim.getReportManager().createReport(ExpressionReport.class);
+      ex2.setPresentationName("x names expr 2");
+      ex2.setDefinition("2.0");
+      Object[] mp = monitorsAndPlot(Collections.singletonList((Object) ex2), "T_max", "pl_T_max");
+      List<String> pl = new ArrayList<>();
+      for (Object q : sim.getPlotManager().getObjects()) if (q instanceof MonitorPlot) pl.add(nm(q) + " (" + ((MonitorPlot) q).getObjects().size() + ")");
+      log.line("names: plot reused: " + (mp[1] == p) + "; plots " + pl);
+    } catch (Throwable t) { log.na("names test", t); }
   }
 
   /** Prints the Names table to the log for batch tests. */
@@ -4451,17 +4673,31 @@ public class SimKit extends StarMacro {
     log.line("names: " + rows.size() + " row(s), " + bad + " issue(s); prefixes " + prefixRx.pattern());
   }
 
-  /** Names tool. Apply renames the ticked rows that have a new name. */
+  /** Names tool, opened on the first category with issues. */
   void toolNames() {
+    toolNames(-1);
+  }
+
+  /** Names tool. startCat is the category shown first, -1 for the first one with issues. Reports are renamed
+   *  first, with their references in expressions and their monitor; a monitor row then gets the new report name. */
+  void toolNames(int startCat) {
     final List<NameRow> rows = nameRows();
     namesCad = cadModels().isEmpty() ? null : this::openCad;
     final int[] total = {0}, types0 = {0};
-    Ui.edt(() -> namesWindow(rows, list -> {
-      int n = 0, bad = 0;
-      for (NameRow x : list) {
+    Ui.edt(() -> namesWindow(rows, startCat, list -> {
+      int n = 0, bad = 0, refs = 0;
+      List<NameRow> order = new ArrayList<>(list);
+      order.sort((a, b) -> Boolean.compare(!a.kind.equals("report"), !b.kind.equals("report")));
+      for (NameRow x : order) {
         try {
-          ((NamedObject) x.o).setPresentationName(x.proposed.trim());
-          log.line("  renamed " + x.kind + " " + x.path + " -> " + x.proposed.trim());
+          String nn = x.proposed.trim();
+          if (x.report != null) {
+            if (!nm(x.o).equals(x.name)) continue;   // renamed with its report
+            if (nn.endsWith(" Monitor")) nn = nm(x.report) + " Monitor";   // the report may be renamed in this run
+          }
+          ((NamedObject) x.o).setPresentationName(nn);
+          log.line("  renamed " + x.kind + " " + x.path + " -> " + nn);
+          if (x.kind.equals("report")) refs += objRenameRefs(x.name, nn);
           n++;
         } catch (Throwable t) {
           log.na("rename " + x.path, t);
@@ -4469,8 +4705,8 @@ public class SimKit extends StarMacro {
         }
       }
       total[0] += n;
-      return (n == 1 ? "1 object renamed." : n + " objects renamed.") + (bad > 0 ? " " + bad + " failed: see the Output window." : "")
-          + " Undo is not available.";
+      return plural(n, "object", "objects") + " renamed" + (refs > 0 ? ", " + plural(refs, "expression", "expressions") + " updated" : "")
+          + "." + (bad > 0 ? " " + bad + " failed: see the Output window." : "") + " Undo is not available.";
     }, (list, types) -> {
       int n = 0, bad = 0;
       for (NameRow x : list) {
@@ -4488,14 +4724,19 @@ public class SimKit extends StarMacro {
       types0[0] += n;
       return (n == 1 ? "1 boundary type set." : n + " boundary types set.") + (bad > 0 ? " " + bad + " failed: see the Output window." : "")
           + " Their values are reset to the defaults of the new type.";
+    }, (list, on) -> {
+      int n = 0, bad = 0;
+      for (NameRow x : list) if (setKept(x.o, on)) n++; else bad++;
+      return plural(n, "name", "names") + (on ? " kept." : " released.") + (bad > 0 ? " " + bad + " objects take no tag." : "");
     }, this::nameRows));
     result((total[0] == 0 ? "no objects renamed" : total[0] + " object(s) renamed") + (types0[0] > 0 ? ", " + types0[0] + " boundary type(s) set" : ""));
   }
 
   /** Names window, built on the Swing thread. Rename calls 'rename' for the ticked rows with a new name in a
    *  worker thread, then 'reload' reads the rows again. */
-  Boolean namesWindow(final List<NameRow> all, final java.util.function.Function<List<NameRow>, String> rename,
+  Boolean namesWindow(final List<NameRow> all, int startCat, final java.util.function.Function<List<NameRow>, String> rename,
       final java.util.function.BiFunction<List<NameRow>, Map<String, String>, String> setType,
+      final java.util.function.BiFunction<List<NameRow>, Boolean, String> keep,
       final java.util.function.Supplier<List<NameRow>> reload) {
     final int[] issues = new int[NAME_CATS.length], totals = new int[NAME_CATS.length];
     final Runnable recount = () -> {
@@ -4506,6 +4747,7 @@ public class SimKit extends StarMacro {
     recount.run();
     final int[] cat = {0};
     for (int c = 0; c < NAME_CATS.length; c++) if (issues[c] > 0) { cat[0] = c; break; }
+    if (startCat >= 0 && startCat < NAME_CATS.length) cat[0] = startCat;
     final List<Object> view = new ArrayList<>();   // String for a group heading, else NameRow
     final Set<String> folded = new HashSet<>();
     final JTextField search = Ui.hintField("", "Filter by name", 20);
@@ -4515,8 +4757,11 @@ public class SimKit extends StarMacro {
     catTitle.setFont(catTitle.getFont().deriveFont(Font.BOLD, 15f));
     final JButton apply = Ui.primary("Rename");
     final JButton typeBtn = new JButton("Set type");
+    final JButton keepBtn = new JButton("Keep name");
+    keepBtn.setToolTipText("Tags the ticked objects '" + KEEP_TAG + "'. Names does not check them again.");
     typeBtn.setToolTipText("Sets the boundary type from the name prefix on the ticked boundaries (the name is kept)");
     apply.putClientProperty("simkit.stay", Boolean.TRUE);
+    apply.setToolTipText("Macros that use the old names need the new names.");
     final String[] lastMsg = {null};   // result of the last Rename, shown until the next tick change
     final JButton useAll = Ui.link("Tick all proposed");
     useAll.setToolTipText("Ticks the rows shown that have a proposed name");
@@ -4581,6 +4826,10 @@ public class SimKit extends StarMacro {
       typeBtn.setVisible(anyType > 0);
       typeBtn.setText(k == 0 ? "Set type" : k == 1 ? "Set type on 1 boundary" : "Set type on " + k + " boundaries");
       typeBtn.setEnabled(k > 0);
+      int pk = 0, kept = 0;
+      for (NameRow x : all) if (x.pick) { pk++; if (x.kept) kept++; }
+      keepBtn.setText(pk > 0 && kept == pk ? "Release name" : "Keep name");
+      keepBtn.setEnabled(pk > 0);
       int all3 = n + m + k;
       ticked.setForeground(Ui.MUTED);
       ticked.setText(all3 == 0 && lastMsg[0] != null ? lastMsg[0] : all3 == 0 ? "No rows ticked."
@@ -4652,16 +4901,19 @@ public class SimKit extends StarMacro {
           String is = x.issue.isEmpty() ? "ok" : x.issue;
           setText(is);
           setFont(tb.getFont().deriveFont(Font.BOLD, 11f));
-          boolean mism = x.issue.contains("_ on ");
-          setForeground(x.issue.isEmpty() ? green : mism ? red : x.issue.startsWith("default") ? grey : amber);
-          tagBg = x.issue.isEmpty() ? null : mism ? redBg : x.issue.startsWith("default") ? greyBg : amberBg;
+          boolean mism = x.issue.contains("_ on ") || x.issue.equals("name in use");
+          boolean quiet = x.issue.startsWith("default") || x.kept;
+          setForeground(x.issue.isEmpty() ? green : mism ? red : quiet ? grey : amber);
+          tagBg = x.issue.isEmpty() ? null : mism ? redBg : quiet ? greyBg : amberBg;
           setToolTipText(x.token.isEmpty() ? x.state : x.state + ". Tick the row and use Set type, or enter a new name.");
         } else {
           boolean has = !x.proposed.isEmpty() && !x.proposed.equals(x.name);
           setText(has ? "\u2192  " + x.proposed : "\u2014");
-          setForeground(has ? (x.pick ? Ui.BLUE : new java.awt.Color(0x7F, 0x9C, 0xC4)) : new java.awt.Color(0xA8, 0xB0, 0xBA));
+          boolean longName = has && x.proposed.length() > 60;
+          setForeground(longName ? amber : has ? (x.pick ? Ui.BLUE : new java.awt.Color(0x7F, 0x9C, 0xC4)) : new java.awt.Color(0xA8, 0xB0, 0xBA));
           setFont(tb.getFont().deriveFont(has && x.pick ? Font.BOLD : Font.PLAIN));
-          setToolTipText(has ? (x.pick ? "Will be renamed" : "Proposed name. Tick the row to apply it.") : "Double-click to enter a name");
+          setToolTipText(longName ? "Long name" : has ? (x.pick ? "Will be renamed" : "Proposed name. Tick the row to apply it.")
+              : "F2 or double-click to enter a name");
         }
         return this;
       }
@@ -4729,7 +4981,7 @@ public class SimKit extends StarMacro {
       cb.setOpaque(true);
       cb.setAlignmentX(0f);
       cb.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, 56));
-      cb.addActionListener(e -> { cat[0] = cc; search.setText(""); folded.clear(); paintCats.run(); fill.run(); prefixBarRef[0].setVisible(cc != 2); });
+      cb.addActionListener(e -> { cat[0] = cc; search.setText(""); folded.clear(); paintCats.run(); fill.run(); prefixBarRef[0].setVisible(cc < CAT_REPORTS); });
       catBtns.add(cb);
       cats.add(cb);
       cats.add(javax.swing.Box.createVerticalStrut(4));
@@ -4776,7 +5028,7 @@ public class SimKit extends StarMacro {
         for (Object o : view) if (o instanceof NameRow && ((NameRow) o).pick) on.add((NameRow) o);
         if (on.isEmpty()) for (int i : t.getSelectedRows()) if (view.get(i) instanceof NameRow) on.add((NameRow) view.get(i));
         for (NameRow x : on) {
-          if (x.cat == 2) continue;
+          if (x.cat >= CAT_REPORTS) continue;
           x.proposed = withPrefix(x.name, p[0]);
           x.pick = true;
         }
@@ -4811,13 +5063,48 @@ public class SimKit extends StarMacro {
     right.add(sp, BorderLayout.CENTER);
     JPanel south = new JPanel(new BorderLayout(10, 0));
     south.add(ticked, BorderLayout.CENTER);
-    south.add(typeBtn, BorderLayout.EAST);
+    JPanel southBtns = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 6, 0));
+    southBtns.add(keepBtn);
+    southBtns.add(typeBtn);
+    south.add(southBtns, BorderLayout.EAST);
     right.add(south, BorderLayout.SOUTH);
     JPanel body = new JPanel(new BorderLayout());
     body.add(cats, BorderLayout.WEST);
     body.add(right, BorderLayout.CENTER);
     body.setPreferredSize(new java.awt.Dimension(1060, 560));
-    prefixBar.setVisible(cat[0] != 2);
+    prefixBar.setVisible(cat[0] < CAT_REPORTS);
+    // keys: Space ticks, F2 edits the new name, Ctrl+A ticks all rows shown, Ctrl+F goes to the filter
+    t.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke("F2"), "simkit.edit");
+    t.getActionMap().put("simkit.edit", new javax.swing.AbstractAction() {
+      private static final long serialVersionUID = 1L;
+      @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+        int r = t.getSelectedRow();
+        if (r >= 0 && view.get(r) instanceof NameRow && t.editCellAt(r, 3)) t.getEditorComponent().requestFocusInWindow();
+      }
+    });
+    t.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke("ctrl A"), "simkit.tickAll");
+    t.getActionMap().put("simkit.tickAll", new javax.swing.AbstractAction() {
+      private static final long serialVersionUID = 1L;
+      @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+        for (Object o : view) if (o instanceof NameRow) ((NameRow) o).pick = true;
+        if (!view.isEmpty()) model.fireTableRowsUpdated(0, view.size() - 1);
+      }
+    });
+    t.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(javax.swing.KeyStroke.getKeyStroke(' '), "simkit.tick");
+    t.getActionMap().put("simkit.tick", new javax.swing.AbstractAction() {
+      private static final long serialVersionUID = 1L;
+      @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+        int[] sel = t.getSelectedRows();
+        if (sel.length == 0) return;
+        boolean on = !Boolean.TRUE.equals(model.getValueAt(sel[0], 0));
+        for (int r : sel) model.setValueAt(on, r, 0);
+      }
+    });
+    t.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke("ctrl F"), "simkit.find");
+    t.getActionMap().put("simkit.find", new javax.swing.AbstractAction() {
+      private static final long serialVersionUID = 1L;
+      @Override public void actionPerformed(java.awt.event.ActionEvent e) { search.requestFocusInWindow(); }
+    });
     fill.run();
     count.run();
     final Runnable paintCatsRef = paintCats;
@@ -4826,6 +5113,7 @@ public class SimKit extends StarMacro {
       ticked.setText(busy);
       apply.setEnabled(false);
       typeBtn.setEnabled(false);
+      keepBtn.setEnabled(false);
       Thread w = new Thread(() -> {   // STAR-CCM+ calls off the Swing thread
         String msg;
         List<NameRow> fresh = null;
@@ -4884,6 +5172,15 @@ public class SimKit extends StarMacro {
       go.removeIf(x -> !types.containsKey(x.token));
       if (go.isEmpty()) return;
       work.accept(go.size() == 1 ? "Setting 1 boundary type..." : "Setting " + go.size() + " boundary types...", () -> setType.apply(go, types));
+    });
+    keepBtn.addActionListener(e -> {
+      if (t.isEditing()) t.getCellEditor().stopCellEditing();
+      final List<NameRow> go = new ArrayList<>();
+      boolean allKept = true;
+      for (NameRow x : all) if (x.pick) { go.add(x); allKept &= x.kept; }
+      if (go.isEmpty()) return;
+      final boolean on = !allKept;
+      work.accept((on ? "Keeping " : "Releasing ") + plural(go.size(), "name", "names") + "...", () -> keep.apply(go, on));
     });
     apply.addActionListener(e -> {
       if (t.isEditing()) t.getCellEditor().stopCellEditing();
@@ -5304,6 +5601,11 @@ public class SimKit extends StarMacro {
     }
   }
 
+  /** Plot name of a standard report group, e.g. "Mass balance", "Walls y+". */
+  static String plotName(String g) {
+    return groupTitle(g).replace(": ", " ");
+  }
+
   static String groupTitle(String g) {
     switch (g) {
       case "massBalance": return "Mass balance";
@@ -5444,7 +5746,7 @@ public class SimKit extends StarMacro {
     List<Object> plots = new ArrayList<>();
     int crit = 0, means = 0;
     for (Map.Entry<String, List<Object>> g : groups.entrySet()) {
-      Object[] mp = monitorsAndPlot(g.getValue(), "pl_" + g.getKey());
+      Object[] mp = monitorsAndPlot(g.getValue(), plotName(g.getKey()), "pl_" + g.getKey());
       List<Object> extra = new ArrayList<>();
       for (Object m : (List<?>) mp[0]) {
         String[] d;
@@ -5502,7 +5804,13 @@ public class SimKit extends StarMacro {
       return m;
     }, () -> reportsData(n, qs, objs), simName()));
     result(done.isEmpty() ? "Reports: nothing changed" : "Reports: " + String.join(" ", done));
+    if (openNamesNext) {
+      openNamesNext = false;
+      toolNames(CAT_REPORTS);
+    }
   }
+
+  volatile boolean openNamesNext;   // set by "Fix in Names" in the Reports window
 
   /** Adds a stopping criterion to a report monitor, off unless spec ends with " on". Returns true when made. */
   boolean stoppingCriterion(Object monitor, String report, String spec) {
@@ -6146,8 +6454,8 @@ public class SimKit extends StarMacro {
           r.name = n.name(q.code, sc, obj);
           r.cls = statClass(s);
           r.ff = q.ff;
-          if (plotMode.equals("quantity")) { r.plotKey = q.code + "_" + sc; r.plotTitle = "pl_" + q.code + "_" + sc; }
-          else if (plotMode.equals("object")) { r.plotKey = obj; r.plotTitle = "pl_" + obj; }
+          if (plotMode.equals("quantity")) { r.plotKey = q.code + "_" + sc; r.plotTitle = q.code + "_" + sc; }
+          else if (plotMode.equals("object")) { r.plotKey = obj; r.plotTitle = obj; }
           String sig = objSig(r.cls, q.ffName, pn);
           if (reg && bnd) { r.action = "n/a"; r.note = "boundaries and regions in one report"; }
           else if (!statFits(s, reg)) { r.action = "n/a"; r.note = s + (reg ? ": boundaries only" : ": regions only"); }
@@ -6163,7 +6471,8 @@ public class SimKit extends StarMacro {
   }
 
   /** Replaces ${old} by ${nn} in expression reports and field functions, and renames the monitor "<old> Monitor". */
-  void objRenameRefs(String old, String nn) {
+  int objRenameRefs(String old, String nn) {
+    int n = 0;
     String a = "${" + old + "}", b = "${" + nn + "}";
     List<Object> withDef = new ArrayList<>(sim.getReportManager().getObjects());
     try { withDef.addAll(sim.getFieldFunctionManager().getObjects()); } catch (Throwable t) { /* reports only */ }
@@ -6173,12 +6482,14 @@ public class SimKit extends StarMacro {
         try {
           Reflect.invoke(o, "setDefinition", ((String) d).replace(a, b));
           log.line("  " + nm(o) + ": " + a + " -> " + b);
+          n++;
         } catch (Throwable t) { log.na("expression of " + nm(o), t); }
       }
     }
     for (Object m : sim.getMonitorManager().getObjects()) {
       if (nm(m).equals(old + " Monitor")) ((NamedObject) m).setPresentationName(nn + " Monitor");
     }
+    return n;
   }
 
   /** Creates and renames the ticked rows. Each new report gets a monitor, plots follow the plot key, and the new
@@ -6215,7 +6526,8 @@ public class SimKit extends StarMacro {
     }
     List<Object> monitors = new ArrayList<>(), plots = new ArrayList<>();
     for (Map.Entry<String, List<Object>> g : groups.entrySet()) {
-      Object[] mp = monitorsAndPlot(g.getValue(), plotMode.equals("none") ? null : titles.get(g.getKey()));
+      String pt = plotMode.equals("none") ? null : titles.get(g.getKey());
+      Object[] mp = monitorsAndPlot(g.getValue(), pt, pt == null ? null : "pl_" + pt);
       monitors.addAll((List<?>) mp[0]);
       if (mp[1] != null) plots.add(mp[1]);
     }
@@ -6452,8 +6764,8 @@ public class SimKit extends StarMacro {
     final String[] idleTip = {"Select a report to create.", "Select a quantity, a statistic and an object."};
     final JLabel renameNote = new JLabel(" ");
     renameNote.setForeground(Ui.AMBER);
-    final JButton renameLink = Ui.link("Rename\u2026");
-    renameLink.setToolTipText("Rename these reports to the naming rule.");
+    final JButton renameLink = Ui.link("Fix in Names\u2026");
+    renameLink.setToolTipText("Closes Reports and opens Names on Reports and plots.");
     final JPanel renameRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
     renameRow.add(renameNote);
     renameRow.add(renameLink);
@@ -6480,8 +6792,7 @@ public class SimKit extends StarMacro {
       ReportsData d = data[0];
       int nr = d.obj.renames.size();
       renameRow.setVisible(nr > 0);
-      renameNote.setText(nr == 1 ? "1 report does not follow the naming rule (config/report_names.csv)."
-          : nr + " reports do not follow the naming rule (config/report_names.csv).");
+      renameNote.setText(plural(nr, "report does", "reports do") + " not follow the naming rule.");
       renameLink.setEnabled(!busy[0]);
       for (int i = 0; i < tabs.size(); i++) Ui.tabOn(tabs.get(i), i == cur[0]);
       counts.setText(plural(d.reports, "report", "reports") + "  ·  " + plural(d.monitors, "monitor", "monitors") + "  ·  "
@@ -6522,11 +6833,9 @@ public class SimKit extends StarMacro {
       if (job != null) run.get(0).accept(job);
     });
     renameLink.addActionListener(e -> {
-      final List<ObjRow> rows = new ArrayList<>(data[0].obj.renames);
-      if (rows.isEmpty() || !renameDialog(rows)) return;
-      final List<ObjRow> todo = new ArrayList<>();
-      for (ObjRow r : rows) if (r.pick) todo.add(r);
-      if (!todo.isEmpty()) run.get(0).accept(() -> reportsAct.run("obj", todo, "none"));
+      openNamesNext = true;
+      java.awt.Window w = javax.swing.SwingUtilities.getWindowAncestor(renameLink);
+      if (w != null) w.dispose();
     });
     JPanel top = new JPanel(new BorderLayout());
     top.add(tabRow, BorderLayout.WEST);
@@ -6542,49 +6851,6 @@ public class SimKit extends StarMacro {
     update[0].run();
     if (std.focus != null) javax.swing.SwingUtilities.invokeLater(() -> std.focus.requestFocusInWindow());
     return Ui.sheet("Reports", simTitle, body, go, null);
-  }
-
-  /** Dialog with the reports to rename to the naming rule, all selected at first. Returns true on Rename with at
-   *  least one selected; ObjRow.pick marks them. */
-  boolean renameDialog(final List<ObjRow> rows) {
-    for (ObjRow r : rows) r.pick = true;
-    final JButton ok = Ui.primary("Rename " + plural(rows.size(), "report", "reports"));
-    final javax.swing.table.AbstractTableModel m = new javax.swing.table.AbstractTableModel() {
-      private static final long serialVersionUID = 1L;
-      @Override public int getRowCount() { return rows.size(); }
-      @Override public int getColumnCount() { return 3; }
-      @Override public String getColumnName(int c) { return new String[] {"", "Current name", "New name"}[c]; }
-      @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
-      @Override public boolean isCellEditable(int r, int c) { return c == 0; }
-      @Override public Object getValueAt(int r, int c) { ObjRow x = rows.get(r); return c == 0 ? (Object) x.pick : c == 1 ? x.note : x.name; }
-      @Override public void setValueAt(Object v, int r, int c) {
-        rows.get(r).pick = Boolean.TRUE.equals(v);
-        fireTableRowsUpdated(r, r);
-        int k = 0;
-        for (ObjRow x : rows) if (x.pick) k++;
-        ok.setText(k == 0 ? "Rename" : "Rename " + plural(k, "report", "reports"));
-      }
-    };
-    final JTable t = plainTable(m);
-    t.getColumnModel().getColumn(0).setMaxWidth(28);
-    t.getColumnModel().getColumn(0).setMinWidth(28);
-    t.getColumnModel().getColumn(1).setPreferredWidth(220);
-    t.getColumnModel().getColumn(2).setPreferredWidth(300);
-    t.setDefaultRenderer(String.class, textCell((r, c) -> c == 2 && rows.get(r).pick ? java.awt.Color.BLACK : Ui.MUTED));
-    final javax.swing.table.TableCellRenderer boxes = t.getDefaultRenderer(Boolean.class);
-    t.setDefaultRenderer(Boolean.class, (tb, v, sel, foc, r, c) -> {
-      java.awt.Component k = boxes.getTableCellRendererComponent(tb, v, false, false, r, c);
-      k.setBackground(tb.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
-      return k;
-    });
-    spaceToggles(t);
-    JPanel body = new JPanel(new BorderLayout(0, 8));
-    body.add(plainScroll(t, 560, Math.min(10, rows.size()) * t.getRowHeight() + t.getRowHeight() + 8), BorderLayout.CENTER);
-    body.add(Ui.muted("<html>Expressions that use ${old name} and the monitor \"&lt;old name&gt; Monitor\" are renamed too.</html>"), BorderLayout.SOUTH);
-    return Ui.sheet("Rename reports", "Reports that do not follow the naming rule (config/report_names.csv).", body, ok, () -> {
-      for (ObjRow x : rows) if (x.pick) return null;
-      return "Select a report to rename.";
-    });
   }
 
   /** The Standard page of the Reports window. */
@@ -7018,19 +7284,38 @@ public class SimKit extends StarMacro {
     }
   }
 
-  /** Creates one monitor per report and one plot of all of them. Returns {monitors, plot or null}. */
-  Object[] monitorsAndPlot(List<Object> reports, String plot) {
+  /** Creates one monitor per report and one plot of all of them. Returns {monitors, plot or null}. A monitor plot
+   *  named 'plot' or 'legacy' (the former pl_ name) gets the new monitors instead of a second plot, and a legacy
+   *  name is changed to 'plot'. */
+  Object[] monitorsAndPlot(List<Object> reports, String plot, String legacy) {
     List<Monitor> monitors = new ArrayList<>();
     for (Object r : reports) {
-      try { monitors.add(((Report) r).createMonitor()); }                                                // [U24]
+      try { monitors.add(((Report) r).createMonitor()); }
       catch (Throwable t) { log.na("monitor of " + nm(r), t); }
     }
     if (plot == null || monitors.isEmpty()) {
       log.line("  monitors for " + monitors.size() + " report(s)");
       return new Object[] {monitors, null};
     }
+    MonitorPlot have = null;
+    boolean planTaken = false;
+    for (Object p : sim.getPlotManager().getObjects()) {
+      if (!(p instanceof MonitorPlot)) { planTaken |= plot.equals(nm(p)); continue; }
+      if (plot.equals(nm(p))) have = (MonitorPlot) p;
+      else if (have == null && legacy != null && legacy.equals(nm(p))) have = (MonitorPlot) p;
+    }
+    if (have != null) {
+      try {
+        List<Monitor> all = new ArrayList<>(have.getObjects());
+        for (Monitor m : monitors) if (!all.contains(m)) all.add(m);
+        have.setObjects(all);
+        if (!plot.equals(nm(have)) && !planTaken) have.setPresentationName(plot);
+        log.line("  monitors added to plot " + nm(have) + " (" + monitors.size() + " report(s))");
+        return new Object[] {monitors, have};
+      } catch (Throwable t) { log.na("monitors added to plot " + nm(have) + ", a new plot is made", t); }
+    }
     try {
-      MonitorPlot p = sim.getPlotManager().createMonitorPlot(monitors, plot);                             // [U24]
+      MonitorPlot p = sim.getPlotManager().createMonitorPlot(monitors, plot);
       if (!plot.equals(nm(p))) p.setPresentationName(plot);
       log.line("  monitors + plot " + plot + " (" + monitors.size() + " report(s))");
       return new Object[] {monitors, p};
@@ -8189,7 +8474,7 @@ public class SimKit extends StarMacro {
       } catch (Throwable t) { /* no folders */ }
     }
     List<String> pl = new ArrayList<>();
-    for (Object p : sim.getPlotManager().getObjects()) if (nm(p).startsWith("pl_")) pl.add(nm(p));
+    for (Object p : sim.getPlotManager().getObjects()) if (p instanceof MonitorPlot) pl.add(nm(p));
     log.line("obj: folders " + folders + "; plots " + pl);
     try {
       ReportsData rd = reportsData(n, qs, objs);
@@ -8240,7 +8525,11 @@ public class SimKit extends StarMacro {
 
     Log(Simulation sim) { this.sim = sim; }
 
+    /** True in the thread of the background name count, which must not write into the log of a running tool. */
+    final ThreadLocal<Boolean> mute = ThreadLocal.withInitial(() -> Boolean.FALSE);
+
     void line(String s) {
+      if (mute.get()) return;
       buf.append(s).append('\n');
       try { sim.println("[SimKit] " + s); } catch (Throwable t) { System.out.println("[SimKit] " + s); }
     }
