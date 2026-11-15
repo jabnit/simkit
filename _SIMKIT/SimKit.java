@@ -2391,13 +2391,7 @@ public class SimKit extends StarMacro {
           onClick.accept(id, e.getClickCount());
         }
       });
-      addMouseWheelListener(e -> {
-        if (e.isControlDown()) {
-          setZoom(zoom * Math.pow(1.15, -e.getWheelRotation()), e.getPoint());
-        } else if (getParent() != null) {   // a listener here takes the wheel from the scroll pane: pass it on
-          getParent().dispatchEvent(javax.swing.SwingUtilities.convertMouseEvent(this, e, getParent()));
-        }
-      });
+      addMouseWheelListener(e -> setZoom(zoom * Math.pow(1.15, -e.getWheelRotation()), e.getPoint()));   // dragging moves the view
       addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
         @Override public void mouseMoved(java.awt.event.MouseEvent e) {
           boolean hand = onClick != null && at(e.getPoint()) != null;
@@ -3278,27 +3272,17 @@ public class SimKit extends StarMacro {
       treeScroll.getVerticalScrollBar().setUnitIncrement(16);
       treeScroll.getHorizontalScrollBar().setUnitIncrement(16);
       final JButton zoomPct = Ui.link("100 %");
-      zoomPct.setToolTipText("Reset to 100 % (Ctrl+1)");
+      zoomPct.setToolTipText("The mouse wheel zooms. Click: back to 100 % (Ctrl+1)");
       zoomPct.addActionListener(e -> runTree.setZoom(1.0, null));
-      final JButton fitBtn = new JButton("Fit to view"), zOut = new JButton("\u2212"), zIn = new JButton("+");
+      final JButton fitBtn = new JButton("Fit to view");
       fitBtn.setToolTipText("Show the whole tree, at least at 50 % (Ctrl+0)");
-      zOut.setToolTipText("Zoom out (Ctrl+wheel)");
-      zIn.setToolTipText("Zoom in (Ctrl+wheel)");
-      for (JButton b : new JButton[] {fitBtn, zOut, zIn}) b.setFocusable(false);
+      fitBtn.setFocusable(false);
       fitBtn.addActionListener(e -> runTree.fit());
-      zOut.addActionListener(e -> runTree.setZoom(runTree.zoom / 1.25, null));
-      zIn.addActionListener(e -> runTree.setZoom(runTree.zoom * 1.25, null));
-      runTree.onZoom = () -> {
-        zoomPct.setText(Math.round(runTree.zoom * 100) + " %");
-        zOut.setEnabled(runTree.zoom > RunTree.ZOOM_MIN + 1e-3);
-        zIn.setEnabled(runTree.zoom < RunTree.ZOOM_MAX - 1e-3);
-      };
+      runTree.onZoom = () -> zoomPct.setText(Math.round(runTree.zoom * 100) + " %");
       JPanel zoomBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 2));
-      zoomBar.add(fitBtn);
-      zoomBar.add(javax.swing.Box.createHorizontalStrut(6));
-      zoomBar.add(zOut);
       zoomBar.add(zoomPct);
-      zoomBar.add(zIn);
+      zoomBar.add(javax.swing.Box.createHorizontalStrut(6));
+      zoomBar.add(fitBtn);
       JPanel treeCard = new JPanel(new BorderLayout());
       treeCard.add(zoomBar, BorderLayout.NORTH);
       treeCard.add(treeScroll, BorderLayout.CENTER);

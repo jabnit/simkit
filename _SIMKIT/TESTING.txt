@@ -121,7 +121,7 @@ B. GUI TEST (on the release and OS the team uses; about 15 min)
       selected. Click the arrow of a heading: it folds; again: it unfolds. Right-click > Fold all folders / Unfold all
       folders. With no row selected the details show the project and its description. Click a status, pick
       "running": saved at once (bottom line "Saved: status of ..."); "dropped" strikes the comment through. Tree:
-      Fit to view (Ctrl+0) shows the whole tree; - and + or Ctrl+wheel zoom between 20 % and 200 %; a click on a
+      Fit to view (Ctrl+0) shows the whole tree; the mouse wheel zooms between 20 % and 200 %; a click on a
       card at any zoom selects that run. The formatting bar (B, I, U, A colour, lists, Template) is always shown above the
       box beside the table, titled "Comments" (no row selected: "Description"). Double-click a comment: the caret goes in
       the box. Type several lines; select a word and press B, I, U, A (pick red, then "No colour"); the list button:
@@ -721,3 +721,6 @@ C. RESULTS SO FAR
   RIGHT RIGHT DOWN from R001 -> R004, LEFT -> R002. Not done: compact layout of long single-child chains.
   Fix: the tracker stopped with a NullPointerException when the selected run had no status (the "no status" label
   had no colours). Checked offline with the open run R006 without status.
+  Tracker tree: the - and + buttons are removed; the mouse wheel zooms (no Ctrl) around the pointer, dragging moves the
+  view, the scroll bars stay. The bar above the tree: the percentage (click or Ctrl+1: 100 %) and Fit to view. The same
+  wheel zoom applies to the tree in the Save as new run window.
