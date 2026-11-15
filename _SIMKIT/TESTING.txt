@@ -829,3 +829,8 @@ C. RESULTS SO FAR
   The reports and plots were made. Plots are now made by newPlot: createMonitorPlot() empty, name, curves, window
   closed; setCurves does not open a window again. 21.04: curves and names unchanged (SKT126). To check on 2402: no
   plot tab opens and no dialog after Create in Predefined right after opening the sim.
+  Linux (STAR-CCM+ 2310, 18.06.006), video: after Create in Predefined the Simulation tree collapsed to its root and
+  a plot window opened ("Opening Plot: Finished"); the window selects its node in the tree -> NPE in
+  SingleView.selectNodes (RootProcessNode.getChildrenNodes null). The reports and plots were made. Cause: the tree
+  collapse after Create (Ui.collapseInTree, Swing timers at 300/1000/2500 ms, nodes matched by name, and plot names
+  now equal the Predefined folder names). Removed: collapseInTree, collapse, nodeName, namesOf and their three calls.

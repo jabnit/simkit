@@ -6131,7 +6131,6 @@ public class SimKit extends StarMacro {
     }
     for (Map.Entry<String, List<Object>> g : ownPlots.entrySet()) plots.addAll(g.getValue());
     for (Map.Entry<String, List<Object>> g : plotGroup.entrySet()) toFolder(sim.getPlotManager(), stdFolder(g.getKey()), g.getValue());
-    if (gui && !plots.isEmpty()) Ui.collapseInTree(namesOf(plots));
     String out = n > 0 ? plural(n, "report", "reports") + " with monitors and " + plural(plots.size(), "plot", "plots") + " created" : "";
     if (upd > 0) out += (out.isEmpty() ? "" : ", ") + plural(upd, "report", "reports") + " updated";
     if (crit > 0) out += ", " + plural(crit, "stopping criterion", "stopping criteria");
@@ -7254,7 +7253,6 @@ public class SimKit extends StarMacro {
       toFolder(sim.getReportManager(), "By object", reports);
       toFolder(sim.getMonitorManager(), "By object", monitors);
       if (!plots.isEmpty()) toFolder(sim.getPlotManager(), "By object", plots);
-      if (gui && !plots.isEmpty()) Ui.collapseInTree(namesOf(plots));
     }
     String s = (made > 0 ? made + (made == 1 ? " report" : " reports") + " with monitors" + (plots.isEmpty() ? "" : " and " + plots.size()
         + (plots.size() == 1 ? " plot" : " plots")) + " created" : "") + (made > 0 && ren > 0 ? ", " : "")
@@ -7355,12 +7353,6 @@ public class SimKit extends StarMacro {
       out.add(x);
     }
     out.sort(java.util.Comparator.comparing((ObjSet x) -> x.kind).thenComparing(x -> x.label));
-    return out;
-  }
-
-  static Set<String> namesOf(List<?> objs) {
-    Set<String> out = new HashSet<>();
-    for (Object o : objs) out.add(nm(o));
     return out;
   }
 
@@ -7860,7 +7852,6 @@ public class SimKit extends StarMacro {
         for (Object p : created) setCurves((MonitorPlot) p, new ArrayList<Monitor>());
       };
     }
-    if (gui && !created.isEmpty()) Ui.collapseInTree(namesOf(created));
     return (made > 0 ? plural(made, "plot", "plots") + " created" : "") + (made > 0 && added > 0 ? ", " : "")
         + (added > 0 ? plural(added, "curve", "curves") + " added" : "") + (made + added == 0 ? "Nothing to add" : "") + ".";
   }
@@ -11884,57 +11875,6 @@ public class SimKit extends StarMacro {
           g2.drawString(detail, x, (getHeight() + fm.getAscent() - fm.getDescent()) / 2);
         }
         g2.dispose();
-      }
-    }
-
-    /** Collapses the nodes with these names in the simulation tree of the STAR-CCM+ window (STAR-CCM+ opens a new plot
-     *  node with its axes and data sets). The tree has no API: its Swing trees are searched, a few times while it
-     *  updates; nothing happens when none is found. */
-    static void collapseInTree(final Set<String> names) {
-      if (names.isEmpty() || GraphicsEnvironment.isHeadless()) return;
-      final java.awt.event.ActionListener pass = e -> {
-        try {
-          for (java.awt.Window w : java.awt.Window.getWindows()) {
-            if (w.isShowing()) collapse(w, names);
-          }
-        } catch (Throwable t) { /* the tree is the window's own: never fail the tool for it */ }
-      };
-      for (int ms : new int[] {300, 1000, 2500}) {
-        javax.swing.Timer t = new javax.swing.Timer(ms, pass);
-        t.setRepeats(false);
-        t.start();
-      }
-    }
-
-    /** The name a tree node shows (a NetBeans node: its display name). */
-    static String nodeName(Object node) {
-      Object d = Reflect.tryCall(node, "getDisplayName");
-      return String.valueOf(d != null ? d : node).replaceAll("<[^>]*>", "").trim();
-    }
-
-    static void collapse(java.awt.Container c, Set<String> names) {
-      for (java.awt.Component k : c.getComponents()) {
-        if (k instanceof javax.swing.JTree) {
-          javax.swing.JTree tree = (javax.swing.JTree) k;
-          for (int r = tree.getRowCount() - 1; r >= 0; r--) {   // from the bottom: the rows above keep their index
-            javax.swing.tree.TreePath p = tree.getPathForRow(r);
-            if (p != null && tree.isExpanded(p) && names.contains(nodeName(p.getLastPathComponent()))) tree.collapsePath(p);
-          }
-        } else if (k instanceof JTable && k.getClass().getName().contains("Outline")) {   // NetBeans Outline (tree table)
-          JTable o = (JTable) k;
-          Object cache = Reflect.tryCall(o, "getLayoutCache");
-          java.lang.reflect.Method row = null;
-          try { if (cache != null) row = cache.getClass().getMethod("getPathForRow", int.class); } catch (Throwable t) { /* not an Outline */ }
-          for (int r = o.getRowCount() - 1; r >= 0 && row != null; r--) {
-            Object p;
-            try { p = row.invoke(cache, r); } catch (Throwable t) { p = null; }
-            if (!(p instanceof javax.swing.tree.TreePath)) continue;
-            String n = nodeName(((javax.swing.tree.TreePath) p).getLastPathComponent());
-            if (names.contains(n) && Boolean.TRUE.equals(Reflect.tryCall(o, "isExpanded", p))) Reflect.tryCall(o, "collapsePath", p);
-          }
-        } else if (k instanceof java.awt.Container) {
-          collapse((java.awt.Container) k, names);
-        }
       }
     }
 
