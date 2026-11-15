@@ -755,3 +755,9 @@ C. RESULTS SO FAR
   Reports: group headings of the object lists (In this simulation, Per object) and the plot headings of Per object
   stand out: darker band (E4E9F0), line above, capitals, 30 px high; sub-groups (derived part types) lighter
   (F1F4F8), 26 px, indented; object rows 24 px.
+  Reports: tabs renamed Existing (was In this simulation), By object (was Per object), Predefined (was Standard); the
+  By object top line is "Existing sets:"; pre-submit texts point to Reports > Predefined. The folders made in the
+  simulation keep their names ("Per object", "Standard reports"). By object table: columns Name / Status; plot rows
+  with a chart icon, bold name and status "New plot · n curves" or "Existing plot · +n curves" (green); "No plot
+  (monitors only)" with Plots None; report rows indented; caption "Each report gets a monitor. Its curve goes in the
+  plot above it."

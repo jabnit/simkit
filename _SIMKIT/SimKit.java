@@ -98,8 +98,8 @@ public class SimKit extends StarMacro {
     TRACKER("Tracker", "Runs, status, comments", "Runs of the project: status, comments, based on, family tree"),
     NAMES("Names", "Prefixes, rules, default names",
         "Type prefixes on boundaries and part surfaces, report and plot names, default names. Proposes names and renames the ticked objects."),
-    REPORTS("Reports", "Standard, per object",
-        "The team's standard reports (mass balance, p, T, wall heat, y+, Courant); reports per object (quantities x statistics on boundaries or regions), with monitors and plots"),
+    REPORTS("Reports", "Existing, by object, predefined",
+        "Edit, rename and delete the reports and plots of the simulation; create reports by object (quantities x statistics); create the predefined team reports (mass balance, p, T, wall heat, y+, Courant)"),
     MESH("Mesh study", "Mesh levels", "Coarse / medium / fine levels as runs, for a mesh sensitivity check (GCI)"),
     CALC("Calculators", "y+, Re, time step, GCI ...", "Boundary values, y+ and prism layers, time step, dimensionless numbers, GCI");
 
@@ -1984,7 +1984,7 @@ public class SimKit extends StarMacro {
       int n = 0;
       for (Object r : sim.getReportManager().getObjects()) if (nm(r).startsWith("r_")) n++;
       out.add(n > 0 ? new String[] {"ok", plural(n, "standard report", "standard reports") + " (r_*)"}
-          : new String[] {"!", "No standard reports (r_*). Add them in Reports > Standard."});
+          : new String[] {"!", "No standard reports (r_*). Add them in Reports > Predefined."});
     } catch (Throwable t) { out.add(new String[] {"na", "Standard reports", reason(t)}); }
     try {
       int def = 0, mism = 0, nopre = 0, noIf = 0;
@@ -2035,7 +2035,7 @@ public class SimKit extends StarMacro {
       }
       if (!empty.isEmpty()) out.add(new String[] {"!", plural(empty.size(), "report", "reports") + " with no surfaces", String.join(", ", empty)});
       if (!miss.isEmpty()) out.add(new String[] {"!", plural(miss.size(), "standard report misses", "standard reports miss")
-          + " new surfaces. Add them in Reports > Standard.", String.join(", ", miss)});
+          + " new surfaces. Add them in Reports > Predefined.", String.join(", ", miss)});
       if (!notNet.isEmpty()) out.add(new String[] {"!", plural(notNet.size(), "flow boundary", "flow boundaries") + " not in r_mdot_net",
           String.join(", ", notNet)});
       if (empty.isEmpty() && miss.isEmpty() && notNet.isEmpty()) out.add(new String[] {"ok", "Report surfaces up to date"});
@@ -6122,7 +6122,7 @@ public class SimKit extends StarMacro {
       if (o instanceof String) { pill.setBackground(Ui.BAND); return pill.set(null, null, null, null); }
       StdReport x = (StdReport) o;
       pill.setBackground(t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
-      if (x.present && x.empty) return pill.set("No objects", Ui.PILL_AMBER, "edit in In this simulation", Ui.MUTED);
+      if (x.present && x.empty) return pill.set("No objects", Ui.PILL_AMBER, "edit in Existing", Ui.MUTED);
       if (x.present) return pill.set("Present", Ui.PILL_GREEN, null, null);
       if (x.why != null) return pill.set(null, null, Ui.cap(x.why), Ui.MUTED);
       if (noSurf.apply(x)) return pill.set(null, null, "No surfaces selected", Ui.AMBER);
@@ -7598,7 +7598,7 @@ public class SimKit extends StarMacro {
     };
     final JTable rt = plainTable(rm);
     rt.setSelectionMode(javax.swing.ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
-    rt.putClientProperty("simkit.empty", "No reports in this simulation. Create them in Standard or Per object.");
+    rt.putClientProperty("simkit.empty", "No reports in this simulation. Create them in By object or Predefined.");
     int[] rw = {200, 110, 120, 110, 110};
     for (int i = 0; i < rw.length; i++) rt.getColumnModel().getColumn(i).setPreferredWidth(rw[i]);
     final javax.swing.table.TableCellRenderer rText = textCell((r, c) -> c == 0 ? java.awt.Color.BLACK : Ui.MUTED);
@@ -8148,7 +8148,7 @@ public class SimKit extends StarMacro {
     final Page obj = objPage(data, names, qs, others, objs, changed);
     final Page man = managePage(data, changed);
     final Page[] pages = {man, obj, std};
-    final String[] titles = {"In this simulation", "Per object", "Standard"};
+    final String[] titles = {"Existing", "By object", "Predefined"};
     final String[] idle = {"Apply", "Create reports", "Create reports"};
     final String[] idleTip = {"Change the objects of a report or the curves of a plot.", "Select a quantity, a statistic and an object.",
         "Select a report to create."};
@@ -8515,21 +8515,35 @@ public class SimKit extends StarMacro {
     final Map<String, List<ObjRow>> pGroups = new LinkedHashMap<>();
     final List<Object> pView = new ArrayList<>();   // String for a plot heading, else ObjRow
     final String noPlot = "\n";   // key of the reports without a plot; a plot name cannot hold a line break
-    final java.util.function.Function<String, String> plotHead = key -> {
-      List<ObjRow> g = pGroups.get(key);
+    // a plot row: the plot name, and in Status whether it is new or exists and how many curves it gets
+    final java.util.function.Function<String, String> plotName = key -> key.equals(noPlot) ? "No plot (monitors only)" : key;
+    final java.util.function.Function<String, String> plotStatus = key -> {
+      if (key.equals(noPlot)) return "";
       int n = 0;
-      for (ObjRow x : g) if (x.action.equals("create") && x.pick) n++;
-      if (key.equals(noPlot)) return "<html><b>No plot</b>&nbsp;&nbsp;<font color='#6B7580'>monitors only</font></html>";
+      for (ObjRow x : pGroups.get(key)) if (x.action.equals("create") && x.pick) n++;
       boolean exists = data[0].plotNames.contains(key) || data[0].plotNames.contains("pl_" + key);
-      return "<html><b>Plot " + Html.esc(key) + "</b>&nbsp;&nbsp;<font color='" + (exists ? "#2E6B2E" : "#1F4E9A") + "'>"
-          + (exists ? "exists" : "new") + "</font><font color='#6B7580'>&nbsp;&nbsp;·&nbsp;&nbsp;" + (exists ? "+" : "")
-          + plural(n, "curve", "curves") + "</font></html>";
+      return (exists ? "Existing plot  \u00B7  +" : "New plot  \u00B7  ") + plural(n, "curve", "curves");
+    };
+    final javax.swing.Icon chartIcon = new javax.swing.Icon() {   // plot rows: small axes with a curve
+      @Override public int getIconWidth() { return 14; }
+      @Override public int getIconHeight() { return 12; }
+      @Override public void paintIcon(java.awt.Component c, java.awt.Graphics g0, int x, int y) {
+        java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+        g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setColor(new java.awt.Color(0x6B, 0x75, 0x80));
+        g.drawLine(x + 1, y, x + 1, y + 11);
+        g.drawLine(x + 1, y + 11, x + 13, y + 11);
+        g.setColor(Ui.BLUE);
+        g.setStroke(new java.awt.BasicStroke(1.5f));
+        g.drawPolyline(new int[] {x + 3, x + 6, x + 9, x + 13}, new int[] {y + 8, y + 4, y + 7, y + 2}, 4);
+        g.dispose();
+      }
     };
     final javax.swing.table.AbstractTableModel pm = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
       @Override public int getRowCount() { return pView.size(); }
       @Override public int getColumnCount() { return 3; }
-      @Override public String getColumnName(int c) { return new String[] {"", "Report", "Status"}[c]; }
+      @Override public String getColumnName(int c) { return new String[] {"", "Name", "Status"}[c]; }
       @Override public Class<?> getColumnClass(int c) { return c == 0 ? Boolean.class : String.class; }
       @Override public boolean isCellEditable(int r, int c) {
         if (c != 0) return false;
@@ -8540,8 +8554,8 @@ public class SimKit extends StarMacro {
       @Override public Object getValueAt(int r, int c) {
         Object o = pView.get(r);
         if (o instanceof String) {
-          if (c == 1) return plotHead.apply((String) o);
-          if (c == 2) return "";
+          if (c == 1) return plotName.apply((String) o);
+          if (c == 2) return plotStatus.apply((String) o);
           boolean any = false, allOn = true;
           for (ObjRow x : pGroups.get(o)) if (x.action.equals("create")) { any = true; allOn &= x.pick; }
           return any && allOn;
@@ -8573,19 +8587,27 @@ public class SimKit extends StarMacro {
     });
     pt.setDefaultRenderer(String.class, (tb, v, sel, foc, r, c) -> {
       java.awt.Component k = pText.getTableCellRendererComponent(tb, v, sel, foc, r, c);
-      if (pView.get(r) instanceof String && !tb.isRowSelected(r)) k.setBackground(Ui.GROUP_BG);
-      if (pView.get(r) instanceof String && k instanceof JLabel) { ((JLabel) k).setBorder(Ui.groupBorder(false, r, 4)); return k; }
-      if (k instanceof JLabel) ((JLabel) k).setBorder(BorderFactory.createEmptyBorder(0, pView.get(r) instanceof String ? 4 : 18, 0, 6));
+      boolean head = pView.get(r) instanceof String;
+      if (k instanceof JLabel) {
+        JLabel l = (JLabel) k;
+        l.setIcon(head && !noPlot.equals(pView.get(r)) ? chartIcon : null);
+        l.setIconTextGap(8);
+        if (head) l.setFont(tb.getFont().deriveFont(Font.BOLD));
+        l.setBorder(head ? Ui.groupBorder(false, r, 6) : BorderFactory.createEmptyBorder(0, 30, 0, 6));
+      }
+      if (head && !tb.isRowSelected(r)) k.setBackground(Ui.GROUP_BG);
       return k;
     });
     final Ui.PillCell pill = new Ui.PillCell();
     pill.setFont(pt.getFont());
     pt.getColumnModel().getColumn(2).setCellRenderer((tb, v, sel, foc, r, c) -> {
       Object o = pView.get(r);
-      if (o instanceof String) {
-        java.awt.Component k = pText.getTableCellRendererComponent(tb, "", false, false, r, c);
+      if (o instanceof String) {   // plot row: New plot / Existing plot and its curves
+        String st = plotStatus.apply((String) o);
+        java.awt.Component k = pText.getTableCellRendererComponent(tb, st, false, false, r, c);
         k.setBackground(tb.isRowSelected(r) ? Ui.SEL : Ui.GROUP_BG);
-        if (k instanceof JLabel) ((JLabel) k).setBorder(Ui.groupBorder(false, r, 4));
+        k.setForeground(st.startsWith("Existing") ? Ui.GREEN : Ui.BLUE);
+        if (k instanceof JLabel) { ((JLabel) k).setBorder(Ui.groupBorder(false, r, 8)); ((JLabel) k).setIcon(null); }
         return k;
       }
       ObjRow x = (ObjRow) o;
@@ -8695,7 +8717,7 @@ public class SimKit extends StarMacro {
     final Runnable buildSets = () -> {
       setsRow.removeAll();
       if (!data[0].sets.isEmpty()) {
-        JLabel h = Ui.muted("In this simulation:");
+        JLabel h = Ui.muted("Existing sets:");
         setsRow.add(h);
       }
       for (final ObjSet st : data[0].sets) {
@@ -8772,10 +8794,13 @@ public class SimKit extends StarMacro {
     pr.add(new JLabel("Plots"));
     pr.add(plotChips);
     rh.add(pr, BorderLayout.EAST);
-    bottom.add(rh, BorderLayout.NORTH);
+    JPanel rhAll = new JPanel(new BorderLayout(0, 4));
+    rhAll.add(rh, BorderLayout.NORTH);
+    rhAll.add(Ui.muted("Each report gets a monitor. Its curve goes in the plot above it."), BorderLayout.SOUTH);
+    bottom.add(rhAll, BorderLayout.NORTH);
     bottom.add(plainScroll(pt, 940, 5 * pt.getRowHeight() + pt.getRowHeight() + 6), BorderLayout.CENTER);
-    bottom.add(Ui.muted("<html>Names follow " + Html.esc(names.pattern) + " (config/report_names.csv). Each report gets a monitor. Reports, monitors "
-        + "and plots are stored in folders \"Per object\". An existing plot gets the new curves.</html>"), BorderLayout.SOUTH);
+    bottom.add(Ui.muted("<html>Names follow " + Html.esc(names.pattern) + " (config/report_names.csv). Reports, monitors and plots are stored in "
+        + "folders \"Per object\". An existing plot gets the new curves.</html>"), BorderLayout.SOUTH);
     p.panel.setLayout(new BorderLayout(0, 16));
     p.panel.add(top, BorderLayout.NORTH);
     p.panel.add(bottom, BorderLayout.CENTER);
