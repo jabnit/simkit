@@ -3796,7 +3796,7 @@ public class SimKit extends StarMacro {
         for (final String lb : labels) {
           final String st = lb.equals("no status") ? "" : lb;
           final boolean on = cur != null && st.equals(cur);
-          final java.awt.Color[] c = statusColors(st);
+          final java.awt.Color[] c = st.isEmpty() ? new java.awt.Color[] {new java.awt.Color(0xEC, 0xEF, 0xF3), grey} : statusColors(st);
           JLabel chip = new JLabel(st) {
             private static final long serialVersionUID = 1L;
             @Override protected void paintComponent(java.awt.Graphics g0) {

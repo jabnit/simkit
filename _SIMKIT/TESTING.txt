@@ -719,3 +719,5 @@ C. RESULTS SO FAR
   (below: 50 % around the selected card); percentage button resets to 100 % (Ctrl+1). Offline: status 'dropped' on the
   2 runs of mesh_study_R002 then Undo restored them; filter "sweep" -> "8 of 14 runs", Clear shown, tree faded; keys
   RIGHT RIGHT DOWN from R001 -> R004, LEFT -> R002. Not done: compact layout of long single-child chains.
+  Fix: the tracker stopped with a NullPointerException when the selected run had no status (the "no status" label
+  had no colours). Checked offline with the open run R006 without status.
