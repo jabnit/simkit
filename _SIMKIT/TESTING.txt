@@ -736,3 +736,12 @@ C. RESULTS SO FAR
   list, all objects removed (report with no objects), Undo; Plot selected one / per quantity / per object created
   plots. CHT test: interface boundaries listed and set on a maximum report. Rendered offline: one report, three
   reports (dashes).
+  Reports > In this simulation: Delete (right-click menu or Delete key) on reports: deletes the reports, their
+  monitors and the stopping criteria on those monitors, after the curves are taken out of the plots; reports used by
+  a formula report, a mean (statistics) report or a user field function are kept and listed in the confirmation
+  ("This cannot be undone."). Delete on a plot: deletePlots, monitors and reports kept. Empty reports (objects list
+  empty, not query, not formula): amber "No objects" pill in the Objects column, chip "No objects (n)" filters them;
+  Standard: an existing report without objects shows "No objects" (amber), or Update with "no objects, +n surfaces"
+  when the team's surfaces exist. Batch objtest: report used by another (kept), delete of a report with its monitor
+  (report and monitor gone), delete of x_mgr_plot (gone), count of empty reports. Rules updated: SimKit deletes in the
+  simulation only what the user deletes after a confirmation (SimKit.java header, CONTRIBUTING.md, guide).

@@ -8,7 +8,7 @@
 4. Files under `_SIMKIT/` are stored byte-for-byte (no line-ending conversion, see `.gitattributes`):
    the macros and the batch runners read them as they are.
 5. A change to a tool must keep the kit's conventions (`SimKit.java` header): release-dependent STAR-CCM+ calls in
-   try/catch, writes confined to the case folders, nothing ever deleted.
+   try/catch, writes confined to the case folders, no file deleted; in the simulation, only what the user deletes after a confirmation.
 
 ## Code comments
 

@@ -16,6 +16,7 @@
 //
 // STAR-CCM+ calls that differ between releases run inside try/catch and log "n/a (<reason>)" instead of failing.
 // SimKit writes only inside the project folder (Fs.guard), never inside the kit, and deletes no files.
+// In the simulation it deletes only reports and plots the user deletes in Reports, after a confirmation.
 package macro;
 
 import java.awt.BorderLayout;
@@ -5816,6 +5817,7 @@ public class SimKit extends StarMacro {
     String why;
     boolean on;
     boolean present;      // already in the simulation
+    boolean empty;        // in the simulation with no objects
     boolean putBack;      // turned off by an empty surface list, on again when a surface is selected
     Object existing;      // the report in the simulation; Create adds the new surfaces to it
     int added;            // surfaces it does not have yet
@@ -5860,7 +5862,8 @@ public class SimKit extends StarMacro {
           Set<Object> union = new LinkedHashSet<>(have);
           union.addAll(x.target);
           x.added = union.size() - have.size();
-          if (x.added > 0 && !have.isEmpty()) {
+          x.empty = have.isEmpty();
+          if (x.added > 0) {   // also an empty report: Update puts the team's surfaces back
             x.existing = existingObj.get(r[0]);
             x.target = new ArrayList<>(union);
             x.why = null;
@@ -6119,11 +6122,12 @@ public class SimKit extends StarMacro {
       if (o instanceof String) { pill.setBackground(Ui.BAND); return pill.set(null, null, null, null); }
       StdReport x = (StdReport) o;
       pill.setBackground(t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+      if (x.present && x.empty) return pill.set("No objects", Ui.PILL_AMBER, "edit in In this simulation", Ui.MUTED);
       if (x.present) return pill.set("Present", Ui.PILL_GREEN, null, null);
       if (x.why != null) return pill.set(null, null, Ui.cap(x.why), Ui.MUTED);
       if (noSurf.apply(x)) return pill.set(null, null, "No surfaces selected", Ui.AMBER);
       if (!x.on) return pill.set(null, null, detail.apply(x), Ui.MUTED);
-      if (x.existing != null) return pill.set("Update", Ui.PILL_AMBER, detail.apply(x), Ui.MUTED);
+      if (x.existing != null) return pill.set("Update", Ui.PILL_AMBER, (x.empty ? "no objects, " : "") + detail.apply(x), x.empty ? Ui.AMBER : Ui.MUTED);
       return pill.set("Create", Ui.PILL_BLUE, detail.apply(x), edited.apply(x) ? Ui.BLUE : Ui.MUTED);
     });
     final JLabel doneMark = Ui.doneCell(), band = new JLabel();
@@ -6922,7 +6926,12 @@ public class SimKit extends StarMacro {
     String name = "", type = "", field = "", folder = "";
     List<Object> parts = new ArrayList<>();
     final List<String> plots = new ArrayList<>();
-    boolean query, formula;
+    final List<String> usedBy = new ArrayList<>();   // reports and field functions that use it (formula or mean)
+    boolean query, formula, hasParts;
+    int criteria;                                     // stopping criteria on its monitor
+
+    /** A report with an objects list that is empty: shown in amber. */
+    boolean empty() { return hasParts && !query && parts.isEmpty(); }
   }
 
   /** A monitor plot with its curves (monitors), in order. */
@@ -6992,6 +7001,25 @@ public class SimKit extends StarMacro {
       }
       d.plotList.add(pi);
     }
+    Map<Object, Integer> crit = new IdentityHashMap<>();
+    try {
+      for (Object c : sim.getSolverStoppingCriterionManager().getObjects()) {
+        Object m = Reflect.tryCall(c, "getMonitor");
+        if (m != null) crit.merge(m, 1, Integer::sum);
+      }
+    } catch (Throwable t) { log.na("stopping criteria", t); }
+    List<Object[]> users = new ArrayList<>();   // {object, definition or null, monitor or null}
+    for (Object r : sim.getReportManager().getObjects()) {
+      Object def = Reflect.tryCall(r, "getDefinition");
+      users.add(new Object[] {r, def instanceof String ? def : null, Reflect.tryCall(r, "getMonitor")});
+    }
+    try {
+      for (Object f : sim.getFieldFunctionManager().getObjects()) {
+        if (!(f instanceof UserFieldFunction)) continue;
+        Object def = Reflect.tryCall(f, "getDefinition");
+        if (def instanceof String) users.add(new Object[] {f, def, null});
+      }
+    } catch (Throwable t) { log.na("field functions", t); }
     for (InvRow v : d.inv) {
       RepInfo x = new RepInfo();
       x.report = v.report;
@@ -7004,6 +7032,12 @@ public class SimKit extends StarMacro {
       try { x.query = !x.formula && Boolean.TRUE.equals(Reflect.invoke(Reflect.invoke(v.report, "getParts"), "hasQuery")); }
       catch (Throwable t) { x.query = false; }
       x.monitor = mon.get(v.report);
+      x.hasParts = !x.formula && Reflect.tryCall(v.report, "getParts") != null;
+      x.criteria = x.monitor == null ? 0 : crit.getOrDefault(x.monitor, 0);
+      for (Object[] u : users) {
+        if (u[0] == v.report) continue;
+        if (u[1] != null && ((String) u[1]).contains("${" + v.name + "}") || x.monitor != null && u[2] == x.monitor) x.usedBy.add(nm(u[0]));
+      }
       x.plots.addAll(plotsOf.getOrDefault(v.report, Collections.emptyList()));
       d.reps.add(x);
     }
@@ -7066,6 +7100,60 @@ public class SimKit extends StarMacro {
       return "Curves of " + nm(p) + " set: " + plural(monitors.size(), "curve", "curves") + ".";
     } catch (Throwable t) {
       log.na("curves of " + nm(plot), t);
+      return "Failed: see the Output window.";
+    }
+  }
+
+  /** Deletes reports with their monitors and the stopping criteria on those monitors; the monitors are taken out of
+   *  the plots first. Cannot be undone. */
+  String deleteReports(List<Object> reports) {
+    int nr = 0, nm = 0, nc = 0, bad = 0;
+    for (Object r : reports) {
+      try {
+        List<Monitor> mons = new ArrayList<>();
+        for (Object m : sim.getMonitorManager().getObjects()) if (m instanceof ReportMonitor && Reflect.tryCall(m, "getReport") == r) mons.add((Monitor) m);
+        for (Monitor m : mons) {
+          for (Object c : new ArrayList<>(sim.getSolverStoppingCriterionManager().getObjects())) {
+            if (Reflect.tryCall(c, "getMonitor") != m) continue;
+            sim.getSolverStoppingCriterionManager().deleteSolverStoppingCriterion((SolverStoppingCriterion) c);
+            nc++;
+          }
+          for (Object p : sim.getPlotManager().getObjects()) {
+            if (!(p instanceof MonitorPlot) || !((MonitorPlot) p).getObjects().contains(m)) continue;
+            List<Monitor> keep = new ArrayList<>(((MonitorPlot) p).getObjects());
+            keep.remove(m);
+            ((MonitorPlot) p).setObjects(keep);
+          }
+          sim.getMonitorManager().removeObjects(m);
+          nm++;
+        }
+        String name = nm(r);
+        sim.getReportManager().removeObjects((Report) r);
+        log.line("  deleted report " + name + (mons.isEmpty() ? "" : " with " + plural(mons.size(), "monitor", "monitors")));
+        nr++;
+      } catch (Throwable t) {
+        log.na("delete " + nm(r), t);
+        bad++;
+      }
+    }
+    lastUndo = null;   // an earlier change may refer to what was deleted
+    return plural(nr, "report", "reports") + " deleted" + (nm > 0 ? ", " + plural(nm, "monitor", "monitors") : "")
+        + (nc > 0 ? ", " + plural(nc, "stopping criterion", "stopping criteria") : "") + "." + (bad > 0 ? " " + bad + " failed: see the Output window." : "");
+  }
+
+  /** Deletes monitor plots. Their monitors and reports are kept. Cannot be undone. */
+  String deletePlots(List<Object> plots) {
+    List<StarPlot> ps = new ArrayList<>();
+    for (Object p : plots) ps.add((StarPlot) p);
+    try {
+      List<String> names = new ArrayList<>();
+      for (StarPlot p : ps) names.add(nm(p));
+      sim.getPlotManager().deletePlots(ps);
+      log.line("  deleted plots " + String.join(", ", names));
+      lastUndo = null;
+      return plural(ps.size(), "plot", "plots") + " deleted.";
+    } catch (Throwable t) {
+      log.na("delete plots", t);
       return "Failed: see the Output window.";
     }
   }
@@ -7428,6 +7516,9 @@ public class SimKit extends StarMacro {
     final List<RepInfo> repRows = new ArrayList<>();
     final List<PlotInfo> plotRows = new ArrayList<>();
     final JTextField find = Ui.hintField("", "Filter reports", 16);
+    final javax.swing.JToggleButton onlyEmpty = Ui.chip("No objects");
+    onlyEmpty.setForeground(Ui.AMBER);
+    onlyEmpty.setToolTipText("Lists only the reports without objects");
     find.putClientProperty("simkit.esc.close", null);
     final ObjSelector sel = new ObjSelector();
     final JLabel head = new JLabel(" "), note = new JLabel(" ");
@@ -7448,7 +7539,7 @@ public class SimKit extends StarMacro {
           case 0: return x.name;
           case 1: return x.type;
           case 2: return x.field;
-          case 3: return x.formula ? "formula" : x.query ? "query (" + x.parts.size() + ")" : x.parts.isEmpty() ? "⚠ No objects"
+          case 3: return x.formula ? "formula" : !x.hasParts ? "\u2014" : x.query ? "query (" + x.parts.size() + ")" : x.parts.isEmpty() ? ""
               : x.parts.size() == 1 ? lastPart(nm(x.parts.get(0))) : x.parts.size() + " objects";
           default: return x.plots.isEmpty() ? "—" : x.plots.size() == 1 ? x.plots.get(0) : x.plots.size() + " plots";
         }
@@ -7459,8 +7550,17 @@ public class SimKit extends StarMacro {
     rt.putClientProperty("simkit.empty", "No reports in this simulation. Create them in Standard or Per object.");
     int[] rw = {200, 110, 120, 110, 110};
     for (int i = 0; i < rw.length; i++) rt.getColumnModel().getColumn(i).setPreferredWidth(rw[i]);
-    rt.setDefaultRenderer(Object.class, textCell((r, c) -> c == 3 && !repRows.get(r).formula && !repRows.get(r).query && repRows.get(r).parts.isEmpty()
-        ? Ui.AMBER : c == 0 ? java.awt.Color.BLACK : Ui.MUTED));
+    final javax.swing.table.TableCellRenderer rText = textCell((r, c) -> c == 0 ? java.awt.Color.BLACK : Ui.MUTED);
+    rt.setDefaultRenderer(Object.class, rText);
+    final Ui.PillCell emptyPill = new Ui.PillCell();
+    emptyPill.setFont(rt.getFont());
+    rt.getColumnModel().getColumn(3).setCellRenderer((t, v, s0, f, r, c) -> {   // an empty report: amber pill
+      RepInfo x = repRows.get(r);
+      if (!x.empty()) return rText.getTableCellRendererComponent(t, v, s0, f, r, c);
+      emptyPill.setBackground(t.isRowSelected(r) ? Ui.SEL : java.awt.Color.WHITE);
+      emptyPill.setToolTipText("The report has no objects: tick objects on the right, or delete it.");
+      return emptyPill.set("No objects", Ui.PILL_AMBER, null, null);
+    });
     // plots table
     final javax.swing.table.AbstractTableModel pm = new javax.swing.table.AbstractTableModel() {
       private static final long serialVersionUID = 1L;
@@ -7553,6 +7653,64 @@ public class SimKit extends StarMacro {
       changed.run();
     };
     rt.getSelectionModel().addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) showRep.run(); });
+    // Delete: right-click menu or the Delete key, after a confirmation that lists what goes
+    final Runnable delReports = () -> {
+      if (picked.isEmpty() || p.exec == null) return;
+      final List<Object> go = new ArrayList<>();
+      List<String> kept = new ArrayList<>();
+      int mons = 0, crits = 0;
+      Set<String> plots = new TreeSet<>();
+      for (RepInfo x : picked) {
+        if (!x.usedBy.isEmpty()) { kept.add(x.name + " (used by " + String.join(", ", x.usedBy) + ")"); continue; }
+        go.add(x.report);
+        if (x.monitor != null) mons++;
+        crits += x.criteria;
+        plots.addAll(x.plots);
+      }
+      String what = plural(go.size(), "report", "reports") + (mons > 0 ? ", " + plural(mons, "monitor", "monitors") : "")
+          + (crits > 0 ? ", " + plural(crits, "stopping criterion", "stopping criteria") : "");
+      String text = (go.isEmpty() ? "Nothing to delete." : "Deletes " + what + "." + (plots.isEmpty() ? "" : " The curves are taken out of "
+          + (plots.size() == 1 ? "the plot " : plots.size() + " plots: ") + String.join(", ", plots) + "."))
+          + (kept.isEmpty() ? "" : "\nKept, because other reports or field functions use them: " + String.join("; ", kept) + ".")
+          + (go.isEmpty() ? "" : "\nThis cannot be undone.");
+      if (!confirmDelete(go.isEmpty() ? "Delete reports" : "Delete " + plural(go.size(), "report", "reports"), text, !go.isEmpty())) return;
+      p.exec.accept(() -> deleteReports(go));
+    };
+    final Runnable delPlots = () -> {
+      if (plotPicked[0] == null || p.exec == null) return;
+      final Object plot = plotPicked[0].plot;
+      if (!confirmDelete("Delete plot", "Deletes the plot " + plotPicked[0].name + ". Its monitors and reports are kept.\nThis cannot be undone.", true)) return;
+      p.exec.accept(() -> deletePlots(Collections.singletonList(plot)));
+    };
+    for (final JTable tb : new JTable[] {rt, pt}) {
+      final Runnable del = tb == rt ? delReports : delPlots;
+      tb.addMouseListener(new java.awt.event.MouseAdapter() {
+        @Override public void mousePressed(java.awt.event.MouseEvent e) { menu(e); }
+        @Override public void mouseReleased(java.awt.event.MouseEvent e) { menu(e); }
+        void menu(java.awt.event.MouseEvent e) {
+          if (!e.isPopupTrigger()) return;
+          int r = tb.rowAtPoint(e.getPoint());
+          if (r < 0) return;
+          if (!tb.isRowSelected(r)) tb.setRowSelectionInterval(r, r);
+          javax.swing.JPopupMenu m = new javax.swing.JPopupMenu();
+          javax.swing.JMenuItem d = new javax.swing.JMenuItem(tb == rt ? (tb.getSelectedRowCount() == 1 ? "Delete report\u2026" : "Delete "
+              + tb.getSelectedRowCount() + " reports\u2026") : "Delete plot\u2026");
+          d.addActionListener(a -> del.run());
+          m.add(d);
+          if (tb == rt) {
+            javax.swing.JMenuItem ps = new javax.swing.JMenuItem("Plot selected\u2026");
+            ps.addActionListener(a -> plotSel.doClick());
+            m.add(ps);
+          }
+          m.show(tb, e.getX(), e.getY());
+        }
+      });
+      tb.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke("DELETE"), "simkitDelete");
+      tb.getActionMap().put("simkitDelete", new javax.swing.AbstractAction() {
+        private static final long serialVersionUID = 1L;
+        @Override public void actionPerformed(java.awt.event.ActionEvent e) { del.run(); }
+      });
+    }
     pt.getSelectionModel().addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) showPlot.run(); });
     addCurves.addActionListener(e -> {
       List<RepInfo> choice = pickReports(data[0].reps);
@@ -7569,7 +7727,15 @@ public class SimKit extends StarMacro {
       for (RepInfo x : picked) keepR.add(x.name);
       String keepP = plotPicked[0] == null ? null : plotPicked[0].name;
       repRows.clear();
-      for (RepInfo x : data[0].reps) if (q.isEmpty() || (x.name + " " + x.type + " " + x.field).toLowerCase(Locale.ROOT).contains(q)) repRows.add(x);
+      int nEmpty = 0;
+      for (RepInfo x : data[0].reps) if (x.empty()) nEmpty++;
+      onlyEmpty.setText("No objects (" + nEmpty + ")");
+      onlyEmpty.setVisible(nEmpty > 0 && !plotsView[0]);
+      if (nEmpty == 0) onlyEmpty.setSelected(false);
+      for (RepInfo x : data[0].reps) {
+        if (onlyEmpty.isSelected() && !x.empty()) continue;
+        if (q.isEmpty() || (x.name + " " + x.type + " " + x.field).toLowerCase(Locale.ROOT).contains(q)) repRows.add(x);
+      }
       plotRows.clear();
       for (PlotInfo x : data[0].plotList) if (q.isEmpty() || x.name.toLowerCase(Locale.ROOT).contains(q)) plotRows.add(x);
       rm.fireTableDataChanged();
@@ -7585,6 +7751,7 @@ public class SimKit extends StarMacro {
     });
 
     // Reports | Plots
+    onlyEmpty.addActionListener(e -> fillRows.run());
     final javax.swing.JToggleButton vr = Ui.chip("Reports"), vp = Ui.chip("Plots");
     javax.swing.ButtonGroup vg = new javax.swing.ButtonGroup();
     vg.add(vr);
@@ -7595,6 +7762,7 @@ public class SimKit extends StarMacro {
       rightCards.show(right, plotsView[0] ? "plots" : "reports");
       find.setText("");
       plotSel.setVisible(!plotsView[0]);
+      fillRows.run();
       if (plotsView[0]) showPlot.run(); else showRep.run();
     };
     vr.addActionListener(e -> { plotsView[0] = false; switchView.run(); });
@@ -7621,6 +7789,7 @@ public class SimKit extends StarMacro {
     tl.add(vp);
     tl.add(javax.swing.Box.createHorizontalStrut(10));
     tl.add(find);
+    tl.add(onlyEmpty);
     tl.add(javax.swing.Box.createHorizontalStrut(10));
     tl.add(plotSel);
     top.add(tl, BorderLayout.WEST);
@@ -7638,7 +7807,7 @@ public class SimKit extends StarMacro {
     p.panel.add(top, BorderLayout.NORTH);
     p.panel.add(mid, BorderLayout.CENTER);
     p.panel.add(Ui.muted("<html>Ticks set the objects of the selected reports; Shift+click ticks a range, Space ticks the selected rows. "
-        + "Nothing is deleted: removing an object or a curve changes only that list.</html>"), BorderLayout.SOUTH);
+        + "Removing an object or a curve changes only that list. Right-click or Delete deletes reports or plots, after a confirmation.</html>"), BorderLayout.SOUTH);
     p.focus = rt;
 
     p.label = () -> {
@@ -7677,6 +7846,15 @@ public class SimKit extends StarMacro {
     p.reload = fillRows;
     fillRows.run();
     return p;
+  }
+
+  /** Confirmation of a deletion. Returns true on Delete. Swing thread. */
+  boolean confirmDelete(String title, String text, boolean canDelete) {
+    JLabel l = new JLabel("<html><div style='width:420px'>" + Html.esc(text).replace("\n", "<br><br>") + "</div></html>");
+    if (!canDelete) { JOptionPane.showMessageDialog(Ui.owner(), l, title, JOptionPane.INFORMATION_MESSAGE); return false; }
+    JButton ok = Ui.primary("Delete");
+    ok.setBackground(new java.awt.Color(0xB4, 0x23, 0x18));
+    return Ui.sheet(title, "", l, ok, null);
   }
 
   /** Dialog to pick reports, with a filter. Returns the ticked ones (empty on Cancel). Swing thread. */
@@ -9826,6 +10004,35 @@ public class SimKit extends StarMacro {
       log.line("mgr: plot selected (one plot x_mgr_plot) -> " + plotSelected(reps, "one", "x_mgr_plot", null));
       log.line("mgr: plot selected (per quantity) -> " + plotSelected(reps, "quantity", "", null));
       log.line("mgr: plot selected (per object) -> " + plotSelected(reps, "object", "", null));
+      ReportsData d2 = new ReportsData();
+      d2.inv = inventory(new ObjState());
+      manageData(d2);
+      RepInfo free = null, used = null;
+      for (RepInfo x : d2.reps) {
+        if (!x.usedBy.isEmpty() && used == null) used = x;
+        if (x.usedBy.isEmpty() && x.monitor != null && !x.plots.isEmpty() && free == null) free = x;
+      }
+      if (used != null) log.line("mgr: " + used.name + " used by " + used.usedBy + " (kept by Delete)");
+      if (free != null) {
+        String mon = nm(free.monitor);
+        log.line("mgr: delete " + free.name + " (monitor " + mon + ", plots " + free.plots + ", criteria " + free.criteria + ") -> "
+            + deleteReports(Collections.singletonList(free.report)));
+        boolean monLeft = false;
+        for (Object m : sim.getMonitorManager().getObjects()) monLeft |= nm(m).equals(mon);
+        boolean repLeft = false;
+        for (Object r : sim.getReportManager().getObjects()) repLeft |= nm(r).equals(free.name);
+        log.line("mgr: after delete: report left " + repLeft + ", monitor left " + monLeft);
+      }
+      for (PlotInfo x : d2.plotList) {
+        if (!x.name.equals("x_mgr_plot")) continue;
+        log.line("mgr: delete plot x_mgr_plot -> " + deletePlots(Collections.singletonList(x.plot)));
+        boolean left = false;
+        for (Object p : sim.getPlotManager().getObjects()) left |= nm(p).equals("x_mgr_plot");
+        log.line("mgr: after delete: plot left " + left);
+      }
+      int empty = 0;
+      for (RepInfo x : d2.reps) if (x.empty()) empty++;
+      log.line("mgr: reports with no objects: " + empty);
     } catch (Throwable t) { log.na("mgr: test", t); }
   }
 
