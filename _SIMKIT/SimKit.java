@@ -5825,8 +5825,6 @@ public class SimKit extends StarMacro {
    *  field is a field function, or the formula of an expression report.
    *  surfaces are surface prefixes joined by '+', or REGIONS.
    *  condition is empty, energy, unsteady or "needs <report> ...".
-   *  criterion (optional) is a stopping criterion on the monitor: "asymptotic <width> <samples>",
-   *  "below <limit>" or "above <limit>". It is created off unless the text ends with " on".
    *  mean (optional) "last <n>" adds a report <name>_mean, the mean of the monitor over the last n samples.
    *  options (optional, words): debug = not ticked by default, the group can be removed as a set;
    *  location = x, y, z of the extreme cell as collocated values of a maximum or minimum report;
@@ -5834,44 +5832,44 @@ public class SimKit extends StarMacro {
    *  log = that plot has a logarithmic y axis.
    *  A report on REGIONS is made on the regions where its field exists, one report per continuum when there are
    *  several (name <name>_<continuum>). */
-  static final String[] STD_COLS = {"name", "group", "type", "field", "surfaces", "condition", "meaning", "criterion", "mean", "options"};
+  static final String[] STD_COLS = {"name", "group", "type", "field", "surfaces", "condition", "meaning", "mean", "options"};
 
   static final String[][] STANDARD_REPORTS = {
       {"r_mdot_in", "massBalance", "mass flow", "", "IN", "", "mass flow entering (IN_ surfaces)"},
       {"r_mdot_out", "massBalance", "mass flow", "", "OUT+OPEN", "", "mass flow leaving (OUT_ and OPEN_)"},
       {"r_mdot_net", "massBalance", "mass flow", "", "IN+OUT+OPEN", "", "net mass flow: tends to 0 when mass is conserved"},
-      {"r_mdot_imbalance_pct", "massBalance", "expression", "abs(${r_mdot_net}) / abs(${r_mdot_in}) * 100", "", "needs r_mdot_net r_mdot_in", "mass imbalance in % of the inflow (converged: below 0.1)", "below 0.1", "", "plot=%"},
+      {"r_mdot_imbalance_pct", "massBalance", "expression", "abs(${r_mdot_net}) / abs(${r_mdot_in}) * 100", "", "needs r_mdot_net r_mdot_in", "mass imbalance in % of the inflow (converged: below 0.1)", "", "plot=%"},
       {"r_p_in_avg", "pressure", "area average", "Pressure", "IN", "", "inlet static pressure (area average)"},
       {"r_p_out_avg", "pressure", "area average", "Pressure", "OUT", "", "outlet static pressure (area average)"},
       {"r_p0_in_avg", "pressure", "area average", "TotalPressure", "IN", "", "inlet total pressure (area average)"},
       {"r_dp_static", "pressure", "expression", "${r_p_in_avg} - ${r_p_out_avg}", "", "needs r_p_in_avg r_p_out_avg", "static pressure drop, inlet - outlet"},
       {"r_T_in_mfavg", "temperature", "mass-flow average", "Temperature", "IN", "energy", "inlet temperature (mass-flow average)"},
-      {"r_T_out_mfavg", "temperature", "mass-flow average", "Temperature", "OUT+OPEN", "energy", "outlet temperature (mass-flow average)", "asymptotic 0.5 200", "last 500"},
+      {"r_T_out_mfavg", "temperature", "mass-flow average", "Temperature", "OUT+OPEN", "energy", "outlet temperature (mass-flow average)", "last 500"},
       {"r_T_wall_max", "temperature", "maximum", "Temperature", "WALL+IF", "energy", "hottest wall temperature"},
-      {"r_Q_wall", "heat", "heat flow", "", "WALL+IF", "energy", "heat flow through the walls", "", "last 500"},
+      {"r_Q_wall", "heat", "heat flow", "", "WALL+IF", "energy", "heat flow through the walls", "last 500"},
       {"r_yplus_wall_max", "yplus", "maximum", "WallYplus", "WALL+IF", "", "maximum wall y+"},
       {"r_yplus_wall_avg", "yplus", "area average", "WallYplus", "WALL+IF", "", "average wall y+"},
       {"r_Co_max", "courant", "maximum", "CourantNumber", "REGIONS", "unsteady", "maximum convective Courant number"},
-      {"r_div_U_max", "divergence", "maximum", "Velocity:magnitude", "REGIONS", "", "maximum velocity and its location: jets in bad cells, narrow gaps", "", "", "debug location plot=velocity"},
-      {"r_div_p_min", "divergence", "minimum", "Pressure", "REGIONS", "", "minimum pressure and its location: unphysical low-pressure pockets", "", "", "debug location plot=pressure"},
-      {"r_div_p_max", "divergence", "maximum", "Pressure", "REGIONS", "", "maximum pressure and its location: spikes, checkerboarding, blocked flow paths", "", "", "debug location plot=pressure"},
-      {"r_div_p_abs_min", "divergence", "minimum", "AbsolutePressure", "REGIONS", "", "minimum absolute pressure and its location: near 0 before the equation of state fails", "", "", "debug location plot=pressure"},
-      {"r_div_T_max", "divergence", "maximum", "Temperature", "REGIONS", "energy", "maximum temperature and its location: cells at the upper temperature limit", "", "", "debug location plot=temperature"},
-      {"r_div_T_min", "divergence", "minimum", "Temperature", "REGIONS", "energy", "minimum temperature and its location: cells at the lower temperature limit", "", "", "debug location plot=temperature"},
-      {"r_div_mut_ratio_max", "divergence", "maximum", "TurbulentViscosityRatio", "REGIONS", "", "maximum turbulent viscosity ratio and its location: turbulence model blow-up", "", "", "debug location plot=ratios log"},
-      {"r_div_Co_max", "divergence", "maximum", "CourantNumber", "REGIONS", "", "maximum Courant number and its location: cells over the stability limit", "", "", "debug location plot=ratios log"},
-      {"r_div_p_out_min", "divergence", "minimum", "Pressure", "OUT+OPEN", "", "minimum pressure on outlets and openings and its location: backflow", "", "", "debug location plot=pressure"}};
+      {"r_div_U_max", "divergence", "maximum", "Velocity:magnitude", "REGIONS", "", "maximum velocity and its location: jets in bad cells, narrow gaps", "", "debug location plot=velocity"},
+      {"r_div_p_min", "divergence", "minimum", "Pressure", "REGIONS", "", "minimum pressure and its location: unphysical low-pressure pockets", "", "debug location plot=pressure"},
+      {"r_div_p_max", "divergence", "maximum", "Pressure", "REGIONS", "", "maximum pressure and its location: spikes, checkerboarding, blocked flow paths", "", "debug location plot=pressure"},
+      {"r_div_p_abs_min", "divergence", "minimum", "AbsolutePressure", "REGIONS", "", "minimum absolute pressure and its location: near 0 before the equation of state fails", "", "debug location plot=pressure"},
+      {"r_div_T_max", "divergence", "maximum", "Temperature", "REGIONS", "energy", "maximum temperature and its location: cells at the upper temperature limit", "", "debug location plot=temperature"},
+      {"r_div_T_min", "divergence", "minimum", "Temperature", "REGIONS", "energy", "minimum temperature and its location: cells at the lower temperature limit", "", "debug location plot=temperature"},
+      {"r_div_mut_ratio_max", "divergence", "maximum", "TurbulentViscosityRatio", "REGIONS", "", "maximum turbulent viscosity ratio and its location: turbulence model blow-up", "", "debug location plot=ratios log"},
+      {"r_div_Co_max", "divergence", "maximum", "CourantNumber", "REGIONS", "", "maximum Courant number and its location: cells over the stability limit", "", "debug location plot=ratios log"},
+      {"r_div_p_out_min", "divergence", "minimum", "Pressure", "OUT+OPEN", "", "minimum pressure on outlets and openings and its location: backflow", "", "debug location plot=pressure"}};
 
   /** Value of an option word key=value of a standard report, or null. */
   static String optVal(String[] r, String key) {
-    if (r.length <= 9 || r[9] == null) return null;
-    for (String w : r[9].trim().split("\\s+")) if (w.startsWith(key + "=")) return w.substring(key.length() + 1);
+    if (r.length <= 8 || r[8] == null) return null;
+    for (String w : r[8].trim().split("\\s+")) if (w.startsWith(key + "=")) return w.substring(key.length() + 1);
     return null;
   }
 
   /** True when the options column of a standard report holds the word. */
   static boolean hasOpt(String[] r, String word) {
-    return r.length > 9 && r[9] != null && Arrays.asList(r[9].trim().toLowerCase(Locale.ROOT).split("\\s+")).contains(word);
+    return r.length > 8 && r[8] != null && Arrays.asList(r[8].trim().toLowerCase(Locale.ROOT).split("\\s+")).contains(word);
   }
 
   /** Report types by their plain name (a full class name works too). */
@@ -6094,7 +6092,7 @@ public class SimKit extends StarMacro {
     List<Object> plots = new ArrayList<>();
     Map<String, List<Object>> ownPlots = new LinkedHashMap<>();   // plots of plot=<name>, in a folder of their group
     Map<String, List<Object>> groupMons = new LinkedHashMap<>(), plotGroup = new LinkedHashMap<>();
-    int crit = 0, means = 0;
+    int means = 0;
     for (Map.Entry<String, List<Object>> pr : plotReps.entrySet()) {
       String key = pr.getKey(), cont = key.contains("|") ? key.substring(key.indexOf('|') + 1) : "";
       String base = key.contains("|") ? key.substring(0, key.indexOf('|')) : key;
@@ -6109,9 +6107,8 @@ public class SimKit extends StarMacro {
         if (d == null) continue;
         log10 |= hasOpt(d, "log");
         String rn = nm(((ReportMonitor) m).getReport());
-        if (d.length > 7 && d[7] != null && !d[7].trim().isEmpty() && stoppingCriterion(m, rn, d[7].trim())) crit++;
-        if (d.length > 8 && d[8] != null && !d[8].trim().isEmpty()) {
-          Object mean = meanReport(m, rn, d[8].trim());
+        if (d.length > 7 && d[7] != null && !d[7].trim().isEmpty()) {
+          Object mean = meanReport(m, rn, d[7].trim());
           if (mean != null) { extra.add(mean); means++; }
         }
       }
@@ -6133,7 +6130,6 @@ public class SimKit extends StarMacro {
     for (Map.Entry<String, List<Object>> g : plotGroup.entrySet()) toFolder(sim.getPlotManager(), stdFolder(g.getKey()), g.getValue());
     String out = n > 0 ? plural(n, "report", "reports") + " with monitors and " + plural(plots.size(), "plot", "plots") + " created" : "";
     if (upd > 0) out += (out.isEmpty() ? "" : ", ") + plural(upd, "report", "reports") + " updated";
-    if (crit > 0) out += ", " + plural(crit, "stopping criterion", "stopping criteria");
     if (means > 0) out += ", " + plural(means, "mean report", "mean reports");
     return (out.isEmpty() ? "Nothing created" : Ui.cap(out)) + ".";
   }
@@ -6326,36 +6322,6 @@ public class SimKit extends StarMacro {
   }
 
   volatile boolean openNamesNext;   // set by "Fix in Names" in the Reports window
-
-  /** Adds a stopping criterion to a report monitor, off unless spec ends with " on". Returns true when made. */
-  boolean stoppingCriterion(Object monitor, String report, String spec) {
-    String[] w = spec.toLowerCase(Locale.ROOT).split("\\s+");
-    boolean on = w[w.length - 1].equals("on");
-    try {
-      MonitorIterationStoppingCriterion c = ((Monitor) monitor).createIterationStoppingCriterion();
-      if (w[0].equals("asymptotic") && w.length >= 3) {
-        c.getCriterionOption().setSelected(MonitorIterationStoppingCriterionOption.Type.ASYMPTOTIC);
-        MonitorIterationStoppingCriterionAsymptoticType a = (MonitorIterationStoppingCriterionAsymptoticType) c.getCriterionType();
-        a.getMaxWidth().setValue(Fmt.parse(w[1]));
-        a.setNumberSamples(Integer.parseInt(w[2]));
-      } else if ((w[0].equals("below") || w[0].equals("above")) && w.length >= 2) {
-        c.getCriterionOption().setSelected(w[0].equals("below") ? MonitorIterationStoppingCriterionOption.Type.MINIMUM
-            : MonitorIterationStoppingCriterionOption.Type.MAXIMUM);
-        ((MonitorIterationStoppingCriterionLimitType) c.getCriterionType()).getLimit().setValue(Fmt.parse(w[1]));
-      } else {
-        log.line("  criterion of " + report + ": '" + spec + "' not understood (asymptotic <width> <samples> | below <x> | above <x>)");
-        c.getSolverStoppingCriterionManager().remove(c);
-        return false;
-      }
-      c.setPresentationName("stop_" + report);
-      c.setIsUsed(on);
-      log.line("  stopping criterion stop_" + report + ": " + spec.replaceAll("\\s+on$", "") + (on ? " (on)" : " (off: tick it in Stopping Criteria to use it)"));
-      return true;
-    } catch (Throwable t) {
-      log.na("stopping criterion of " + report, t);
-      return false;
-    }
-  }
 
   /** Creates <report>_mean, the mean of the monitor over the last n samples. Returns null if not made. */
   Object meanReport(Object monitor, String report, String spec) {

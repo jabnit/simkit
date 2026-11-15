@@ -843,3 +843,7 @@ C. RESULTS SO FAR
   STAR-CCM+ first"), and so are the reports it uses (usesReport). 21.04: criteria are deleted, nothing kept.
   To check on 2310: delete Mass balance in Existing; the result says kept or deleted; Stopping Criteria shows no
   criterion without its monitor; Create in Predefined gives no SIGSEGV.
+  Still a SIGSEGV on 2310 after the checked delete. The Reports tool no longer creates stopping criteria:
+  stoppingCriterion and the criterion column of standard_reports.csv are removed (mean is column 8, options 9 in the
+  file; an old file with a criterion column is read by header name, the column is ignored). Deleting reports still
+  deletes the criteria on their monitors (made by earlier versions or by hand), with the check.
